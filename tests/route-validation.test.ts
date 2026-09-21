@@ -19,7 +19,26 @@ test("diagnostics run route accepts sampleCount precedence and clamps properly",
   fs.mkdirSync(dataDir, { recursive: true });
   fs.writeFileSync(path.join(inputDir, "sample.txt"), "127.0.0.1:8080\n");
 
-  const runner = createDiagnosticRunner({ inputDir, dataDir });
+  const runner = createDiagnosticRunner(
+    { inputDir, dataDir },
+    {
+      testProxy: async (proxy) => ({
+        id: Buffer.from(proxy.endpoint).toString("base64url"),
+        endpoint: proxy.endpoint,
+        protocol: proxy.protocol,
+        status: "SUCCESS",
+        statusCode: 200,
+        latencyMs: 10,
+        exitIp: "203.0.113.1",
+        country: "US",
+        isp: "Test ISP",
+        isProxyOrHosting: false,
+        headerLeakage: false,
+        leakedHeaders: [],
+        checkedAt: Date.now(),
+      }),
+    }
+  );
   assert.equal(runner.files().length, 1);
   assert.equal(runner.files()[0].name, "sample.txt");
 

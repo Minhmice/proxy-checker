@@ -2,7 +2,7 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import tls from "node:tls";
-import type { DiagnosticJob, ParsedProxy } from "../lib/types.js";
+import type { DiagnosticJob, ParsedProxy, ProxyProtocol } from "../lib/types.js";
 import { parseProxy } from "./proxy-core.js";
 
 export interface DetailedDiagnosticResult {
@@ -169,36 +169,107 @@ export async function testProxyDetailed(proxy: ParsedProxy, timeout = 7000): Pro
   let observedData: { query?: string; country?: string; isp?: string; proxy?: boolean; hosting?: boolean } = {};
   let observedLeakage: string[] = [];
   let targetLatencyMs = 0;
+  let activeProtocol: ProxyProtocol = proxy.protocol;
+  // Try assigned protocol, and fall back to alternate protocol if tunnel fails
+  const protocolsToTry: ProxyProtocol[] = [proxy.protocol];
+  const altProtocol: ProxyProtocol = proxy.protocol === "http" ? "socks5" : "http";
+  protocolsToTry.push(altProtocol);
+
+  let lastTunnelError: Error | null = null;
+  for (const proto of protocolsToTry) {
+    try {
+      socket = await openTunnel({ ...proxy, protocol: proto }, "ip-api.com", 80, timeout);
+      activeProtocol = proto;
+      lastTunnelError = null;
+      break;
+    } catch (err) {
+      lastTunnelError = err as Error;
+      socket?.destroy();
+      socket = undefined;
+    }
+  }
+
+  if (lastTunnelError || !socket) {
+    return {
+      id: idFor(proxy.endpoint),
+      endpoint: proxy.endpoint,
+      protocol: activeProtocol,
+      status: "FAILED",
+      statusCode: null,
+      latencyMs: Date.now() - started,
+      exitIp: null,
+      country: null,
+      isp: null,
+      isProxyOrHosting: null,
+      headerLeakage: null,
+      leakedHeaders: [],
+      checkedAt: Date.now(),
+      error: lastTunnelError?.message || "proxy connection failed",
+    };
+  }
+
   try {
-    socket = await openTunnel(proxy, "ip-api.com", 80, timeout);
     const targetStarted = Date.now();
     const ipApi = await requestThrough(socket, "ip-api.com", "/json/?fields=status,message,country,query,isp,proxy,hosting", false, timeout);
     targetLatencyMs = Date.now() - targetStarted;
     observedStatus = ipApi.statusCode;
     const data = JSON.parse(ipApi.body) as { status?: string; message?: string; query?: string; country?: string; isp?: string; proxy?: boolean; hosting?: boolean };
     observedData = data;
-    if (ipApi.statusCode !== 200 || data.status !== "success" || !data.query || !net.isIP(data.query)) throw new Error(data.message || `ip-api HTTP ${ipApi.statusCode}`);
-    socket.destroy();
-    socket = await openTunnel(proxy, "httpbin.org", 443, timeout);
-    const echo = await requestThrough(socket, "httpbin.org", "/anything", true, timeout);
+    if (ipApi.statusCode !== 200 || data.status !== "success" || !data.query || !net.isIP(data.query)) {
+      throw new Error(data.message || `ip-api HTTP ${ipApi.statusCode}`);
+    }
+  } catch (error) {
+    return {
+      id: idFor(proxy.endpoint),
+      endpoint: proxy.endpoint,
+      protocol: activeProtocol,
+      status: "FAILED",
+      statusCode: observedStatus,
+      latencyMs: targetLatencyMs || Date.now() - started,
+      exitIp: observedData.query ?? null,
+      country: observedData.country ?? null,
+      isp: observedData.isp ?? null,
+      isProxyOrHosting: observedData.query ? Boolean(observedData.proxy || observedData.hosting) : null,
+      headerLeakage: observedStatus === 200 ? observedLeakage.length > 0 : null,
+      leakedHeaders: observedLeakage,
+      checkedAt: Date.now(),
+      error: (error as Error).message,
+    };
+  } finally {
+    socket?.destroy();
+    socket = undefined;
+  }
+
+  // Secondary probe: header leakage via httpbin (optional; failure does not fail the verified proxy)
+  try {
+    socket = await openTunnel({ ...proxy, protocol: activeProtocol }, "httpbin.org", 443, Math.min(timeout, 3500));
+    const echo = await requestThrough(socket, "httpbin.org", "/anything", true, Math.min(timeout, 3500));
     const echoBody = JSON.parse(echo.body) as { headers?: Record<string, string> };
     const suspicious = ["forwarded", "via", "x-forwarded-for", "x-real-ip", "client-ip", "proxy-connection"];
     const echoedHeaders = Object.keys(echoBody.headers ?? {}).map((key) => key.toLowerCase());
-    const leakedHeaders = suspicious.filter((key) => echoedHeaders.includes(key));
-    observedLeakage = leakedHeaders;
-    return {
-      id: idFor(proxy.endpoint), endpoint: proxy.endpoint, protocol: proxy.protocol, status: "SUCCESS",
-      statusCode: ipApi.statusCode, latencyMs: targetLatencyMs, exitIp: data.query, country: data.country ?? null,
-      isp: data.isp ?? null, isProxyOrHosting: Boolean(data.proxy || data.hosting), headerLeakage: leakedHeaders.length > 0,
-      leakedHeaders, checkedAt: Date.now(),
-    };
-  } catch (error) {
-    return {
-      id: idFor(proxy.endpoint), endpoint: proxy.endpoint, protocol: proxy.protocol, status: "FAILED",
-      statusCode: observedStatus, latencyMs: targetLatencyMs || Date.now() - started, exitIp: observedData.query ?? null, country: observedData.country ?? null, isp: observedData.isp ?? null,
-      isProxyOrHosting: observedData.query ? Boolean(observedData.proxy || observedData.hosting) : null, headerLeakage: observedStatus === 200 ? observedLeakage.length > 0 : null, leakedHeaders: observedLeakage, checkedAt: Date.now(), error: (error as Error).message,
-    };
-  } finally { socket?.destroy(); }
+    observedLeakage = suspicious.filter((key) => echoedHeaders.includes(key));
+  } catch {
+    observedLeakage = [];
+  } finally {
+    socket?.destroy();
+    socket = undefined;
+  }
+
+  return {
+    id: idFor(proxy.endpoint),
+    endpoint: proxy.endpoint,
+    protocol: activeProtocol,
+    status: "SUCCESS",
+    statusCode: observedStatus,
+    latencyMs: targetLatencyMs,
+    exitIp: observedData.query!,
+    country: observedData.country ?? null,
+    isp: observedData.isp ?? null,
+    isProxyOrHosting: Boolean(observedData.proxy || observedData.hosting),
+    headerLeakage: observedLeakage.length > 0,
+    leakedHeaders: observedLeakage,
+    checkedAt: Date.now(),
+  };
 }
 
 function emptyJob(): DiagnosticJob {
@@ -255,10 +326,14 @@ export function createDiagnosticRunner(
     job = {
       ...emptyJob(),
       ...parsed,
+      status: parsed.status === "running" ? (parsed.checked && parsed.checked > 0 ? "done" : "idle") : (parsed.status ?? "idle"),
       passedCount: typeof parsed.passedCount === "number" ? parsed.passedCount : (storedResults.length > 0 ? derivedPassed : undefined),
       failedCount: typeof parsed.failedCount === "number" ? parsed.failedCount : (storedResults.length > 0 ? derivedFailed : undefined),
       sampleCount: typeof parsed.sampleCount === "number" ? parsed.sampleCount : null,
     };
+    if (parsed.status === "running") {
+      save();
+    }
   } catch {
     /* first run */
   }
@@ -271,9 +346,10 @@ export function createDiagnosticRunner(
       .sort()
       .map((name) => {
         const text = fs.readFileSync(path.join(inputDir, name), "utf8");
+        const defaultProtocol: ProxyProtocol = name.toLowerCase().includes("socks") ? "socks5" : "http";
         const seen = new Set<string>();
         for (const token of text.split(/[\s,;]+/)) {
-          const proxy = parseProxy(token);
+          const proxy = parseProxy(token, defaultProtocol);
           if (proxy) seen.add(proxy.endpoint);
         }
         return { name, count: seen.size };
@@ -284,11 +360,12 @@ export function createDiagnosticRunner(
     const available = files();
     const selected = name && available.some((file) => file.name === name) ? name : available[0]?.name;
     if (!selected) return [] as ParsedProxy[];
+    const defaultProtocol: ProxyProtocol = selected.toLowerCase().includes("socks") ? "socks5" : "http";
     const seen = new Set<string>();
     const result: ParsedProxy[] = [];
     const text = fs.readFileSync(path.join(inputDir, selected), "utf8");
     for (const token of text.split(/[\s,;]+/)) {
-      const proxy = parseProxy(token);
+      const proxy = parseProxy(token, defaultProtocol);
       if (proxy && !seen.has(proxy.endpoint)) {
         seen.add(proxy.endpoint);
         result.push(proxy);
@@ -344,7 +421,7 @@ export function createDiagnosticRunner(
     let nextIndex = 0;
 
     async function worker() {
-      while (nextIndex < sample.length) {
+      while (running && nextIndex < sample.length) {
         const currentIndex = nextIndex++;
         const proxy = sample[currentIndex];
         try {
@@ -402,5 +479,32 @@ export function createDiagnosticRunner(
     }
   }
 
-  return { files, getJob: () => ({ ...job, running }), run, isRunning: () => running };
+  function stop() {
+    if (!running) {
+      if (job.status === "running") {
+        job.status = job.checked > 0 ? "done" : "idle";
+        job.finishedAt = Date.now();
+        save();
+        return true;
+      }
+      return false;
+    }
+    running = false;
+    job.status = "done";
+    job.finishedAt = Date.now();
+    save();
+    return true;
+  }
+
+  return {
+    files,
+    getJob: () => ({
+      ...job,
+      status: running ? "running" : (job.status === "running" ? (job.checked > 0 ? "done" : "idle") : job.status),
+      running,
+    }),
+    run,
+    stop,
+    isRunning: () => running,
+  };
 }

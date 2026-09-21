@@ -140,6 +140,15 @@ export async function runDiagnostics(password: string, options: { file: string; 
   if (!response.ok) throw new Error(body.error || "Could not start diagnostics");
   return body as { started: boolean };
 }
+export async function stopDiagnostics(password: string) {
+  const response = await fetch("/api/diagnostics/cancel", {
+    method: "POST",
+    headers: authHeaders(password),
+  });
+  if (response.status === 401) throw new Error("Wrong control password");
+  if (!response.ok) throw new Error("Could not stop diagnostics");
+  return response.json() as Promise<{ stopped: boolean; job: DiagnosticJob }>;
+}
 
 export async function promoteDiagnostics(password: string, ids: string[]) {
   const response = await fetch("/api/diagnostics/promote", { method: "POST", headers: authHeaders(password), body: JSON.stringify({ ids }) });

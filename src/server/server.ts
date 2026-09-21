@@ -267,6 +267,10 @@ async function handleDiagnostics(request: http.IncomingMessage, response: http.S
     });
     return json(response, { started: true }, 202);
   }
+  if (request.method === "POST" && (pathname === "/api/diagnostics/cancel" || pathname === "/api/diagnostics/stop")) {
+    const stopped = diagnostics.stop();
+    return json(response, { stopped, job: diagnostics.getJob() });
+  }
   if (request.method === "POST" && pathname === "/api/diagnostics/promote") {
     const body = await readBody(request);
     const ids = Array.isArray(body.ids) ? body.ids.map(String).slice(0, 50) : [];

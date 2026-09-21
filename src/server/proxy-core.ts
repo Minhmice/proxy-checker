@@ -4,11 +4,11 @@ export function endpoint(host: string, port: number): string {
   return `${host.includes(":") ? `[${host}]` : host}:${port}`;
 }
 
-export function parseProxy(token: string): ParsedProxy | null {
+export function parseProxy(token: string, defaultProtocol: ProxyProtocol = "http"): ParsedProxy | null {
   try {
     const source = token.trim().replace(/^[,;"']+|[,;"']+$/g, "");
     if (!source) return null;
-    const url = new URL(source.includes("://") ? source : `http://${source}`);
+    const url = new URL(source.includes("://") ? source : `${defaultProtocol}://${source}`);
     const scheme = url.protocol.slice(0, -1).toLowerCase();
     if (!["http", "https", "socks5"].includes(scheme) || !url.hostname || !url.port) return null;
     const port = Number(url.port);

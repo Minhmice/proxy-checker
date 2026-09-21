@@ -10,6 +10,7 @@ import {
   Play,
   Search,
   ShieldCheck,
+  Square,
   Upload,
 } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
@@ -18,6 +19,7 @@ import {
   fetchDiagnosticJob,
   promoteDiagnostics,
   runDiagnostics,
+  stopDiagnostics,
   uploadDiagnosticFile,
 } from "@/lib/api";
 import type { DetailedDiagnosticResult, DiagnosticJob } from "@/lib/types";
@@ -117,6 +119,16 @@ export default function DiagnosticsPage() {
         await runDiagnostics(password, { file, sampleCount: parsedCount });
         setNotice(`Diagnostic sample started (${parsedCount} endpoints).`);
       }
+      await load();
+    } catch (reason) {
+      setError((reason as Error).message);
+    }
+  }
+  async function handleStop() {
+    if (!password) return;
+    try {
+      await stopDiagnostics(password);
+      setNotice("Diagnostics stopped.");
       await load();
     } catch (reason) {
       setError((reason as Error).message);
@@ -324,14 +336,25 @@ export default function DiagnosticsPage() {
           </div>
 
           <div className="setup-toolbar-action">
-            <Button
-              className="setup-run-btn"
-              disabled={!password || !file || running}
-              onClick={handleRun}
-            >
-              <Play size={15} aria-hidden />
-              <span>{running ? "Testing sample…" : "Run diagnostics"}</span>
-            </Button>
+            {running ? (
+              <Button
+                variant="destructive"
+                className="setup-run-btn setup-stop-btn"
+                onClick={handleStop}
+              >
+                <Square size={14} aria-hidden />
+                <span>Stop diagnostics</span>
+              </Button>
+            ) : (
+              <Button
+                className="setup-run-btn"
+                disabled={!password || !file}
+                onClick={handleRun}
+              >
+                <Play size={15} aria-hidden />
+                <span>Run diagnostics</span>
+              </Button>
+            )}
           </div>
         </div>
       </section>
