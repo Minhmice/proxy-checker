@@ -1,0 +1,12 @@
+.env
+__pycache__/
+data/
+input/
+output/
+node_modules/
+.next/
+*.tsbuildinfo
+runtime/
+.impeccable/
+.worktrees/
+.superpowers/
