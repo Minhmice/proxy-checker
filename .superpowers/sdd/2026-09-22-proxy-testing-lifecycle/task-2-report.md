@@ -47,11 +47,11 @@
   - Environments: .env
 
     Creating an optimized production build ...
-  ✓ Compiled successfully in 1656ms
+  ✓ Compiled successfully in 1842ms
     Running TypeScript ...
-    Finished TypeScript in 2.6s ...
+    Finished TypeScript in 3.0s ...
     Collecting page data using 15 workers ...
-  ✓ Generating static pages using 15 workers (14/14) in 430ms
+  ✓ Generating static pages using 15 workers (14/14) in 453ms
     Finalizing page optimization ...
 
   Route (app)
@@ -81,93 +81,59 @@
   - Mobile `/proxies`: `~/AppData/Local/Temp/omp-sshots-1588cc0e703f629d.png`
   - Desktop `/diagnostics`: `~/AppData/Local/Temp/omp-sshots-1588cc3541450c18.png`
   - Mobile `/diagnostics`: `~/AppData/Local/Temp/omp-sshots-1588cc35683f629e.png`
-- **Blocked Live External Mutations & Client Auth**:
-  - The client UI uses `AuthProvider` which halts rendering with `<div class="auth-loading" aria-busy="true" />` until client-side hydration hydrates `getStoredPassword()`.
-  - In the headless browser test runner, hydration was gated by the server auth check.
-  - No live external modifications or mutations were fabricated; static code review and Next.js compiler output prove complete structural and styling coverage.
+- Settled responsive validation:
+  - Mobile sidebar rect settles off-screen correctly (`x=-294, right=-14`), verified not obstructing main content.
+  - Reset mobile `.setup-toolbar-source` `flex-basis: auto` to eliminate 280px vertical empty space.
+  - Increased `.btn-pill` `min-height: 44px` to meet 44px touch target requirement.
 
-## 4. Modified Files
-- `src/lib/api.ts`: Implemented 5 lifecycle API helpers, URL encoding for `localId`, trimming rename input, error propagation.
-- `src/app/(dashboard)/proxies/page.tsx`:
-  - Three tabs: Active, Reserve, Removed.
-  - `localId` row keys and selection.
-  - Proxy cell shows name followed by monospace endpoint.
-  - Removed Speed column; added Last checked using `formatTime`.
-  - Batch `Test selected` and `Clear` selection bar.
-  - Radix DropdownMenu action items: Test now, Rename, Activate/Deactivate, Restore proxy, Retry removal, Remove.
-  - Radix Dialogs for Rename, Restore, and accessible manual Remove confirmation.
-  - Active polling at 1.2s while sync or item test active; toast copy `Removed from 9Router; kept locally for recovery`.
-- `src/app/(dashboard)/diagnostics/page.tsx`:
-  - Setup toolbar with source select, 10/30/50/100% pills, custom count, and Run button.
-  - Summary row: Scope, Completed, Passed, Failed, Elapsed with avg rate and ETA (after 5 checks).
-  - Search across endpoint, exit IP, country, ISP, and status pills (All, Passed, Failed).
-  - Select all visible successful results; native `<details>` for error traces.
-- `src/components/proxy-health-badge.tsx`: Added support for `revived`, `retrying`, `delete_failed` states paired with semantic icons.
-- `src/components/dashboard-shell.css` & `src/components/diagnostics.css`:
-  - 44px minimum target sizes for buttons, inputs, pills, action icons.
-  - Unclipped dropdown menus, responsive table-to-card layout on mobile (<640px).
-  - Reduced-motion media query overrides.
-- Clean Cutover (Task 1 compatibility):
-  - `src/app/(dashboard)/page.tsx`: Updated `pool.id` -> `pool.localId` strictly for TypeScript compilation.
-  - `src/components/command-palette.tsx`: Updated `pool.id` -> `pool.localId` strictly for TypeScript compilation.
-- `tests/api-contract.test.ts`: Added contract tests for all lifecycle helpers, DELETE verb, and error propagation.
+## 4. Scoped Re-Review Corrections
 
-## 5. Review Findings Resolution (P1 & P2 Fixes)
+### 1. Immediate Non-Blocking Test Batch Return & Concurrency (Finding 2)
+- `testPools` in `src/server/pool-ranker.ts` reserves IDs synchronously, marks them `queued`, detaches background worker execution without `await`, and immediately returns `{ accepted, busy }`.
+- Background worker errors are caught and recorded via `logActivity`, with guaranteed release of `busyIds` in `finally`.
+- Tested with deferred checker gate (`tests/pool-ranker-lifecycle.test.ts`):
+  - Verified `testPools` returns `{ accepted: ["1"], busy: [] }` while the proxy check is still pending.
+  - Verified concurrent call during pending check immediately receives `{ accepted: [], busy: ["1"] }`.
+  - Verified observable completion reaches `idle` and `usable` upon releasing the gate.
 
-### Finding 1: Sync & rank retry/delete lifecycle
-- Integrated `executeSingleCheckAndLifecycle` inside `syncPools`. Sync now executes immediate retry on first dead check, and on second failure executes remote-first `deletePool`, transitions to `removed` or `delete_failed`, and retains `remoteId` on failure.
-- Regression test: `tests/sync-lifecycle.test.ts`.
+### 2. Transport and HTTPS Probe Restoration (Findings N1, N2, N3)
+- Restored `src/server/detailed-checker.ts` transport (`Reader`, `connect`, `openTunnel`, `requestThrough`) and probe logic (`testProxyDetailed`) verbatim from commit `bf77395`:
+  - Full non-consuming header parsing with `until` and EOF/timeout handling.
+  - Complete body collection (content-length and chunked transfer decoding).
+  - Two-phase check: `ip-api.com` identity validation (IP check, status=success) followed by TLS tunneling to `httpbin.org` for HTTPS header leak inspection.
+- Retained only the runner aggregate counters (`passedCount`, `failedCount`) and legacy migration logic.
+- Verified with `tests/detailed-checker.test.ts` including >500 capped results assertion.
 
-### Finding 2 & 3: Bounded concurrency & shared busy reservation
-- `testPools` and `syncPools` share the common `busyIds` reservation set.
-- Manual test route returns HTTP `202` with `{ accepted, busy }` immediately after reservation and executes background checks bounded by `checkConcurrency`.
-- Overlapping checks across sync and manual batches return conflicting IDs in `busy`.
+### 3. Rename 404 Reconcile by Normalized Endpoint (Finding 6)
+- In `renamePool`, on upstream 404, list remote pools and check if the proxy reappeared with a new remote ID matching normalized endpoint:
+  - If reappeared, attach new `remoteId`, set `linked`, and log activity.
+  - If absent, transition to `removed`, clear `remoteId`, and log activity.
+  - Always throw `PoolConflictError` (mapped to HTTP 409 by `server.ts`) and leave local name unmutated.
 
-### Finding 4: Restore restricted to revived pools
-- `restorePool` now explicitly checks `pool.remoteState === "revived"` and rejects `removed`, `linked`, or `delete_failed` with 409 conflict.
+### 4. Diagnostics Route Scope Validation (Finding 10 & N6)
+- In `src/server/server.ts`:
+  - Validate non-empty string `file` matching an available file in input directory.
+  - Validate scope values are finite numbers.
+  - Honor `sampleCount` precedence when both `sampleCount` and `samplePercent` are provided (per spec).
+  - Runner clamps values to valid bounds (1..100% / 1..eligible).
 
-### Finding 5 & 6: Remote-first delete_failed rename and 404 conflict mapping
-- `renamePool` updates 9Router first whenever `remoteId` exists (for both `linked` and `delete_failed`).
-- Upstream 404 throws `PoolConflictError` (HTTP 409) and reconciles local record without mutating the local name.
+### 5. Audit Logging Trail (Finding 13)
+- Emitted explicit activity log events for:
+  - Accepted test batches (IDs and counts).
+  - Transient retry successes.
+  - Manual DELETE 404 idempotent completions.
+  - Normalized endpoint reconciliation.
 
-### Finding 7: Test route validation
-- `/api/ninerouter/test` validates non-empty array of non-empty strings, rejects duplicate IDs, rejects unknown IDs with 404, and returns 202 only for valid batches.
-- Regression test: `tests/route-validation.test.ts`.
+### 6. Full-Registry Polling for Automatic-Removal Toast (Finding 14)
+- `proxies/page.tsx` polls with `fetchPools(password, "all")` so transitions from `linked` to `removed` are detected across all tabs regardless of whether Active or Reserve is currently viewed.
 
-### Finding 8 & 9: Frontend action wiring & linked-only activation
-- Fixed `handleRetryRemoval(pool)` to explicitly pass the target row.
-- Rendered `Activate / Deactivate` only when `pool.remoteState === "linked"`.
-
-### Finding 10: Diagnostics route validation
-- `/api/diagnostics/run` validates mutual exclusivity of `samplePercent` vs `sampleCount`, requires positive finite numbers/integers, validates file existence, and returns 400/404 without launching invalid jobs.
-
-### Finding 11: Persistent Diagnostics aggregates beyond 500 cap
-- `detailed-checker.ts` maintains separate persistent `passedCount` and `failedCount` across the entire run while keeping latest results capped at 500.
-- Regression test: `tests/detailed-checker.test.ts` with 550 endpoints.
-
-### Finding 12: Exact required lifecycle labels
-- `ProxyHealthBadge` updated to render exact required copy:
-  - `Offline · removed from 9Router`
-  - `Revived · ready to restore`
-  - `Removal failed · retry delete`
-
-### Finding 13: Activity log audit trail
-- `pool-ranker.ts` logs activity entries for rename, manual removal, confirmed-dead removal, delete failure, revival, and restore.
-
-### Finding 14: Automatic removal operator toast
-- Added polling state comparison in `proxies/page.tsx` (`prevPoolsRef`) that detects automatic `linked -> removed` server transitions and fires `toast.info("Removed from 9Router; kept locally for recovery")`.
-
-### Test Suite Execution Output
-```
-> test
-> node --import tsx --test tests/**/*.test.ts
-
-ℹ tests 31
-ℹ suites 0
-ℹ pass 31
-ℹ fail 0
-ℹ cancelled 0
-ℹ skipped 0
-ℹ todo 0
-ℹ duration_ms 250.8223
-```
+## 5. Verification Commands and Results
+- Focused test suite:
+  ```
+  node --import tsx --test tests/pool-ranker-lifecycle.test.ts tests/detailed-checker.test.ts tests/sync-lifecycle.test.ts tests/route-validation.test.ts tests/pool-ranker.test.ts tests/api-contract.test.ts
+  ```
+  Output: **27/27 pass** (0 fail, duration ~5.2s).
+- Full test suite (`npm test`):
+  Output: **31/31 pass** (0 fail).
+- Production build (`npm run build`):
+  Output: **Compiled successfully; 14/14 static pages generated**.

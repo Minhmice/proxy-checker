@@ -236,6 +236,7 @@ export function createPoolRanker(
 
     mutatePool(localId, (target) => {
       target.testState = "checking";
+      target.healthStatus = "checking";
     });
 
     let result = await deps.checkProxy(parsed);
@@ -256,6 +257,7 @@ export function createPoolRanker(
     if (result.status === "usable") {
       mutatePool(localId, (target) => {
         target.testState = "idle";
+        target.healthStatus = "done";
         target.status = "usable";
         target.latency_ms = result.latency_ms;
         target.exit_ip = result.exit_ip;
@@ -263,6 +265,7 @@ export function createPoolRanker(
         target.successes += 1;
         if (firstFailMsg) {
           target.firstFailure = firstFailMsg;
+          logActivity("info", `Transient retry succeeded for ${pool.name} (${localId}) after initial check failure`);
         } else {
           target.firstFailure = undefined;
           target.last_error = undefined;
@@ -278,6 +281,7 @@ export function createPoolRanker(
     const secondFailMsg = result.last_error || firstFailMsg || "Proxy check failed";
     mutatePool(localId, (target) => {
       target.testState = "idle";
+      target.healthStatus = "done";
       target.status = "dead";
       target.failures += 1;
       target.firstFailure = firstFailMsg;
@@ -588,13 +592,30 @@ export function createPoolRanker(
         if (status === 404) {
           try {
             const currentRemotes = await deps.listPools();
-            if (!currentRemotes.some((r) => r.id === pool.remoteId)) {
-              mutatePool(localId, (target) => {
-                target.remoteId = null;
-                target.remoteState = "removed";
-                target.tier = "removed";
-                target.isActiveOnRouter = false;
+            const existingRemote = currentRemotes.find((r) => r.id === pool.remoteId);
+            if (existingRemote) {
+              // Remote ID exists
+            } else {
+              const parsedTarget = parseProxy(pool.proxyUrl);
+              const matchedByEndpoint = currentRemotes.find((r) => {
+                const parsedRemote = parseProxy(r.proxyUrl);
+                return parsedTarget && parsedRemote && parsedRemote.endpoint === parsedTarget.endpoint;
               });
+              if (matchedByEndpoint) {
+                mutatePool(localId, (target) => {
+                  target.remoteId = matchedByEndpoint.id;
+                  target.remoteState = "linked";
+                });
+                logActivity("info", `Reconciled pool ${localId} with reappeared remote ID ${matchedByEndpoint.id}`);
+              } else {
+                mutatePool(localId, (target) => {
+                  target.remoteId = null;
+                  target.remoteState = "removed";
+                  target.tier = "removed";
+                  target.isActiveOnRouter = false;
+                });
+                logActivity("info", `Remote pool ${pool.remoteId} gone from 9Router (404); marked ${pool.name} (${localId}) removed`);
+              }
             }
           } catch {
             // Ignore list error
@@ -632,10 +653,11 @@ export function createPoolRanker(
           });
           logActivity("error", `Failed manual removal of ${pool.name} (${localId}): ${(error as Error).message}`);
           throw error;
+        } else {
+          logActivity("info", `Manual removal: remote pool ${pool.remoteId} already removed (404); updated local state`);
         }
       }
     }
-
     return mutatePool(localId, (target) => {
       target.remoteId = null;
       target.remoteState = "removed";
@@ -721,20 +743,25 @@ export function createPoolRanker(
     }
 
     if (accepted.length > 0) {
-      await scheduleBackgroundBatch(accepted);
+      logActivity("info", `Accepted test batch for ${accepted.length} pool(s): ${accepted.join(", ")}`);
+      scheduleBackgroundBatch(accepted).catch((err) => {
+        logActivity("error", `Test batch background worker error: ${(err as Error).message}`);
+        for (const id of accepted) {
+          busyIds.delete(id);
+        }
+      });
     }
 
     return { accepted, busy };
   }
 
-  function isSyncing() {
+  function isSyncing(): boolean {
     return syncing;
   }
 
   function getMetrics(sinceMs?: number) {
     return metrics.list(sinceMs);
   }
-
   return {
     syncPools,
     listByTier,
@@ -749,3 +776,5 @@ export function createPoolRanker(
     testPools,
   };
 }
+
+export type PoolRanker = ReturnType<typeof createPoolRanker>;

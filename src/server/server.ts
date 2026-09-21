@@ -231,43 +231,35 @@ async function handleDiagnostics(request: http.IncomingMessage, response: http.S
   if (request.method === "POST" && pathname === "/api/diagnostics/run") {
     if (diagnostics.isRunning()) return json(response, { error: "Diagnostics already running" }, 409);
     const body = await readBody(request);
+    if (typeof body.file !== "string" || !body.file.trim()) {
+      return json(response, { error: "file must be a non-empty string" }, 400);
+    }
+    const available = diagnostics.files().map((f) => f.name);
+    if (!available.includes(body.file)) {
+      return json(response, { error: `File not found: ${body.file}` }, 404);
+    }
 
-    const hasPercent = body.samplePercent !== undefined && body.samplePercent !== null;
     const hasCount = body.sampleCount !== undefined && body.sampleCount !== null;
+    const hasPercent = body.samplePercent !== undefined && body.samplePercent !== null;
 
-    if (!hasPercent && !hasCount) {
-      return json(response, { error: "Either samplePercent or sampleCount is required" }, 400);
+    if (!hasCount && !hasPercent) {
+      return json(response, { error: "Either sampleCount or samplePercent must be provided" }, 400);
     }
-    if (hasPercent && hasCount) {
-      return json(response, { error: "Cannot specify both samplePercent and sampleCount" }, 400);
-    }
-    if (hasPercent) {
-      const p = Number(body.samplePercent);
-      if (!Number.isFinite(p) || p <= 0) {
-        return json(response, { error: "samplePercent must be a positive finite number" }, 400);
-      }
-    }
+
+    let sampleCount: number | undefined;
+    let samplePercent: number | undefined;
+
     if (hasCount) {
-      const c = Number(body.sampleCount);
-      if (!Number.isFinite(c) || c <= 0 || !Number.isInteger(c)) {
-        return json(response, { error: "sampleCount must be a positive integer" }, 400);
+      if (typeof body.sampleCount !== "number" || !Number.isFinite(body.sampleCount)) {
+        return json(response, { error: "sampleCount must be a finite number" }, 400);
       }
-    }
-
-    if (typeof body.file === "string") {
-      const available = diagnostics.files().map((f) => f.name);
-      if (!available.includes(body.file)) {
-        return json(response, { error: `File not found: ${body.file}` }, 404);
-      }
-    } else if (body.file !== undefined && body.file !== null) {
-      return json(response, { error: "file must be a string" }, 400);
+      sampleCount = Math.floor(body.sampleCount);
     } else {
-      const available = diagnostics.files();
-      if (available.length === 0) {
-        return json(response, { error: "No input files available for diagnostics" }, 400);
+      if (typeof body.samplePercent !== "number" || !Number.isFinite(body.samplePercent)) {
+        return json(response, { error: "samplePercent must be a finite number" }, 400);
       }
+      samplePercent = body.samplePercent;
     }
-
     void diagnostics.run({
       file: typeof body.file === "string" ? body.file : undefined,
       samplePercent: hasPercent ? Number(body.samplePercent) : undefined,

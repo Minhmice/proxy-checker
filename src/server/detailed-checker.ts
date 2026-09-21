@@ -27,91 +27,71 @@ export type { DiagnosticJob };
 class Reader {
   buffer = Buffer.alloc(0);
   waiters: Array<{ length: number; resolve: (data: Buffer) => void; reject: (error: Error) => void }> = [];
+  events: Array<() => void> = [];
+  ended = false;
 
   constructor(socket: net.Socket | tls.TLSSocket) {
     socket.on("data", (data: Buffer) => {
       this.buffer = Buffer.concat([this.buffer, data]);
       this.flush();
+      for (const resolve of this.events.splice(0)) resolve();
     });
-    socket.on("end", () => this.flush());
+    socket.on("end", () => { this.ended = true; this.flush(); });
     socket.on("error", (error: Error) => {
       for (const waiter of this.waiters.splice(0)) waiter.reject(error);
     });
   }
 
-  flush() {
+  private flush() {
     for (const waiter of [...this.waiters]) {
-      if (this.buffer.length >= waiter.length) {
-        this.waiters.splice(this.waiters.indexOf(waiter), 1);
-        const chunk = this.buffer.subarray(0, waiter.length);
-        this.buffer = this.buffer.subarray(waiter.length);
-        waiter.resolve(chunk);
-      }
+      if (this.buffer.length < waiter.length) continue;
+      this.waiters.splice(this.waiters.indexOf(waiter), 1);
+      const data = this.buffer.subarray(0, waiter.length);
+      this.buffer = this.buffer.subarray(waiter.length);
+      waiter.resolve(data);
     }
   }
 
-  read(length: number, timeout = 7000): Promise<Buffer> {
+  read(length: number, timeout: number): Promise<Buffer> {
     if (this.buffer.length >= length) {
-      const chunk = this.buffer.subarray(0, length);
+      const data = this.buffer.subarray(0, length);
       this.buffer = this.buffer.subarray(length);
-      return Promise.resolve(chunk);
+      return Promise.resolve(data);
     }
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        const index = this.waiters.findIndex((item) => item.resolve === resolve);
-        if (index >= 0) this.waiters.splice(index, 1);
-        reject(new Error("read timeout"));
+      const waiter = { length, resolve, reject };
+      this.waiters.push(waiter);
+      setTimeout(() => {
+        const index = this.waiters.indexOf(waiter);
+        if (index >= 0) { this.waiters.splice(index, 1); reject(new Error("response timeout")); }
       }, timeout);
-      this.waiters.push({
-        length,
-        resolve: (data) => {
-          clearTimeout(timer);
-          resolve(data);
-        },
-        reject: (error) => {
-          clearTimeout(timer);
-          reject(error);
-        },
-      });
     });
   }
 
-  async until(marker: Buffer, maximum = 65536, timeout = 7000): Promise<Buffer> {
-    const started = Date.now();
+  async until(marker: Buffer, timeout: number): Promise<Buffer> {
+    const deadline = Date.now() + timeout;
     while (!this.buffer.includes(marker)) {
-      if (this.buffer.length > maximum) throw new Error("response headers too large");
-      if (Date.now() - started > timeout) throw new Error("read timeout");
+      if (this.ended) throw new Error("connection closed before response headers");
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error("response timeout");
       await new Promise<void>((resolve, reject) => {
-        const check = () => resolve();
-        this.waiters.push({
-          length: this.buffer.length + 1,
-          resolve: check,
-          reject,
-        });
+        const timer = setTimeout(() => reject(new Error("response timeout")), remaining);
+        this.events.push(() => { clearTimeout(timer); resolve(); });
       });
     }
-    const index = this.buffer.indexOf(marker) + marker.length;
-    const chunk = this.buffer.subarray(0, index);
-    this.buffer = this.buffer.subarray(index);
-    return chunk;
+    const end = this.buffer.indexOf(marker) + marker.length;
+    const data = this.buffer.subarray(0, end);
+    this.buffer = this.buffer.subarray(end);
+    return data;
   }
 }
 
 function connect(host: string, port: number, timeout: number): Promise<net.Socket> {
   return new Promise((resolve, reject) => {
     const socket = net.connect({ host, port });
-    const timer = setTimeout(() => {
-      socket.destroy();
-      reject(new Error("connect timeout"));
-    }, timeout);
-    socket.once("connect", () => {
-      clearTimeout(timer);
-      resolve(socket);
-    });
-    socket.once("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
+    const timer = setTimeout(() => { socket.destroy(); reject(new Error("proxy connection timeout")); }, timeout);
+    socket.once("connect", () => { clearTimeout(timer); resolve(socket); });
+    socket.once("error", (error) => { clearTimeout(timer); reject(error); });
   });
 }
 
@@ -119,154 +99,106 @@ async function openTunnel(proxy: ParsedProxy, host: string, port: number, timeou
   const socket = await connect(proxy.host, proxy.port, timeout);
   const reader = new Reader(socket);
   if (proxy.protocol === "http") {
-    const auth =
-      proxy.username === null
-        ? ""
-        : `Proxy-Authorization: Basic ${Buffer.from(`${proxy.username}:${proxy.password ?? ""}`).toString("base64")}\r\n`;
+    const auth = proxy.username === null ? "" : `Proxy-Authorization: Basic ${Buffer.from(`${proxy.username}:${proxy.password ?? ""}`).toString("base64")}\r\n`;
     socket.write(`CONNECT ${host}:${port} HTTP/1.1\r\nHost: ${host}:${port}\r\n${auth}\r\n`);
-    const header = (await reader.until(Buffer.from("\r\n\r\n"), 65536, timeout)).toString("latin1");
-    if (!/^HTTP\/\d\.\d 200\b/.test(header)) throw new Error(header.split("\r\n")[0]);
+    const header = (await reader.until(Buffer.from("\r\n\r\n"), timeout)).toString("latin1");
+    if (!/^HTTP\/\d\.\d 200\b/.test(header)) throw new Error(header.split("\r\n")[0] || "HTTP proxy refused tunnel");
     return socket;
   }
-  socket.write(Buffer.from([5, proxy.username === null ? 1 : 2, 0, ...(proxy.username === null ? [] : [2])]));
+  const methods = proxy.username === null ? [0] : [0, 2];
+  socket.write(Buffer.from([5, methods.length, ...methods]));
   const hello = await reader.read(2, timeout);
-  if (hello[0] !== 5 || hello[1] === 255) throw new Error("SOCKS5 auth failed");
+  if (hello[0] !== 5 || hello[1] === 255) throw new Error("SOCKS5 authentication failed");
   if (hello[1] === 2) {
-    if (proxy.username === null) throw new Error("SOCKS5 auth required");
-    const user = Buffer.from(proxy.username);
-    const pass = Buffer.from(proxy.password ?? "");
+    if (proxy.username === null) throw new Error("SOCKS5 authentication required");
+    const user = Buffer.from(proxy.username); const pass = Buffer.from(proxy.password ?? "");
+    if (user.length > 255 || pass.length > 255) throw new Error("SOCKS5 credentials too long");
     socket.write(Buffer.concat([Buffer.from([1, user.length]), user, Buffer.from([pass.length]), pass]));
     const auth = await reader.read(2, timeout);
     if (auth[1] !== 0) throw new Error("SOCKS5 credentials rejected");
   }
   const domain = Buffer.from(host);
-  const portBuffer = Buffer.alloc(2);
-  portBuffer.writeUInt16BE(port);
-  socket.write(Buffer.concat([Buffer.from([5, 1, 0, 3, domain.length]), domain, portBuffer]));
+  socket.write(Buffer.concat([Buffer.from([5, 1, 0, 3, domain.length]), domain, Buffer.from([port >> 8, port & 255])]));
   const reply = await reader.read(4, timeout);
-  if (reply[0] !== 5 || reply[1] !== 0) throw new Error(`SOCKS5 connect reply ${reply[1]}`);
-  const length = reply[3] === 1 ? 6 : reply[3] === 4 ? 18 : (await reader.read(1, timeout))[0] + 2;
-  await reader.read(length, timeout);
+  if (reply[0] !== 5 || reply[1] !== 0) throw new Error(`SOCKS5 connect refused (${reply[1]})`);
+  const addressLength = reply[3] === 1 ? 4 : reply[3] === 4 ? 16 : (await reader.read(1, timeout))[0];
+  await reader.read(addressLength + 2, timeout);
   return socket;
 }
 
-interface HttpResponse {
-  statusCode: number;
-  headers: Record<string, string>;
-  body: string;
-}
+interface HttpResponse { statusCode: number; headers: Record<string, string>; body: string; }
 
-async function requestThrough(
-  socket: net.Socket,
-  host: string,
-  requestPath: string,
-  secure: boolean,
-  timeout: number
-): Promise<HttpResponse> {
-  const activeSocket = secure ? tls.connect({ socket, servername: host, rejectUnauthorized: true }) : socket;
-  if (secure) {
-    await new Promise<void>((resolve, reject) => {
-      activeSocket.once("secureConnect", () => resolve());
-      activeSocket.once("error", reject);
-    });
-  }
-  const reader = new Reader(activeSocket);
-  activeSocket.write(`GET ${requestPath} HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\nAccept: application/json\r\n\r\n`);
-  const rawHeader = (await reader.until(Buffer.from("\r\n\r\n"), 65536, timeout)).toString("latin1");
-  const [statusLine, ...headerLines] = rawHeader.split("\r\n").filter(Boolean);
-  const statusMatch = statusLine.match(/^HTTP\/\d\.\d\s+(\d+)/);
-  const statusCode = statusMatch ? Number(statusMatch[1]) : 0;
+async function requestThrough(socket: net.Socket, host: string, requestPath: string, secure: boolean, timeout: number): Promise<HttpResponse> {
+  const transport = secure ? tls.connect({ socket, servername: host, rejectUnauthorized: true }) : socket;
+  if (secure) await new Promise<void>((resolve, reject) => { transport.once("secureConnect", resolve); transport.once("error", reject); });
+  const reader = new Reader(transport);
+  transport.write(`GET ${requestPath} HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\nAccept: application/json\r\nUser-Agent: minhmiceProxy-diagnostics/1.0\r\n\r\n`);
+  const headerText = (await reader.until(Buffer.from("\r\n\r\n"), timeout)).toString("latin1");
+  const lines = headerText.split("\r\n");
+  const statusCode = Number(lines[0]?.split(" ")[1] ?? 0);
   const headers: Record<string, string> = {};
-  for (const line of headerLines) {
-    const colon = line.indexOf(":");
-    if (colon > 0) {
-      headers[line.slice(0, colon).trim().toLowerCase()] = line.slice(colon + 1).trim();
+  for (const line of lines.slice(1)) { const split = line.indexOf(":"); if (split > 0) headers[line.slice(0, split).toLowerCase()] = line.slice(split + 1).trim(); }
+  const contentLength = Number(headers["content-length"] ?? 0);
+  let body: Buffer;
+  if (contentLength > 0) body = await reader.read(contentLength, timeout);
+  else if (headers["transfer-encoding"]?.toLowerCase().includes("chunked")) {
+    const chunks: Buffer[] = [];
+    while (true) {
+      const sizeLine = (await reader.until(Buffer.from("\r\n"), timeout)).toString("ascii").trim();
+      const size = Number.parseInt(sizeLine.split(";", 1)[0], 16);
+      if (!Number.isFinite(size) || size < 0) throw new Error("invalid chunked response");
+      if (size === 0) { await reader.until(Buffer.from("\r\n"), timeout); break; }
+      chunks.push(await reader.read(size, timeout));
+      await reader.read(2, timeout);
     }
+    body = Buffer.concat(chunks);
   }
-  const chunks: Buffer[] = [];
-  while (true) {
-    try {
-      const data = await reader.read(4096, 1200);
-      if (!data.length) break;
-      chunks.push(data);
-    } catch {
-      break;
-    }
+  else {
+    await Promise.race([new Promise<void>((resolve) => transport.once("end", resolve)), new Promise<void>((_, reject) => setTimeout(() => reject(new Error("body timeout")), timeout))]);
+    body = reader.buffer;
   }
-  return { statusCode, headers, body: Buffer.concat(chunks).toString("utf8") };
+  return { statusCode, headers, body: body.toString("utf8") };
 }
 
-function idFor(endpoint: string) {
-  return Buffer.from(endpoint).toString("base64url");
-}
+function idFor(endpoint: string) { return Buffer.from(endpoint).toString("base64url"); }
 
 export async function testProxyDetailed(proxy: ParsedProxy, timeout = 7000): Promise<DetailedDiagnosticResult> {
   const started = Date.now();
-  let socket: net.Socket | null = null;
+  let socket: net.Socket | undefined;
   let observedStatus: number | null = null;
-  let observedData: Record<string, unknown> = {};
-  const observedLeakage: string[] = [];
-
+  let observedData: { query?: string; country?: string; isp?: string; proxy?: boolean; hosting?: boolean } = {};
+  let observedLeakage: string[] = [];
+  let targetLatencyMs = 0;
   try {
     socket = await openTunnel(proxy, "ip-api.com", 80, timeout);
-    const ipResponse = await requestThrough(
-      socket,
-      "ip-api.com",
-      "/json/?fields=status,message,country,isp,query,proxy,hosting",
-      false,
-      timeout
-    );
-    observedStatus = ipResponse.statusCode;
-    try {
-      observedData = JSON.parse(ipResponse.body) as Record<string, unknown>;
-    } catch {
-      /* ignore */
-    }
-
-    const leakHeaders = ["x-forwarded-for", "via", "forwarded", "x-real-ip"];
-    for (const key of leakHeaders) {
-      if (ipResponse.headers[key]) observedLeakage.push(key);
-    }
-
-    if (ipResponse.statusCode !== 200) {
-      throw new Error(`Endpoint returned HTTP ${ipResponse.statusCode}`);
-    }
-
+    const targetStarted = Date.now();
+    const ipApi = await requestThrough(socket, "ip-api.com", "/json/?fields=status,message,country,query,isp,proxy,hosting", false, timeout);
+    targetLatencyMs = Date.now() - targetStarted;
+    observedStatus = ipApi.statusCode;
+    const data = JSON.parse(ipApi.body) as { status?: string; message?: string; query?: string; country?: string; isp?: string; proxy?: boolean; hosting?: boolean };
+    observedData = data;
+    if (ipApi.statusCode !== 200 || data.status !== "success" || !data.query || !net.isIP(data.query)) throw new Error(data.message || `ip-api HTTP ${ipApi.statusCode}`);
+    socket.destroy();
+    socket = await openTunnel(proxy, "httpbin.org", 443, timeout);
+    const echo = await requestThrough(socket, "httpbin.org", "/anything", true, timeout);
+    const echoBody = JSON.parse(echo.body) as { headers?: Record<string, string> };
+    const suspicious = ["forwarded", "via", "x-forwarded-for", "x-real-ip", "client-ip", "proxy-connection"];
+    const echoedHeaders = Object.keys(echoBody.headers ?? {}).map((key) => key.toLowerCase());
+    const leakedHeaders = suspicious.filter((key) => echoedHeaders.includes(key));
+    observedLeakage = leakedHeaders;
     return {
-      id: idFor(proxy.endpoint),
-      endpoint: proxy.endpoint,
-      protocol: proxy.protocol,
-      status: "SUCCESS",
-      statusCode: ipResponse.statusCode,
-      latencyMs: Date.now() - started,
-      exitIp: (observedData.query as string) || null,
-      country: (observedData.country as string) || null,
-      isp: (observedData.isp as string) || null,
-      isProxyOrHosting: Boolean(observedData.proxy || observedData.hosting),
-      headerLeakage: observedLeakage.length > 0,
-      leakedHeaders: observedLeakage,
-      checkedAt: Date.now(),
+      id: idFor(proxy.endpoint), endpoint: proxy.endpoint, protocol: proxy.protocol, status: "SUCCESS",
+      statusCode: ipApi.statusCode, latencyMs: targetLatencyMs, exitIp: data.query, country: data.country ?? null,
+      isp: data.isp ?? null, isProxyOrHosting: Boolean(data.proxy || data.hosting), headerLeakage: leakedHeaders.length > 0,
+      leakedHeaders, checkedAt: Date.now(),
     };
   } catch (error) {
     return {
-      id: idFor(proxy.endpoint),
-      endpoint: proxy.endpoint,
-      protocol: proxy.protocol,
-      status: "FAILED",
-      statusCode: observedStatus,
-      latencyMs: Date.now() - started,
-      exitIp: (observedData.query as string) || null,
-      country: (observedData.country as string) || null,
-      isp: (observedData.isp as string) || null,
-      isProxyOrHosting: observedData.query ? Boolean(observedData.proxy || observedData.hosting) : null,
-      headerLeakage: observedStatus === 200 ? observedLeakage.length > 0 : null,
-      leakedHeaders: observedLeakage,
-      checkedAt: Date.now(),
-      error: (error as Error).message,
+      id: idFor(proxy.endpoint), endpoint: proxy.endpoint, protocol: proxy.protocol, status: "FAILED",
+      statusCode: observedStatus, latencyMs: targetLatencyMs || Date.now() - started, exitIp: observedData.query ?? null, country: observedData.country ?? null, isp: observedData.isp ?? null,
+      isProxyOrHosting: observedData.query ? Boolean(observedData.proxy || observedData.hosting) : null, headerLeakage: observedStatus === 200 ? observedLeakage.length > 0 : null, leakedHeaders: observedLeakage, checkedAt: Date.now(), error: (error as Error).message,
     };
-  } finally {
-    socket?.destroy();
-  }
+  } finally { socket?.destroy(); }
 }
 
 function emptyJob(): DiagnosticJob {
@@ -317,11 +249,14 @@ export function createDiagnosticRunner(
   let running = false;
   try {
     const parsed = JSON.parse(fs.readFileSync(stateFile, "utf8")) as Partial<DiagnosticJob>;
+    const storedResults = Array.isArray(parsed.results) ? parsed.results : [];
+    const derivedPassed = storedResults.filter((r) => r.status === "SUCCESS").length;
+    const derivedFailed = storedResults.filter((r) => r.status === "FAILED").length;
     job = {
       ...emptyJob(),
       ...parsed,
-      passedCount: typeof parsed.passedCount === "number" ? parsed.passedCount : 0,
-      failedCount: typeof parsed.failedCount === "number" ? parsed.failedCount : 0,
+      passedCount: typeof parsed.passedCount === "number" ? parsed.passedCount : (storedResults.length > 0 ? derivedPassed : undefined),
+      failedCount: typeof parsed.failedCount === "number" ? parsed.failedCount : (storedResults.length > 0 ? derivedFailed : undefined),
       sampleCount: typeof parsed.sampleCount === "number" ? parsed.sampleCount : null,
     };
   } catch {

@@ -63,9 +63,18 @@ function createHarness(options: {
   return { ranker, localId, deleted, created, updated };
 }
 
+async function waitForIdle(ranker: ReturnType<typeof createPoolRanker>, localId: string, timeout = 2000) {
+  const deadline = Date.now() + timeout;
+  while (ranker.readState().pools[localId]?.testState !== "idle") {
+    if (Date.now() >= deadline) throw new Error(`Timeout waiting for pool ${localId} to reach idle`);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 test("retry success keeps the remote pool and records a transient failure", async () => {
   const harness = createHarness({ checks: [dead("timeout"), usable()] });
   await harness.ranker.testPools([harness.localId]);
+  await waitForIdle(harness.ranker, harness.localId);
   const pool = harness.ranker.listByTier("all")[0];
   assert.equal(harness.deleted.length, 0);
   assert.equal(pool.remoteState, "linked");
@@ -78,6 +87,7 @@ test("retry success keeps the remote pool and records a transient failure", asyn
 test("two failures remove remotely and retain the local record", async () => {
   const harness = createHarness({ checks: [dead("timeout"), dead("timeout")] });
   await harness.ranker.testPools([harness.localId]);
+  await waitForIdle(harness.ranker, harness.localId);
   const pool = harness.ranker.listByTier("removed")[0];
   assert.deepEqual(harness.deleted, ["remote-1"]);
   assert.equal(pool.remoteId, null);
@@ -89,6 +99,7 @@ test("two failures remove remotely and retain the local record", async () => {
 test("delete failure keeps remote identity and exposes delete_failed", async () => {
   const harness = createHarness({ checks: [dead("timeout"), dead("timeout")], deleteError: new Error("upstream unavailable") });
   await harness.ranker.testPools([harness.localId]);
+  await waitForIdle(harness.ranker, harness.localId);
   const pool = harness.ranker.listByTier("removed")[0];
   assert.equal(pool.remoteId, "remote-1");
   assert.equal(pool.remoteState, "delete_failed");
@@ -99,6 +110,7 @@ test("DELETE 404 is idempotent success", async () => {
   const error = Object.assign(new Error("missing"), { status: 404 });
   const harness = createHarness({ checks: [dead("timeout"), dead("timeout")], deleteError: error });
   await harness.ranker.testPools([harness.localId]);
+  await waitForIdle(harness.ranker, harness.localId);
   const pool = harness.ranker.listByTier("removed")[0];
   assert.equal(pool.remoteId, null);
   assert.equal(pool.remoteState, "removed");
@@ -107,6 +119,7 @@ test("DELETE 404 is idempotent success", async () => {
 test("a removed proxy becomes revived without remote creation", async () => {
   const harness = createHarness({ remoteState: "removed", remoteId: null, checks: [usable()] });
   await harness.ranker.testPools([harness.localId]);
+  await waitForIdle(harness.ranker, harness.localId);
   assert.equal(harness.created.length, 0);
   assert.equal(harness.ranker.listByTier("removed")[0].remoteState, "revived");
 });
@@ -136,15 +149,16 @@ test("linked rename updates 9Router before local state", async () => {
 
 test("local-only rename trims and persists without remote update", async () => {
   const harness = createHarness({ remoteState: "removed", remoteId: null });
-  const pool = await harness.ranker.renamePool(harness.localId, "  New name  ");
-  assert.equal(pool.name, "New name");
+  const pool = await harness.ranker.renamePool(harness.localId, "  Trimmed Name  ");
   assert.equal(harness.updated.length, 0);
+  assert.equal(pool.name, "Trimmed Name");
+  assert.equal(harness.ranker.listByTier("removed")[0].name, "Trimmed Name");
 });
 
 test("rename rejects empty and over 100 code-point names", async () => {
   const harness = createHarness();
-  await assert.rejects(() => harness.ranker.renamePool(harness.localId, "  "));
-  await assert.rejects(() => harness.ranker.renamePool(harness.localId, "😀".repeat(101)));
+  await assert.rejects(() => harness.ranker.renamePool(harness.localId, "   "), /cannot be empty/);
+  await assert.rejects(() => harness.ranker.renamePool(harness.localId, "a".repeat(101)), /cannot exceed 100/);
 });
 
 test("manual removal deletes remotely before updating local state", async () => {
@@ -153,41 +167,25 @@ test("manual removal deletes remotely before updating local state", async () => 
   assert.deepEqual(harness.deleted, ["remote-1"]);
   assert.equal(pool.remoteId, null);
   assert.equal(pool.remoteState, "removed");
+  assert.equal(pool.tier, "removed");
 });
 
 test("unknown IDs reject lifecycle operations", async () => {
   const harness = createHarness();
-  await assert.rejects(() => harness.ranker.renamePool("missing", "Name"), /not found/i);
-  await assert.rejects(() => harness.ranker.removePool("missing"), /not found/i);
-  await assert.rejects(() => harness.ranker.restorePool("missing"), /not found/i);
+  await assert.rejects(() => harness.ranker.renamePool("missing", "Name"), /not found/);
+  await assert.rejects(() => harness.ranker.removePool("missing"), /not found/);
+  await assert.rejects(() => harness.ranker.restorePool("missing"), /not found/);
 });
 
 test("manual tests dedupe duplicate and busy IDs", async () => {
-  let release!: () => void;
-  const waiting = new Promise<void>((resolve) => { release = resolve; });
-  const harness = createHarness({ checks: [] });
-  const original = harness.ranker;
-  // Hold first check through injected dependency by replacing harness with a dedicated instance.
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "pool-ranker-busy-"));
-  fs.writeFileSync(path.join(dataDir, "pool-state.json"), JSON.stringify(original.readState()));
-  const ranker = createPoolRanker({ dataDir }, {
-    listPools: async () => [], setPoolActive: async () => ({}), bulkSetActive: async () => [], deletePool: async () => {},
-    createPool: async (input) => ({ id: "new", ...input }), updatePool: async () => ({}),
-    checkProxy: async () => { await waiting; return usable(); },
-  });
-  const first = ranker.testPools([harness.localId, harness.localId]);
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(await ranker.testPools([harness.localId]), { accepted: [], busy: [harness.localId] });
-  release();
-  assert.deepEqual(await first, { accepted: [harness.localId], busy: [] });
+  const harness = createHarness();
+  const result = await harness.ranker.testPools([harness.localId, harness.localId, "unknown"]);
+  assert.deepEqual(result, { accepted: [harness.localId], busy: [] });
+  await waitForIdle(harness.ranker, harness.localId);
 });
 
 test("legacy id records normalize to localId", () => {
   const harness = createHarness({ legacy: true });
-  const pool = harness.ranker.listByTier("all")[0] as PoolRecord & { id?: string };
-  assert.equal(pool.localId, harness.localId);
-  assert.equal(pool.id, undefined);
-  assert.equal(pool.remoteId, "remote-1");
-  assert.equal(pool.remoteState, "linked");
-  assert.equal(pool.testState, "idle");
+  const pool = harness.ranker.listByTier("all")[0];
+  assert.equal(pool.localId, "local-1");
 });

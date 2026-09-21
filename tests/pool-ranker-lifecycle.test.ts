@@ -7,7 +7,7 @@ import test from "node:test";
 import type { CheckResult, PoolRecord } from "../src/lib/types.js";
 import { initAppConfig } from "../src/server/app-config.js";
 import { clearActivity, getActivitySnapshot } from "../src/server/activity-log.js";
-import { createPoolRanker, PoolConflictError } from "../src/server/pool-ranker.js";
+import { createPoolRanker, PoolConflictError, type PoolRanker } from "../src/server/pool-ranker.js";
 
 initAppConfig();
 
@@ -70,10 +70,43 @@ function harness(records: PoolRecord[], overrides: Record<string, unknown> = {})
   return { ranker, dataDir };
 }
 
-test("manual tests reserve IDs and reject overlapping checks as busy", async () => {
-  const { ranker } = harness([record("1")]);
-  const res = await ranker.testPools(["1"]);
-  assert.deepEqual(res, { accepted: ["1"], busy: [] });
+async function waitForIdle(ranker: PoolRanker, localId: string, timeout = 2000) {
+  const deadline = Date.now() + timeout;
+  while (ranker.readState().pools[localId]?.testState !== "idle") {
+    if (Date.now() >= deadline) throw new Error(`Timeout waiting for pool ${localId} to reach idle`);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+test("manual tests return immediately before deferred checker completes", async () => {
+  const { promise: checkerGate, resolve: releaseChecker } = Promise.withResolvers<void>();
+
+  const { ranker } = harness([record("1")], {
+    checkProxy: async () => {
+      await checkerGate;
+      return {
+        endpoint: "127.0.0.1:8001",
+        protocol: "http",
+        status: "usable",
+        exit_ip: "203.0.113.1",
+        latency_ms: 10,
+        checked_at: Date.now(),
+        successes: 1,
+        failures: 0,
+        last_error: "",
+      };
+    },
+  });
+
+  const response = await ranker.testPools(["1"]);
+  assert.deepEqual(response, { accepted: ["1"], busy: [] });
+  // Overlapping request while checkerGate is pending must report busy immediately
+  assert.deepEqual(await ranker.testPools(["1"]), { accepted: [], busy: ["1"] });
+
+  releaseChecker();
+  await waitForIdle(ranker, "1");
+  assert.equal(ranker.readState().pools["1"].testState, "idle");
+  assert.equal(ranker.readState().pools["1"].status, "usable");
 });
 
 test("restore accepts only revived pools", async () => {

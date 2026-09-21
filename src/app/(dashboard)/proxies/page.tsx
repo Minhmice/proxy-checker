@@ -115,13 +115,13 @@ export default function ProxiesPage() {
       }
       try {
         const statusData = await fetchStatus(password, signal);
-        const tier = statusData.running ? "all" : tab;
-        const poolsData = await fetchPools(password, tier, signal);
+        // Fetch complete registry snapshot so transitions across tabs are always observable
+        const allPoolsData = await fetchPools(password, "all", signal);
 
-        // Detect automatic transition: linked -> removed on server side
+        // Detect automatic transition: linked -> removed on server side across all records
         const prevMap = prevPoolsRef.current;
         if (prevMap.size > 0) {
-          for (const current of poolsData) {
+          for (const current of allPoolsData) {
             const before = prevMap.get(current.localId);
             if (before && before.remoteState === "linked" && current.remoteState === "removed") {
               toast.info("Removed from 9Router; kept locally for recovery");
@@ -129,11 +129,11 @@ export default function ProxiesPage() {
           }
         }
         const nextMap = new Map<string, PoolRecord>();
-        for (const p of poolsData) nextMap.set(p.localId, p);
+        for (const p of allPoolsData) nextMap.set(p.localId, p);
         prevPoolsRef.current = nextMap;
 
         setStatus(statusData);
-        setPools(poolsData);
+        setPools(allPoolsData);
         setError("");
       } catch (err) {
         if ((err as Error).name === "AbortError") return;
