@@ -49,11 +49,12 @@ const pool: PoolRecord = {
 const poolResponse = { pool };
 
 test("testPools sends local ids to the lifecycle endpoint", async () => {
-  const request = recordFetch({ accepted: ["local-1"], busy: [] });
-  await testPools("secret", ["local-1"]);
+  const request = recordFetch({ accepted: ["local-1"], busy: [] }, 202);
+  const result = await testPools("secret", ["local-1"]);
   assert.equal(request.url, "/api/ninerouter/test");
   assert.equal(request.init.method, "POST");
   assert.deepEqual(JSON.parse(String(request.init.body)), { ids: ["local-1"] });
+  assert.deepEqual(result, { accepted: ["local-1"], busy: [] });
 });
 
 test("rename and restore target the encoded local identity", async () => {
@@ -77,7 +78,7 @@ test("removePool uses DELETE with the encoded local identity", async () => {
 });
 
 test("diagnostics sends exactly the selected scope", async () => {
-  const request = recordFetch({ started: true });
+  const request = recordFetch({ started: true }, 202);
   await runDiagnostics("secret", { file: "sample.txt", sampleCount: 25 });
   assert.deepEqual(JSON.parse(String(request.init.body)), { file: "sample.txt", sampleCount: 25 });
 });

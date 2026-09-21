@@ -37,7 +37,7 @@ export function ProxyHealthBadge({ pool }: { pool: PoolRecord }) {
     return (
       <Badge className="health-badge health-badge--revived" variant="secondary">
         <RotateCcw aria-hidden />
-        <span>Revived</span>
+        <span>Revived · ready to restore</span>
       </Badge>
     );
   }
@@ -46,7 +46,16 @@ export function ProxyHealthBadge({ pool }: { pool: PoolRecord }) {
     return (
       <Badge className="health-badge health-badge--dead" variant="destructive">
         <XCircle aria-hidden />
-        <span>Delete failed</span>
+        <span>Removal failed · retry delete</span>
+      </Badge>
+    );
+  }
+
+  if (pool.remoteState === "removed") {
+    return (
+      <Badge className="health-badge health-badge--removed" variant="secondary">
+        <XCircle aria-hidden />
+        <span>Offline · removed from 9Router</span>
       </Badge>
     );
   }

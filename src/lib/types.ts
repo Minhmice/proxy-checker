@@ -165,6 +165,8 @@ export interface DiagnosticJob {
   eligible: number;
   total: number;
   checked: number;
+  passedCount?: number;
+  failedCount?: number;
   startedAt: number | null;
   finishedAt: number | null;
   results: DetailedDiagnosticResult[];

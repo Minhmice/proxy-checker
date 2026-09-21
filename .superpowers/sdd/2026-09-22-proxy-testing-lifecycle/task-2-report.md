@@ -47,11 +47,11 @@
   - Environments: .env
 
     Creating an optimized production build ...
-  ✓ Compiled successfully in 1790ms
+  ✓ Compiled successfully in 1656ms
     Running TypeScript ...
-    Finished TypeScript in 2.7s ...
+    Finished TypeScript in 2.6s ...
     Collecting page data using 15 workers ...
-  ✓ Generating static pages using 15 workers (14/14) in 431ms
+  ✓ Generating static pages using 15 workers (14/14) in 430ms
     Finalizing page optimization ...
 
   Route (app)
@@ -112,10 +112,62 @@
   - `src/components/command-palette.tsx`: Updated `pool.id` -> `pool.localId` strictly for TypeScript compilation.
 - `tests/api-contract.test.ts`: Added contract tests for all lifecycle helpers, DELETE verb, and error propagation.
 
-## 5. Self-Review & Concerns
-- **Self-Review**:
-  - No speculative features or nested cards added; dark control-room theme preserved.
-  - 44px hit targets and WCAG accessible focus rings verified.
-  - Clean cutover preserves compilation of existing dashboard and command palette without changing their UX.
-- **Concerns**:
-  - Live browser testing without a seeded local authentication cookie or valid session storage hangs at the hydration gate in automated environments. Integration environments should pre-populate `sessionStorage` with a valid session or mock `AuthProvider` during visual tests.
+## 5. Review Findings Resolution (P1 & P2 Fixes)
+
+### Finding 1: Sync & rank retry/delete lifecycle
+- Integrated `executeSingleCheckAndLifecycle` inside `syncPools`. Sync now executes immediate retry on first dead check, and on second failure executes remote-first `deletePool`, transitions to `removed` or `delete_failed`, and retains `remoteId` on failure.
+- Regression test: `tests/sync-lifecycle.test.ts`.
+
+### Finding 2 & 3: Bounded concurrency & shared busy reservation
+- `testPools` and `syncPools` share the common `busyIds` reservation set.
+- Manual test route returns HTTP `202` with `{ accepted, busy }` immediately after reservation and executes background checks bounded by `checkConcurrency`.
+- Overlapping checks across sync and manual batches return conflicting IDs in `busy`.
+
+### Finding 4: Restore restricted to revived pools
+- `restorePool` now explicitly checks `pool.remoteState === "revived"` and rejects `removed`, `linked`, or `delete_failed` with 409 conflict.
+
+### Finding 5 & 6: Remote-first delete_failed rename and 404 conflict mapping
+- `renamePool` updates 9Router first whenever `remoteId` exists (for both `linked` and `delete_failed`).
+- Upstream 404 throws `PoolConflictError` (HTTP 409) and reconciles local record without mutating the local name.
+
+### Finding 7: Test route validation
+- `/api/ninerouter/test` validates non-empty array of non-empty strings, rejects duplicate IDs, rejects unknown IDs with 404, and returns 202 only for valid batches.
+- Regression test: `tests/route-validation.test.ts`.
+
+### Finding 8 & 9: Frontend action wiring & linked-only activation
+- Fixed `handleRetryRemoval(pool)` to explicitly pass the target row.
+- Rendered `Activate / Deactivate` only when `pool.remoteState === "linked"`.
+
+### Finding 10: Diagnostics route validation
+- `/api/diagnostics/run` validates mutual exclusivity of `samplePercent` vs `sampleCount`, requires positive finite numbers/integers, validates file existence, and returns 400/404 without launching invalid jobs.
+
+### Finding 11: Persistent Diagnostics aggregates beyond 500 cap
+- `detailed-checker.ts` maintains separate persistent `passedCount` and `failedCount` across the entire run while keeping latest results capped at 500.
+- Regression test: `tests/detailed-checker.test.ts` with 550 endpoints.
+
+### Finding 12: Exact required lifecycle labels
+- `ProxyHealthBadge` updated to render exact required copy:
+  - `Offline · removed from 9Router`
+  - `Revived · ready to restore`
+  - `Removal failed · retry delete`
+
+### Finding 13: Activity log audit trail
+- `pool-ranker.ts` logs activity entries for rename, manual removal, confirmed-dead removal, delete failure, revival, and restore.
+
+### Finding 14: Automatic removal operator toast
+- Added polling state comparison in `proxies/page.tsx` (`prevPoolsRef`) that detects automatic `linked -> removed` server transitions and fires `toast.info("Removed from 9Router; kept locally for recovery")`.
+
+### Test Suite Execution Output
+```
+> test
+> node --import tsx --test tests/**/*.test.ts
+
+ℹ tests 31
+ℹ suites 0
+ℹ pass 31
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 250.8223
+```

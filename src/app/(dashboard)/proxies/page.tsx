@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUpDown,
   ArrowDown,
@@ -86,6 +86,9 @@ export default function ProxiesPage() {
     direction: "asc",
   });
 
+  // Track previous pools to surface automatic server-side deletion toast
+  const prevPoolsRef = useRef<Map<string, PoolRecord>>(new Map());
+
   // Action dialog states
   const [renameTarget, setRenameTarget] = useState<PoolRecord | null>(null);
   const [renameInput, setRenameInput] = useState("");
@@ -114,6 +117,21 @@ export default function ProxiesPage() {
         const statusData = await fetchStatus(password, signal);
         const tier = statusData.running ? "all" : tab;
         const poolsData = await fetchPools(password, tier, signal);
+
+        // Detect automatic transition: linked -> removed on server side
+        const prevMap = prevPoolsRef.current;
+        if (prevMap.size > 0) {
+          for (const current of poolsData) {
+            const before = prevMap.get(current.localId);
+            if (before && before.remoteState === "linked" && current.remoteState === "removed") {
+              toast.info("Removed from 9Router; kept locally for recovery");
+            }
+          }
+        }
+        const nextMap = new Map<string, PoolRecord>();
+        for (const p of poolsData) nextMap.set(p.localId, p);
+        prevPoolsRef.current = nextMap;
+
         setStatus(statusData);
         setPools(poolsData);
         setError("");
@@ -243,11 +261,12 @@ export default function ProxiesPage() {
     setRemoveTarget(pool);
   }
 
-  async function submitRemove() {
-    if (!password || !removeTarget) return;
+  async function submitRemove(explicitTarget?: PoolRecord) {
+    const target = explicitTarget ?? removeTarget;
+    if (!password || !target) return;
     setRemoveSubmitting(true);
     try {
-      await removePool(password, removeTarget.localId);
+      await removePool(password, target.localId);
       toast.success("Removed from 9Router; kept locally for recovery");
       setRemoveTarget(null);
       await load();
@@ -256,6 +275,10 @@ export default function ProxiesPage() {
     } finally {
       setRemoveSubmitting(false);
     }
+  }
+
+  async function handleRetryRemoval(pool: PoolRecord) {
+    await submitRemove(pool);
   }
 
   const visiblePools = useMemo(() => {
@@ -571,7 +594,7 @@ export default function ProxiesPage() {
                             <span>Rename</span>
                           </DropdownMenuItem>
 
-                          {pool.remoteState !== "removed" && (
+                          {pool.remoteState === "linked" && (
                             <DropdownMenuItem
                               onClick={() => handleToggle(pool)}
                               disabled={isTesting || isQueued}
@@ -590,7 +613,7 @@ export default function ProxiesPage() {
 
                           {pool.remoteState === "delete_failed" && (
                             <DropdownMenuItem
-                              onClick={() => submitRemove()}
+                              onClick={() => handleRetryRemoval(pool)}
                               disabled={isTesting}
                               className="text-error"
                             >
@@ -748,7 +771,7 @@ export default function ProxiesPage() {
             <Button
               variant="destructive"
               type="button"
-              onClick={submitRemove}
+              onClick={() => submitRemove()}
               disabled={removeSubmitting}
             >
               {removeSubmitting ? "Removing…" : "Remove proxy"}

@@ -7,7 +7,7 @@ import next from "next";
 import { getSettingsSecrets, getSettingsPublic, onSettingsChange, updateSettings, verifyControlPassword } from "./app-config.js";
 import { createInputChecker } from "./checker.js";
 import { logActivity, logActivityThrottled } from "./activity-log.js";
-import { createPoolRanker } from "./pool-ranker.js";
+import { createPoolRanker, PoolConflictError } from "./pool-ranker.js";
 import { clearNineRouterSession, nineRouterConfigured, testNineRouterConnection } from "./nine-router-client.js";
 import { bulkSetActive, listPools } from "./nine-router-client.js";
 import { parseProxy, proxyUrl } from "./proxy-core.js";
@@ -117,14 +117,27 @@ async function handleNineRouter(request: http.IncomingMessage, response: http.Se
 
   if (request.method === "POST" && pathname === "/api/ninerouter/test") {
     const body = await readBody(request);
-    const ids = Array.isArray(body.ids)
-      ? body.ids.map(String).map((s) => s.trim()).filter(Boolean)
-      : [];
-    if (!ids.length) {
+    if (!Array.isArray(body.ids) || body.ids.length === 0) {
       return json(response, { error: "ids must be a non-empty array of strings" }, 400);
     }
-    const result = await poolRanker.testPools(ids);
-    return json(response, result);
+    for (const item of body.ids) {
+      if (typeof item !== "string" || !item.trim()) {
+        return json(response, { error: "Each id must be a non-empty string" }, 400);
+      }
+    }
+    const rawIds = body.ids as string[];
+    const uniqueIds = Array.from(new Set(rawIds));
+    if (uniqueIds.length !== rawIds.length) {
+      return json(response, { error: "Duplicate pool ids are not allowed in test batch" }, 400);
+    }
+    const state = poolRanker.readState();
+    for (const id of rawIds) {
+      if (!state.pools[id]) {
+        return json(response, { error: `Pool not found: ${id}` }, 404);
+      }
+    }
+    const result = await poolRanker.testPools(rawIds);
+    return json(response, result, 202);
   }
 
   if (request.method === "POST" && pathname === "/api/ninerouter/activate") {
@@ -156,6 +169,9 @@ async function handleNineRouter(request: http.IncomingMessage, response: http.Se
         const pool = await poolRanker.renamePool(localId, body.name);
         return json(response, { pool });
       } catch (error) {
+        if (error instanceof PoolConflictError) {
+          return json(response, { error: error.message }, 409);
+        }
         const err = error as Error & { status?: number };
         const message = err.message || "Failed to rename pool";
         if (message.includes("not found")) return json(response, { error: message }, 404);
@@ -213,12 +229,49 @@ async function handleDiagnostics(request: http.IncomingMessage, response: http.S
     return json(response, { name: safeName, count: diagnostics.files().find((file) => file.name === safeName)?.count ?? 0 });
   }
   if (request.method === "POST" && pathname === "/api/diagnostics/run") {
-    if (diagnostics.isRunning()) return json(response, { started: false, running: true }, 409);
+    if (diagnostics.isRunning()) return json(response, { error: "Diagnostics already running" }, 409);
     const body = await readBody(request);
+
+    const hasPercent = body.samplePercent !== undefined && body.samplePercent !== null;
+    const hasCount = body.sampleCount !== undefined && body.sampleCount !== null;
+
+    if (!hasPercent && !hasCount) {
+      return json(response, { error: "Either samplePercent or sampleCount is required" }, 400);
+    }
+    if (hasPercent && hasCount) {
+      return json(response, { error: "Cannot specify both samplePercent and sampleCount" }, 400);
+    }
+    if (hasPercent) {
+      const p = Number(body.samplePercent);
+      if (!Number.isFinite(p) || p <= 0) {
+        return json(response, { error: "samplePercent must be a positive finite number" }, 400);
+      }
+    }
+    if (hasCount) {
+      const c = Number(body.sampleCount);
+      if (!Number.isFinite(c) || c <= 0 || !Number.isInteger(c)) {
+        return json(response, { error: "sampleCount must be a positive integer" }, 400);
+      }
+    }
+
+    if (typeof body.file === "string") {
+      const available = diagnostics.files().map((f) => f.name);
+      if (!available.includes(body.file)) {
+        return json(response, { error: `File not found: ${body.file}` }, 404);
+      }
+    } else if (body.file !== undefined && body.file !== null) {
+      return json(response, { error: "file must be a string" }, 400);
+    } else {
+      const available = diagnostics.files();
+      if (available.length === 0) {
+        return json(response, { error: "No input files available for diagnostics" }, 400);
+      }
+    }
+
     void diagnostics.run({
       file: typeof body.file === "string" ? body.file : undefined,
-      samplePercent: body.samplePercent !== undefined ? Number(body.samplePercent) : undefined,
-      sampleCount: body.sampleCount !== undefined ? Number(body.sampleCount) : undefined,
+      samplePercent: hasPercent ? Number(body.samplePercent) : undefined,
+      sampleCount: hasCount ? Number(body.sampleCount) : undefined,
     });
     return json(response, { started: true }, 202);
   }

@@ -35,6 +35,8 @@ const emptyJob: DiagnosticJob = {
   eligible: 0,
   total: 0,
   checked: 0,
+  passedCount: 0,
+  failedCount: 0,
   startedAt: null,
   finishedAt: null,
   results: [],
@@ -183,16 +185,11 @@ export default function DiagnosticsPage() {
     return Math.round(remaining / avgRate);
   }, [running, job.checked, job.total, avgRate]);
 
-  const successfulResults = useMemo(
-    () => job.results.filter((r) => r.status === "SUCCESS"),
-    [job.results]
-  );
-  const failedResults = useMemo(
-    () => job.results.filter((r) => r.status === "FAILED"),
-    [job.results]
-  );
+  // Aggregate counters from backend job state rather than capped result storage
+  const totalPassed = job.passedCount ?? job.results.filter((r) => r.status === "SUCCESS").length;
+  const totalFailed = job.failedCount ?? job.results.filter((r) => r.status === "FAILED").length;
 
-  // Search & Filter
+  // Search & Filter over currently loaded latest results
   const filteredResults = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
     return job.results.filter((res) => {
@@ -353,13 +350,13 @@ export default function DiagnosticsPage() {
         </div>
         <div>
           <span>Passed</span>
-          <strong className="text-success">{successfulResults.length.toLocaleString()}</strong>
+          <strong className="text-success">{totalPassed.toLocaleString()}</strong>
           <small>verified</small>
         </div>
         <div>
           <span>Failed</span>
-          <strong className={failedResults.length ? "text-error" : ""}>
-            {failedResults.length.toLocaleString()}
+          <strong className={totalFailed > 0 ? "text-error" : ""}>
+            {totalFailed.toLocaleString()}
           </strong>
           <small>with error</small>
         </div>
@@ -393,7 +390,10 @@ export default function DiagnosticsPage() {
         <div className="results-header-toolbar">
           <div className="results-header-info">
             <h2 id="diagnostics-results-title">Diagnostic evidence</h2>
-            <p>Inspect identity, network latency, leaks, and error traces.</p>
+            <p>
+              Inspect identity, network latency, leaks, and error traces
+              {job.checked > 500 ? " (showing latest 500 checked results)" : ""}.
+            </p>
           </div>
 
           <div className="results-toolbar-controls">
@@ -417,7 +417,7 @@ export default function DiagnosticsPage() {
                 role="tab"
                 aria-selected={resultFilter === "all"}
               >
-                All ({job.results.length})
+                All ({job.total > 500 ? `${filteredResults.length} / ${job.results.length} view` : job.results.length})
               </button>
               <button
                 type="button"
@@ -426,7 +426,7 @@ export default function DiagnosticsPage() {
                 role="tab"
                 aria-selected={resultFilter === "passed"}
               >
-                Passed ({successfulResults.length})
+                Passed ({totalPassed})
               </button>
               <button
                 type="button"
@@ -435,7 +435,7 @@ export default function DiagnosticsPage() {
                 role="tab"
                 aria-selected={resultFilter === "failed"}
               >
-                Failed ({failedResults.length})
+                Failed ({totalFailed})
               </button>
             </div>
 

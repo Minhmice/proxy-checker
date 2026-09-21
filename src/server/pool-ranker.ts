@@ -17,6 +17,14 @@ import {
 } from "./nine-router-client.js";
 import { parseProxy } from "./proxy-core.js";
 
+export class PoolConflictError extends Error {
+  readonly status = 409;
+  constructor(message: string) {
+    super(message);
+    this.name = "PoolConflictError";
+  }
+}
+
 export interface PoolRankerDeps {
   listPools: typeof defaultListPools;
   setPoolActive: typeof defaultSetPoolActive;
@@ -211,6 +219,106 @@ export function createPoolRanker(
     return checkedPools;
   }
 
+  async function executeSingleCheckAndLifecycle(localId: string) {
+    const pool = readState().pools[localId];
+    if (!pool) return;
+    const parsed = parseProxy(pool.proxyUrl);
+    if (!parsed) {
+      mutatePool(localId, (target) => {
+        target.testState = "idle";
+        target.status = "dead";
+        target.failures += 1;
+        target.firstFailure = "Invalid proxy URL";
+        target.last_error = "Invalid proxy URL";
+      });
+      return;
+    }
+
+    mutatePool(localId, (target) => {
+      target.testState = "checking";
+    });
+
+    let result = await deps.checkProxy(parsed);
+    let firstFailMsg: string | undefined;
+
+    if (result.status === "dead") {
+      firstFailMsg = result.last_error || "Check failed";
+      mutatePool(localId, (target) => {
+        target.testState = "retrying";
+        target.firstFailure = firstFailMsg;
+        target.failures += 1;
+        target.last_error = firstFailMsg;
+      });
+      logActivity("warn", `First check failed for ${pool.name} (${localId}): ${firstFailMsg} — retrying immediately…`);
+      result = await deps.checkProxy(parsed);
+    }
+
+    if (result.status === "usable") {
+      mutatePool(localId, (target) => {
+        target.testState = "idle";
+        target.status = "usable";
+        target.latency_ms = result.latency_ms;
+        target.exit_ip = result.exit_ip;
+        target.checked_at = result.checked_at;
+        target.successes += 1;
+        if (firstFailMsg) {
+          target.firstFailure = firstFailMsg;
+        } else {
+          target.firstFailure = undefined;
+          target.last_error = undefined;
+        }
+        if (target.remoteState === "removed") {
+          target.remoteState = "revived";
+          logActivity("success", `Proxy revived: ${target.name} (${localId}) is usable and ready to restore`);
+        }
+      });
+      return;
+    }
+
+    const secondFailMsg = result.last_error || firstFailMsg || "Proxy check failed";
+    mutatePool(localId, (target) => {
+      target.testState = "idle";
+      target.status = "dead";
+      target.failures += 1;
+      target.firstFailure = firstFailMsg;
+      target.last_error = secondFailMsg;
+    });
+
+    if (pool.remoteState === "linked" && pool.remoteId) {
+      logActivity("warn", `Confirmed dead after retry: removing ${pool.name} (${localId}) from 9Router…`);
+      try {
+        await deps.deletePool(pool.remoteId);
+        mutatePool(localId, (target) => {
+          target.remoteId = null;
+          target.remoteState = "removed";
+          target.tier = "removed";
+          target.isActiveOnRouter = false;
+        });
+        logActivity("info", `Removed dead proxy ${pool.name} (${localId}) from 9Router; kept locally`);
+      } catch (error) {
+        const status = (error as { status?: number }).status;
+        if (status === 404) {
+          mutatePool(localId, (target) => {
+            target.remoteId = null;
+            target.remoteState = "removed";
+            target.tier = "removed";
+            target.isActiveOnRouter = false;
+          });
+          logActivity("info", `Remote pool already gone (404); marked ${pool.name} (${localId}) removed`);
+        } else {
+          const errMsg = (error as Error).message;
+          mutatePool(localId, (target) => {
+            target.remoteState = "delete_failed";
+            target.tier = "removed";
+            target.isActiveOnRouter = false;
+            target.last_error = errMsg;
+          });
+          logActivity("error", `Failed to delete dead proxy ${pool.name} from 9Router: ${errMsg}`);
+        }
+      }
+    }
+  }
+
   async function syncPools() {
     if (syncing) {
       logActivity("warn", "Sync already running — skipped duplicate request");
@@ -257,11 +365,7 @@ export function createPoolRanker(
         if (parsed) existingByEndpoint.set(parsed.endpoint, record);
       }
 
-      const checkTargets: Array<{
-        localId: string;
-        pool: { id: string; name: string; proxyUrl: string; type?: string };
-        proxy: ParsedProxy;
-      }> = [];
+      const targetsToSync: string[] = [];
 
       for (const pool of httpPools) {
         const parsed = parseProxy(pool.proxyUrl);
@@ -293,7 +397,7 @@ export function createPoolRanker(
           continue;
         }
 
-        checkTargets.push({ localId, pool, proxy: parsed });
+        targetsToSync.push(localId);
         poolMap[localId] = {
           localId,
           remoteId: pool.id,
@@ -317,55 +421,38 @@ export function createPoolRanker(
       }
 
       publishPools(poolMap, skipped, previous.lastSyncAt);
-      if (checkTargets.length > 0) {
-        logActivity("info", `Listed ${checkTargets.length} proxies — starting health checks…`);
-        setSyncProgress({ phase: "check", total: checkTargets.length, checked: 0 });
+      if (targetsToSync.length > 0) {
+        logActivity("info", `Listed ${targetsToSync.length} proxies — starting health checks with retry/delete lifecycle…`);
+        setSyncProgress({ phase: "check", total: targetsToSync.length, checked: 0 });
       }
 
-      let lastLoggedAt = 0;
-      let lastPublishedAt = Date.now();
-      await checkMany(checkTargets.map((item) => item.proxy), checkConcurrency, {
-        onStart: (index) => {
-          const { localId } = checkTargets[index];
-          if (poolMap[localId]) poolMap[localId] = { ...poolMap[localId], healthStatus: "checking" };
-          const now = Date.now();
-          if (now - lastPublishedAt >= 150) {
-            publishPools(poolMap, skipped, previous.lastSyncAt);
-            lastPublishedAt = now;
-          }
-        },
-        onResult: (index, result) => {
-          const { localId } = checkTargets[index];
-          const prev = previous.pools[localId] ?? { successes: 0, failures: 0 };
-          poolMap[localId] = {
-            ...poolMap[localId],
-            healthStatus: "done",
-            status: result.status,
-            latency_ms: result.latency_ms,
-            exit_ip: result.exit_ip,
-            checked_at: result.checked_at,
-            successes: (prev.successes ?? 0) + result.successes,
-            failures: (prev.failures ?? 0) + result.failures,
-            firstFailure: result.status === "dead" ? poolMap[localId]?.firstFailure ?? result.last_error : undefined,
-            last_error: result.last_error,
-          };
-          const now = Date.now();
-          if (now - lastPublishedAt >= 250 || index === checkTargets.length - 1) {
-            publishPools(poolMap, skipped, previous.lastSyncAt);
-            lastPublishedAt = now;
-          }
-        },
-        onProgress: (checked, total) => {
-          setSyncProgress({ phase: "check", checked, total });
-          const now = Date.now();
-          if (checked === total || checked === 1 || now - lastLoggedAt > 5000) {
-            lastLoggedAt = now;
-            logActivity("info", `Checked ${checked}/${total} proxies…`);
-          }
-        },
-      });
+      let checkCursor = 0;
+      let completedCount = 0;
 
-      const checkedPools = Object.values(poolMap);
+      async function syncWorker() {
+        while (checkCursor < targetsToSync.length) {
+          const idx = checkCursor++;
+          const localId = targetsToSync[idx];
+          if (busyIds.has(localId)) {
+            completedCount++;
+            continue;
+          }
+          busyIds.add(localId);
+          try {
+            await executeSingleCheckAndLifecycle(localId);
+          } finally {
+            busyIds.delete(localId);
+            completedCount++;
+            setSyncProgress({ phase: "check", checked: completedCount, total: targetsToSync.length });
+          }
+        }
+      }
+
+      const workerCount = Math.max(1, Math.min(checkConcurrency, targetsToSync.length || 1));
+      await Promise.all(Array.from({ length: workerCount }, () => syncWorker()));
+
+      const latestState = readState();
+      const checkedPools = Object.values(latestState.pools);
       assignTiers(checkedPools);
       for (const pool of checkedPools) pool.healthStatus = "done";
       const usable = checkedPools.filter((pool) => pool.status === "usable" && pool.remoteState === "linked").length;
@@ -385,7 +472,7 @@ export function createPoolRanker(
 
       const stats = computeStats(checkedPools, skipped);
       const state: PoolState = {
-        pools: poolMap,
+        pools: latestState.pools,
         lastSyncAt: Date.now(),
         stats,
         lastError: failed.length ? `${failed.length} activation update(s) failed` : "",
@@ -395,10 +482,12 @@ export function createPoolRanker(
       lastError = state.lastError;
 
       const elapsed = Math.round((Date.now() - startedAt) / 1000);
-      setSyncProgress({ phase: "done", checked: checkTargets.length, total: checkTargets.length });
+      setSyncProgress({ phase: "done", checked: targetsToSync.length, total: targetsToSync.length });
       logActivity("success", `Sync finished in ${elapsed}s — ${stats.active} active, ${stats.reserve} reserve`);
 
-      const removedToCheck = Object.values(poolMap).filter((p) => p.remoteState === "removed");
+      // Only recheck pre-existing removed proxies, not proxies just confirmed dead in this sync pass
+      const preExistingRemoved = Object.values(previous.pools).filter((p) => p.remoteState === "removed");
+      const removedToCheck = preExistingRemoved.filter((p) => !targetsToSync.includes(p.localId));
       if (removedToCheck.length > 0) {
         void testPools(removedToCheck.map((p) => p.localId)).catch(() => {});
       }
@@ -482,6 +571,7 @@ export function createPoolRanker(
     state.stats = computeStats(Object.values(state.pools));
     writeState(state);
     metrics.recordFromPools(Object.values(state.pools), state.stats);
+    logActivity("info", `${isActive ? "Activated" : "Deactivated"} pool ${pool.name} (${localId}) on 9Router`);
     return pool;
   }
 
@@ -490,13 +580,37 @@ export function createPoolRanker(
     const pool = readState().pools[localId];
     if (!pool) throw new Error(`Pool not found: ${localId}`);
 
-    if (pool.remoteState === "linked" && pool.remoteId) {
-      await deps.updatePool(pool.remoteId, { name: validName });
+    if ((pool.remoteState === "linked" || pool.remoteState === "delete_failed") && pool.remoteId) {
+      try {
+        await deps.updatePool(pool.remoteId, { name: validName });
+      } catch (error) {
+        const status = (error as { status?: number }).status;
+        if (status === 404) {
+          try {
+            const currentRemotes = await deps.listPools();
+            if (!currentRemotes.some((r) => r.id === pool.remoteId)) {
+              mutatePool(localId, (target) => {
+                target.remoteId = null;
+                target.remoteState = "removed";
+                target.tier = "removed";
+                target.isActiveOnRouter = false;
+              });
+            }
+          } catch {
+            // Ignore list error
+          }
+          logActivity("error", `Rename conflict: remote pool ${pool.remoteId} not found on 9Router (404)`);
+          throw new PoolConflictError(`Proxy pool ${localId} no longer exists on 9Router`);
+        }
+        throw error;
+      }
     }
 
-    return mutatePool(localId, (target) => {
+    const updated = mutatePool(localId, (target) => {
       target.name = validName;
     });
+    logActivity("info", `Renamed pool ${localId} to "${validName}"`);
+    return updated;
   }
 
   async function removePool(localId: string): Promise<PoolRecord> {
@@ -506,6 +620,7 @@ export function createPoolRanker(
     if (pool.remoteId) {
       try {
         await deps.deletePool(pool.remoteId);
+        logActivity("info", `Manually removed ${pool.name} (${localId}) from 9Router`);
       } catch (error) {
         const status = (error as { status?: number }).status;
         if (status !== 404) {
@@ -515,6 +630,7 @@ export function createPoolRanker(
             target.isActiveOnRouter = false;
             target.last_error = (error as Error).message;
           });
+          logActivity("error", `Failed manual removal of ${pool.name} (${localId}): ${(error as Error).message}`);
           throw error;
         }
       }
@@ -532,7 +648,7 @@ export function createPoolRanker(
   async function restorePool(localId: string): Promise<PoolRecord> {
     const pool = readState().pools[localId];
     if (!pool) throw new Error(`Pool not found: ${localId}`);
-    if (pool.remoteState !== "revived" && pool.remoteState !== "removed") {
+    if (pool.remoteState !== "revived") {
       throw new Error(`Cannot restore pool in ${pool.remoteState} state`);
     }
 
@@ -555,106 +671,34 @@ export function createPoolRanker(
       assignedRemoteId = created.id;
     }
 
-    return mutatePool(localId, (target) => {
+    const restored = mutatePool(localId, (target) => {
       target.remoteId = assignedRemoteId!;
       target.remoteState = "linked";
       target.tier = "reserve";
       target.isActiveOnRouter = false;
       target.testState = "idle";
     });
+    logActivity("success", `Restored pool ${pool.name} (${localId}) to Reserve (inactive)`);
+    return restored;
   }
 
-  async function runSinglePoolTest(localId: string) {
-    const pool = readState().pools[localId];
-    if (!pool) return;
-    const parsed = parseProxy(pool.proxyUrl);
-    if (!parsed) {
-      mutatePool(localId, (target) => {
-        target.testState = "idle";
-        target.status = "dead";
-        target.failures += 1;
-        target.firstFailure = "Invalid proxy URL";
-        target.last_error = "Invalid proxy URL";
-      });
-      return;
-    }
+  async function scheduleBackgroundBatch(ids: string[]): Promise<void> {
+    const { checkConcurrency } = getSettingsSecrets();
+    let cursor = 0;
 
-    mutatePool(localId, (target) => {
-      target.testState = "checking";
-    });
-
-    let result = await deps.checkProxy(parsed);
-    let firstFailMsg: string | undefined;
-
-    if (result.status === "dead") {
-      firstFailMsg = result.last_error || "Check failed";
-      mutatePool(localId, (target) => {
-        target.testState = "retrying";
-        target.firstFailure = firstFailMsg;
-        target.failures += 1;
-        target.last_error = firstFailMsg;
-      });
-      result = await deps.checkProxy(parsed);
-    }
-
-    if (result.status === "usable") {
-      mutatePool(localId, (target) => {
-        target.testState = "idle";
-        target.status = "usable";
-        target.latency_ms = result.latency_ms;
-        target.exit_ip = result.exit_ip;
-        target.checked_at = result.checked_at;
-        target.successes += 1;
-        if (firstFailMsg) {
-          target.firstFailure = firstFailMsg;
-        } else {
-          target.firstFailure = undefined;
-          target.last_error = undefined;
-        }
-        if (target.remoteState === "removed") {
-          target.remoteState = "revived";
-        }
-      });
-      return;
-    }
-
-    const secondFailMsg = result.last_error || firstFailMsg || "Proxy check failed";
-    mutatePool(localId, (target) => {
-      target.testState = "idle";
-      target.status = "dead";
-      target.failures += 1;
-      target.firstFailure = firstFailMsg;
-      target.last_error = secondFailMsg;
-    });
-
-    if (pool.remoteState === "linked" && pool.remoteId) {
-      try {
-        await deps.deletePool(pool.remoteId);
-        mutatePool(localId, (target) => {
-          target.remoteId = null;
-          target.remoteState = "removed";
-          target.tier = "removed";
-          target.isActiveOnRouter = false;
-        });
-      } catch (error) {
-        const status = (error as { status?: number }).status;
-        if (status === 404) {
-          mutatePool(localId, (target) => {
-            target.remoteId = null;
-            target.remoteState = "removed";
-            target.tier = "removed";
-            target.isActiveOnRouter = false;
-          });
-        } else {
-          mutatePool(localId, (target) => {
-            target.remoteState = "delete_failed";
-            target.tier = "removed";
-            target.isActiveOnRouter = false;
-            target.last_error = (error as Error).message;
-          });
+    async function worker() {
+      while (cursor < ids.length) {
+        const id = ids[cursor++];
+        try {
+          await executeSingleCheckAndLifecycle(id);
+        } finally {
+          busyIds.delete(id);
         }
       }
     }
+
+    const count = Math.max(1, Math.min(checkConcurrency, ids.length));
+    await Promise.all(Array.from({ length: count }, () => worker()));
   }
 
   async function testPools(ids: string[]): Promise<{ accepted: string[]; busy: string[] }> {
@@ -676,12 +720,8 @@ export function createPoolRanker(
       }
     }
 
-    for (const id of accepted) {
-      try {
-        await runSinglePoolTest(id);
-      } finally {
-        busyIds.delete(id);
-      }
+    if (accepted.length > 0) {
+      await scheduleBackgroundBatch(accepted);
     }
 
     return { accepted, busy };

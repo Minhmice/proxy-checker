@@ -28,40 +28,27 @@ function createRunnerHarness(options: {
 
   const fakeTestProxy = async (proxy: { endpoint: string; protocol: "http" | "socks5" }): Promise<DetailedDiagnosticResult> => {
     active++;
-    maxActive = Math.max(maxActive, active);
-    const index = callCount++;
+    if (active > maxActive) maxActive = active;
+    const current = callCount++;
     if (options.testDelayMs) {
       await new Promise((resolve) => setTimeout(resolve, options.testDelayMs));
     }
     active--;
-    if (options.failIndex !== undefined && index === options.failIndex) {
-      return {
-        id: Buffer.from(proxy.endpoint).toString("base64url"),
-        endpoint: proxy.endpoint,
-        protocol: proxy.protocol,
-        status: "FAILED",
-        statusCode: 500,
-        latencyMs: 15,
-        exitIp: null,
-        country: null,
-        isp: null,
-        isProxyOrHosting: null,
-        headerLeakage: null,
-        leakedHeaders: [],
-        checkedAt: Date.now(),
-        error: "simulated failure",
-      };
+
+    if (options.failIndex !== undefined && current === options.failIndex) {
+      throw new Error(`Synthetic probe failure on item ${current}`);
     }
+
     return {
       id: Buffer.from(proxy.endpoint).toString("base64url"),
       endpoint: proxy.endpoint,
       protocol: proxy.protocol,
       status: "SUCCESS",
       statusCode: 200,
-      latencyMs: 10,
-      exitIp: "198.51.100.1",
+      latencyMs: 12,
+      exitIp: "203.0.113.195",
       country: "US",
-      isp: "Test ISP",
+      isp: "Synthetic Telecom",
       isProxyOrHosting: false,
       headerLeakage: false,
       leakedHeaders: [],
@@ -73,8 +60,8 @@ function createRunnerHarness(options: {
     { inputDir: input, dataDir: data },
     {
       testProxy: fakeTestProxy,
-      getConcurrency: () => options.concurrency ?? 3,
-      persistIntervalMs: 25,
+      getConcurrency: () => options.concurrency ?? 5,
+      persistIntervalMs: 50,
     }
   );
 
@@ -82,6 +69,9 @@ function createRunnerHarness(options: {
     runner,
     get maxActive() {
       return maxActive;
+    },
+    get callCount() {
+      return callCount;
     },
   };
 }
@@ -97,9 +87,19 @@ test("diagnostics honors percent and custom count scopes", async () => {
 });
 
 test("diagnostics never exceeds configured concurrency and continues after failure", async () => {
-  const harness = createRunnerHarness({ endpoints: 8, concurrency: 3, failIndex: 2, testDelayMs: 20 });
+  const harness = createRunnerHarness({ endpoints: 8, concurrency: 3, failIndex: 2, testDelayMs: 5 });
   await harness.runner.run({ file: "sample.txt", sampleCount: 8 });
   assert.ok(harness.maxActive <= 3, `Expected maxActive <= 3, got ${harness.maxActive}`);
   assert.equal(harness.runner.getJob().checked, 8);
   assert.equal(harness.runner.getJob().status, "done");
+});
+
+test("diagnostics tracks aggregate passed and failed beyond 500 result cap", async () => {
+  const harness = createRunnerHarness({ endpoints: 550, concurrency: 20, failIndex: 10 });
+  await harness.runner.run({ file: "sample.txt", sampleCount: 550 });
+  const job = harness.runner.getJob();
+  assert.equal(job.checked, 550);
+  assert.equal(job.results.length, 500);
+  assert.equal(job.passedCount, 549);
+  assert.equal(job.failedCount, 1);
 });

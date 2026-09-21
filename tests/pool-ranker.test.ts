@@ -120,8 +120,8 @@ test("restore creates an inactive remote pool and stores its new id", async () =
   assert.equal(pool.tier, "reserve");
 });
 
-test("restore reconciles an endpoint already present remotely", async () => {
-  const harness = createHarness({ remoteState: "removed", remoteId: null, remotePools: [{ id: "existing", name: "Remote", proxyUrl: "http://127.0.0.1:8080", type: "http" }] });
+test("restore reconciles an endpoint already present remotely for revived pool", async () => {
+  const harness = createHarness({ remoteState: "revived", remoteId: null, remotePools: [{ id: "existing", name: "Remote", proxyUrl: "http://127.0.0.1:8080", type: "http" }] });
   const pool = await harness.ranker.restorePool(harness.localId);
   assert.equal(harness.created.length, 0);
   assert.equal(pool.remoteId, "existing");
