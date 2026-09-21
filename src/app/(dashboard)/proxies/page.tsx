@@ -88,7 +88,7 @@ export default function ProxiesPage() {
 
   // Track previous pools to surface automatic server-side deletion toast
   const prevPoolsRef = useRef<Map<string, PoolRecord>>(new Map());
-
+  const hasLoadedInitialRef = useRef(false);
   // Action dialog states
   const [renameTarget, setRenameTarget] = useState<PoolRecord | null>(null);
   const [renameInput, setRenameInput] = useState("");
@@ -118,20 +118,22 @@ export default function ProxiesPage() {
         // Fetch complete registry snapshot so transitions across tabs are always observable
         const allPoolsData = await fetchPools(password, "all", signal);
 
-        // Detect automatic transition: linked -> removed on server side across all records
+        // Detect automatic transition to removed after initial registry load
         const prevMap = prevPoolsRef.current;
-        if (prevMap.size > 0) {
+        if (hasLoadedInitialRef.current) {
           for (const current of allPoolsData) {
             const before = prevMap.get(current.localId);
-            if (before && before.remoteState === "linked" && current.remoteState === "removed") {
+            const wasLinked = before && before.remoteState === "linked";
+            const isNewlyObservedRemoved = !before && current.remoteState === "removed";
+            if ((wasLinked || isNewlyObservedRemoved) && current.remoteState === "removed") {
               toast.info("Removed from 9Router; kept locally for recovery");
             }
           }
         }
+        hasLoadedInitialRef.current = true;
         const nextMap = new Map<string, PoolRecord>();
         for (const p of allPoolsData) nextMap.set(p.localId, p);
         prevPoolsRef.current = nextMap;
-
         setStatus(statusData);
         setPools(allPoolsData);
         setError("");
@@ -560,7 +562,7 @@ export default function ProxiesPage() {
                       )}
                     </TableCell>
 
-                    <TableCell data-label="Last checked" className="text-muted">
+                    <TableCell data-label="Last checked" className="pool-last-checked-cell">
                       {pool.checked_at ? formatTime(pool.checked_at) : "Never"}
                     </TableCell>
 

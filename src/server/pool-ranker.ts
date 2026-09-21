@@ -283,6 +283,9 @@ export function createPoolRanker(
       target.testState = "idle";
       target.healthStatus = "done";
       target.status = "dead";
+      target.checked_at = result.checked_at || Date.now();
+      target.latency_ms = result.latency_ms ?? null;
+      target.exit_ip = result.exit_ip ?? null;
       target.failures += 1;
       target.firstFailure = firstFailMsg;
       target.last_error = secondFailMsg;

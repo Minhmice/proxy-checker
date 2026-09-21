@@ -47,11 +47,11 @@
   - Environments: .env
 
     Creating an optimized production build ...
-  ✓ Compiled successfully in 1842ms
+  ✓ Compiled successfully in 1671ms
     Running TypeScript ...
-    Finished TypeScript in 3.0s ...
+    Finished TypeScript in 2.7s ...
     Collecting page data using 15 workers ...
-  ✓ Generating static pages using 15 workers (14/14) in 453ms
+  ✓ Generating static pages using 15 workers (14/14) in 456ms
     Finalizing page optimization ...
 
   Route (app)
@@ -124,8 +124,12 @@
   - Manual DELETE 404 idempotent completions.
   - Normalized endpoint reconciliation.
 
-### 6. Full-Registry Polling for Automatic-Removal Toast (Finding 14)
+### 6. Failure Branch State Consistency (checked_at & latency_ms)
+- In `executeSingleCheckAndLifecycle`, failure branch records `checked_at = result.checked_at || Date.now()`, `latency_ms = result.latency_ms`, and `exit_ip = result.exit_ip` so that dead/removed records reflect accurate check timestamps rather than 0/Never.
+
+### 7. Full-Registry Polling & Newly Observed Removed Toast Detection (Finding 14)
 - `proxies/page.tsx` polls with `fetchPools(password, "all")` so transitions from `linked` to `removed` are detected across all tabs regardless of whether Active or Reserve is currently viewed.
+- Initial load establishes baseline without toast; subsequent polls toast when an existing linked record becomes removed or when a newly fetched pool is observed removed after the initial load.
 
 ## 5. Verification Commands and Results
 - Focused test suite:

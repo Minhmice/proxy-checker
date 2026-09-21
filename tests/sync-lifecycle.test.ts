@@ -77,4 +77,6 @@ test("sync executes one-retry and remote delete on confirmed dead pool", async (
   assert.deepEqual(deletedRemotes, ["remote-local-a"]);
   assert.equal(state.pools["local-a"].remoteState, "removed");
   assert.equal(state.pools["local-a"].remoteId, null);
+  assert.ok(state.pools["local-a"].checked_at > 0, "checked_at must be populated on failure");
+  assert.equal(state.pools["local-a"].latency_ms, 5);
 });
