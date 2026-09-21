@@ -225,7 +225,7 @@ Request:
 { "name": "New pool name" }
 ```
 
-Returns the updated local record. Validation errors use HTTP 400, missing local records use 404, and remote conflicts use 409 or 502 as appropriate.
+Returns the updated local record. Validation errors use HTTP 400, missing local records use 404, lifecycle conflicts use 409, and 9Router transport or server failures use 502.
 
 ### Remove Proxy
 
@@ -281,7 +281,7 @@ Diagnostics summary derives:
 - passed and failed counts;
 - elapsed time;
 - average completion rate;
-- estimated remaining time after enough observations exist for a stable estimate.
+- estimated remaining time after at least five results complete; hide ETA before that threshold.
 
 ## Proxies UI/UX
 
@@ -338,14 +338,14 @@ Rename uses an accessible dialog with current name, inline validation, Enter to 
 
 Restore uses a confirmation dialog showing name and endpoint and stating that the new 9Router pool starts inactive. Browser-native `confirm` is not used.
 
-All interactive targets are at least 44 px where practical. Color is paired with text or icons. Existing reduced-motion support remains effective for new states.
+All buttons, menu items, inputs, checkboxes, and dialog controls have a minimum 44 px hit area. Color is paired with text or icons. Existing reduced-motion support remains effective for new states.
 
 ## Diagnostics UI/UX
 
 - Consolidate file, scope, and Run controls into one setup toolbar.
 - Offer 10, 30, 50, and 100 percent plus a custom count input.
 - Show summary metrics for Scope, Completed, Passed, Failed, and Elapsed.
-- During a run show checked/total, average rate, and ETA only after sufficient completed samples.
+- During a run show checked/total and average rate; show ETA after at least five results complete.
 - Add search across endpoint, exit IP, country, and ISP.
 - Add `All`, `Passed`, and `Failed` filters.
 - Add select-all for successful results currently visible under search/filter.
