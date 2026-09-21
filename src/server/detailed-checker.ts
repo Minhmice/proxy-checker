@@ -343,9 +343,14 @@ export function createDiagnosticRunner(
     return fs
       .readdirSync(inputDir)
       .filter((name) => name.toLowerCase().endsWith(".txt"))
-      .sort()
       .map((name) => {
-        const text = fs.readFileSync(path.join(inputDir, name), "utf8");
+        let text: string;
+        try {
+          text = fs.readFileSync(path.join(inputDir, name), "utf8");
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+          throw error;
+        }
         const defaultProtocol: ProxyProtocol = name.toLowerCase().includes("socks") ? "socks5" : "http";
         const seen = new Set<string>();
         for (const token of text.split(/[\s,;]+/)) {
@@ -353,7 +358,8 @@ export function createDiagnosticRunner(
           if (proxy) seen.add(proxy.endpoint);
         }
         return { name, count: seen.size };
-      });
+      })
+      .filter((file): file is { name: string; count: number } => file !== null);
   }
 
   function load(name?: string) {
@@ -363,7 +369,13 @@ export function createDiagnosticRunner(
     const defaultProtocol: ProxyProtocol = selected.toLowerCase().includes("socks") ? "socks5" : "http";
     const seen = new Set<string>();
     const result: ParsedProxy[] = [];
-    const text = fs.readFileSync(path.join(inputDir, selected), "utf8");
+    let text: string;
+    try {
+      text = fs.readFileSync(path.join(inputDir, selected), "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
     for (const token of text.split(/[\s,;]+/)) {
       const proxy = parseProxy(token, defaultProtocol);
       if (proxy && !seen.has(proxy.endpoint)) {

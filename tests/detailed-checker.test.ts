@@ -76,6 +76,26 @@ function createRunnerHarness(options: {
   };
 }
 
+test("diagnostic file listing tolerates a file removed during scan", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "proxy-diagnostics-race-"));
+  const input = path.join(root, "input");
+  const data = path.join(root, "data");
+  fs.mkdirSync(input, { recursive: true });
+  fs.writeFileSync(path.join(input, "vanishing.txt"), "127.0.0.1:8080\n");
+  const runner = createDiagnosticRunner({ inputDir: input, dataDir: data });
+  const originalReadDir = fs.readdirSync;
+  try {
+    fs.readdirSync = ((directory: fs.PathLike, options?: fs.ObjectEncodingOptions | BufferEncoding | null) => {
+      const names = originalReadDir(directory, options as never) as string[];
+      fs.unlinkSync(path.join(input, "vanishing.txt"));
+      return names;
+    }) as typeof fs.readdirSync;
+    assert.doesNotThrow(() => runner.files());
+  } finally {
+    fs.readdirSync = originalReadDir;
+  }
+});
+
 test("diagnostics honors percent and custom count scopes", async () => {
   const percent = createRunnerHarness({ endpoints: 10, concurrency: 3 });
   await percent.runner.run({ file: "sample.txt", samplePercent: 50 });
