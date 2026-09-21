@@ -44,7 +44,7 @@ export default function OverviewPage() {
       setStatus(statusData);
       setMetrics(metricsData);
       setPools(poolsData);
-      setSelectedPoolId((current) => poolsData.some((pool) => pool.id === current) ? current : poolsData[0]?.id ?? null);
+      setSelectedPoolId((current) => poolsData.some((pool) => pool.localId === current) ? current : poolsData[0]?.localId ?? null);
       setError("");
     } catch (err) {
       if ((err as Error).name === "AbortError") return;
@@ -77,7 +77,7 @@ export default function OverviewPage() {
   const sparkActive = useMemo(() => metrics.map((m) => m.active), [metrics]);
   const sparkReserve = useMemo(() => metrics.map((m) => m.reserve), [metrics]);
   const sparkDead = useMemo(() => metrics.map((m) => m.dead), [metrics]);
-  const selectedPool = pools.find((pool) => pool.id === selectedPoolId) ?? null;
+  const selectedPool = pools.find((pool) => pool.localId === selectedPoolId) ?? null;
 
   return (
     <>
@@ -159,8 +159,8 @@ export default function OverviewPage() {
                 <thead><tr><th>Name</th><th>Latency</th><th>Exit IP</th><th>Health</th></tr></thead>
                 <tbody>
                   {pools.slice(0, 8).map((pool) => (
-                    <tr key={pool.id} className={pool.id === selectedPool?.id ? "is-selected" : ""}>
-                      <td><button type="button" onClick={() => setSelectedPoolId(pool.id)} aria-pressed={pool.id === selectedPool?.id}><span>{pool.name}</span><small className="mono">{pool.proxyUrl}</small></button></td>
+                    <tr key={pool.localId} className={pool.localId === selectedPool?.localId ? "is-selected" : ""}>
+                      <td><button type="button" onClick={() => setSelectedPoolId(pool.localId)} aria-pressed={pool.localId === selectedPool?.localId}><span>{pool.name}</span><small className="mono">{pool.proxyUrl}</small></button></td>
                       <td>{pool.latency_ms == null ? "—" : `${pool.latency_ms} ms`}</td>
                       <td className="mono">{pool.exit_ip || "—"}</td>
                       <td><ProxyHealthBadge pool={pool} /></td>

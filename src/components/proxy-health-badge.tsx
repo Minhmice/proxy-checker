@@ -1,16 +1,11 @@
-import { Activity, CheckCircle2, Clock3, XCircle } from "lucide-react";
+import { Activity, CheckCircle2, Clock3, RotateCcw, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import type { HealthStatus, PoolRecord } from "@/lib/types";
-
-function resolveHealth(pool: PoolRecord): HealthStatus {
-  if (pool.healthStatus) return pool.healthStatus;
-  return "done";
-}
+import type { PoolRecord } from "@/lib/types";
 
 export function ProxyHealthBadge({ pool }: { pool: PoolRecord }) {
-  const health = resolveHealth(pool);
+  const testState = pool.testState ?? "idle";
 
-  if (health === "pending") {
+  if (testState === "queued" || pool.healthStatus === "pending") {
     return (
       <Badge className="health-badge health-badge--pending" variant="secondary">
         <Clock3 aria-hidden />
@@ -19,12 +14,39 @@ export function ProxyHealthBadge({ pool }: { pool: PoolRecord }) {
     );
   }
 
-  if (health === "checking") {
+  if (testState === "retrying") {
+    return (
+      <Badge className="health-badge health-badge--checking" variant="secondary">
+        <RotateCcw className="ops-spin" aria-hidden />
+        <span>Retrying</span>
+      </Badge>
+    );
+  }
+
+  if (testState === "checking" || pool.healthStatus === "checking") {
     return (
       <Badge className="health-badge health-badge--checking" variant="secondary">
         <span className="health-badge__ring" aria-hidden />
         <Activity aria-hidden />
         <span>Checking</span>
+      </Badge>
+    );
+  }
+
+  if (pool.remoteState === "revived") {
+    return (
+      <Badge className="health-badge health-badge--revived" variant="secondary">
+        <RotateCcw aria-hidden />
+        <span>Revived</span>
+      </Badge>
+    );
+  }
+
+  if (pool.remoteState === "delete_failed") {
+    return (
+      <Badge className="health-badge health-badge--dead" variant="destructive">
+        <XCircle aria-hidden />
+        <span>Delete failed</span>
       </Badge>
     );
   }

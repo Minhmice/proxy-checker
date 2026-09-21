@@ -106,10 +106,39 @@ export async function uploadDiagnosticFile(password: string, name: string, conte
   return body as { name: string; count: number };
 }
 
-export async function runDiagnostics(password: string, file?: string) {
-  const response = await fetch("/api/diagnostics/run", { method: "POST", headers: authHeaders(password), body: JSON.stringify({ file }) });
-  if (!response.ok) throw new Error((await response.json()).error || "Could not start diagnostics");
-  return response.json() as Promise<{ started: boolean }>;
+export async function testPools(password: string, ids: string[]) {
+  const response = await fetch("/api/ninerouter/test", { method: "POST", headers: authHeaders(password), body: JSON.stringify({ ids }) });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "Could not start proxy tests");
+  return body as { accepted: string[]; busy: string[] };
+}
+
+export async function renamePool(password: string, localId: string, name: string) {
+  const response = await fetch(`/api/ninerouter/pools/${encodeURIComponent(localId)}`, { method: "PATCH", headers: authHeaders(password), body: JSON.stringify({ name: name.trim() }) });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "Could not rename proxy");
+  return body.pool as PoolRecord;
+}
+
+export async function removePool(password: string, localId: string) {
+  const response = await fetch(`/api/ninerouter/pools/${encodeURIComponent(localId)}`, { method: "DELETE", headers: authHeaders(password) });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "Could not remove proxy");
+  return body.pool as PoolRecord;
+}
+
+export async function restorePool(password: string, localId: string) {
+  const response = await fetch(`/api/ninerouter/pools/${encodeURIComponent(localId)}/restore`, { method: "POST", headers: authHeaders(password) });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "Could not restore proxy");
+  return body.pool as PoolRecord;
+}
+
+export async function runDiagnostics(password: string, options: { file: string; samplePercent?: number; sampleCount?: number }) {
+  const response = await fetch("/api/diagnostics/run", { method: "POST", headers: authHeaders(password), body: JSON.stringify(options) });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "Could not start diagnostics");
+  return body as { started: boolean };
 }
 
 export async function promoteDiagnostics(password: string, ids: string[]) {

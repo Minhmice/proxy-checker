@@ -87,7 +87,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
         <ul className="command-results">
           {filtered.length === 0 && <li className="command-empty">No pools match</li>}
           {filtered.slice(0, 12).map((pool) => (
-            <li key={pool.id}>
+            <li key={pool.localId}>
               <a href="/proxies" className="command-item" onClick={onClose}>
                 <span className="command-item-name">{pool.name}</span>
                 <span className="command-item-meta mono">{pool.exit_ip ?? pool.tier}</span>

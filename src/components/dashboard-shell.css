@@ -1439,6 +1439,151 @@
   padding: 6px 10px;
   font-size: .72rem;
 }
+.pool-selection-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-btn);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 150ms var(--ease-out-quart), color 150ms var(--ease-out-quart), border-color 150ms var(--ease-out-quart);
+}
+
+.btn-icon:hover:not(:disabled) {
+  background: var(--surface-raised);
+  color: var(--ink);
+  border-color: var(--border);
+}
+
+.btn-icon:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.btn-icon:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.proxy-endpoint-cell {
+  max-width: 320px;
+}
+
+.proxy-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.proxy-identity__name {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.proxy-identity__endpoint {
+  font-size: 0.75rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pool-action-cell {
+  text-align: right;
+  min-width: 64px;
+}
+
+.health-badge--revived {
+  background: oklch(0.58 0.22 295 / 0.16);
+  color: var(--accent-violet);
+  border-color: oklch(0.58 0.22 295 / 0.35);
+}
+
+.pool-row--revived {
+  border-left: 2px solid var(--accent-violet);
+}
+
+/* Dialog field styling */
+.dialog-field-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 0;
+}
+
+.dialog-field-label {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.dialog-field-error {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--error);
+}
+
+.dialog-confirm-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 0;
+}
+
+.dialog-kv {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dialog-kv__label {
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.dialog-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-btn);
+  font-size: 0.8125rem;
+}
+
+.pool-check-cell input[type="checkbox"],
+.diag-check-th input[type="checkbox"],
+.diag-check-td input[type="checkbox"] {
+  min-width: 20px;
+  min-height: 20px;
+  cursor: pointer;
+}
+
+.pool-menu-content {
+  z-index: 100;
+}
+
+.pool-table .btn,
+.pool-selection-bar .btn,
+.dialog-footer .btn {
+  min-height: 44px;
+}
 
 .pool-table .proxy-health-badge {
   min-width: 56px;
