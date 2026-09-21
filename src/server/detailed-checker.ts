@@ -2,7 +2,7 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import tls from "node:tls";
-import type { ParsedProxy } from "../lib/types.js";
+import type { DiagnosticJob, ParsedProxy } from "../lib/types.js";
 import { parseProxy } from "./proxy-core.js";
 
 export interface DetailedDiagnosticResult {
@@ -22,18 +22,7 @@ export interface DetailedDiagnosticResult {
   error?: string;
 }
 
-export interface DiagnosticJob {
-  status: "idle" | "running" | "done" | "error";
-  sourceFile: string | null;
-  samplePercent: number;
-  eligible: number;
-  total: number;
-  checked: number;
-  startedAt: number | null;
-  finishedAt: number | null;
-  results: DetailedDiagnosticResult[];
-  error: string;
-}
+export type { DiagnosticJob };
 
 class Reader {
   buffer = Buffer.alloc(0);
@@ -212,55 +201,189 @@ export async function testProxyDetailed(proxy: ParsedProxy, timeout = 7000): Pro
   } finally { socket?.destroy(); }
 }
 
-function emptyJob(): DiagnosticJob { return { status: "idle", sourceFile: null, samplePercent: 30, eligible: 0, total: 0, checked: 0, startedAt: null, finishedAt: null, results: [], error: "" }; }
+function emptyJob(): DiagnosticJob {
+  return {
+    status: "idle",
+    sourceFile: null,
+    samplePercent: 30,
+    sampleCount: null,
+    eligible: 0,
+    total: 0,
+    checked: 0,
+    startedAt: null,
+    finishedAt: null,
+    results: [],
+    error: "",
+  };
+}
 
-export function createDiagnosticRunner({ inputDir, dataDir }: { inputDir: string; dataDir: string }) {
+export interface DiagnosticRunnerDeps {
+  testProxy?: typeof testProxyDetailed;
+  getConcurrency?: () => number;
+  persistIntervalMs?: number;
+}
+
+function shuffle<T>(array: T[]): T[] {
+  const items = [...array];
+  for (let i = items.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const temp = items[i];
+    items[i] = items[j];
+    items[j] = temp;
+  }
+  return items;
+}
+
+export function createDiagnosticRunner(
+  { inputDir, dataDir }: { inputDir: string; dataDir: string },
+  injectedDeps: DiagnosticRunnerDeps = {}
+) {
   const stateFile = path.join(dataDir, "diagnostics.json");
+  const testProxy = injectedDeps.testProxy ?? testProxyDetailed;
+  const getConcurrency = injectedDeps.getConcurrency ?? (() => 10);
+  const persistIntervalMs = injectedDeps.persistIntervalMs ?? 500;
+
   let job: DiagnosticJob = emptyJob();
   let running = false;
-  try { job = { ...emptyJob(), ...(JSON.parse(fs.readFileSync(stateFile, "utf8")) as Partial<DiagnosticJob>) }; } catch { /* first run */ }
+  try {
+    const parsed = JSON.parse(fs.readFileSync(stateFile, "utf8")) as Partial<DiagnosticJob>;
+    job = {
+      ...emptyJob(),
+      ...parsed,
+      sampleCount: typeof parsed.sampleCount === "number" ? parsed.sampleCount : null,
+    };
+  } catch {
+    /* first run */
+  }
 
   function files() {
     if (!fs.existsSync(inputDir)) return [];
-    return fs.readdirSync(inputDir).filter((name) => name.toLowerCase().endsWith(".txt")).sort().map((name) => {
-      const text = fs.readFileSync(path.join(inputDir, name), "utf8");
-      const seen = new Set<string>();
-      for (const token of text.split(/[\s,;]+/)) { const proxy = parseProxy(token); if (proxy) seen.add(proxy.endpoint); }
-      return { name, count: seen.size };
-    });
+    return fs
+      .readdirSync(inputDir)
+      .filter((name) => name.toLowerCase().endsWith(".txt"))
+      .sort()
+      .map((name) => {
+        const text = fs.readFileSync(path.join(inputDir, name), "utf8");
+        const seen = new Set<string>();
+        for (const token of text.split(/[\s,;]+/)) {
+          const proxy = parseProxy(token);
+          if (proxy) seen.add(proxy.endpoint);
+        }
+        return { name, count: seen.size };
+      });
   }
 
   function load(name?: string) {
     const available = files();
     const selected = name && available.some((file) => file.name === name) ? name : available[0]?.name;
     if (!selected) return [] as ParsedProxy[];
-    const seen = new Set<string>(); const result: ParsedProxy[] = [];
+    const seen = new Set<string>();
+    const result: ParsedProxy[] = [];
     const text = fs.readFileSync(path.join(inputDir, selected), "utf8");
-    for (const token of text.split(/[\s,;]+/)) { const proxy = parseProxy(token); if (proxy && !seen.has(proxy.endpoint)) { seen.add(proxy.endpoint); result.push(proxy); } }
+    for (const token of text.split(/[\s,;]+/)) {
+      const proxy = parseProxy(token);
+      if (proxy && !seen.has(proxy.endpoint)) {
+        seen.add(proxy.endpoint);
+        result.push(proxy);
+      }
+    }
     return result;
   }
 
-  function save() { fs.mkdirSync(dataDir, { recursive: true }); const tmp = `${stateFile}.tmp`; fs.writeFileSync(tmp, JSON.stringify(job, null, 2)); fs.renameSync(tmp, stateFile); }
+  function save() {
+    fs.mkdirSync(dataDir, { recursive: true });
+    const tmp = `${stateFile}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(job, null, 2));
+    fs.renameSync(tmp, stateFile);
+  }
 
-  async function run(options: { file?: string; samplePercent?: number } = {}) {
+  async function run(options: { file?: string; samplePercent?: number; sampleCount?: number } = {}) {
     if (running) return false;
     running = true;
-    const percent = Math.min(30, Math.max(1, Number(options.samplePercent ?? 30)));
     const eligible = load(options.file);
-    const sampleSize = eligible.length ? Math.max(1, Math.ceil(eligible.length * percent / 100)) : 0;
-    const sample = [...eligible].sort(() => Math.random() - 0.5).slice(0, sampleSize);
-    job = { ...emptyJob(), status: "running", sourceFile: options.file ?? files()[0]?.name ?? null, samplePercent: percent, eligible: eligible.length, total: sample.length, startedAt: Date.now() };
+    const eligibleCount = eligible.length;
+
+    let sampleSize = 0;
+    let effectivePercent = 30;
+    let effectiveCount: number | null = null;
+
+    if (options.sampleCount !== undefined) {
+      const parsedCount = Math.floor(Number(options.sampleCount));
+      effectiveCount = Math.max(1, Math.min(eligibleCount || 1, Number.isFinite(parsedCount) ? parsedCount : 1));
+      sampleSize = eligibleCount ? effectiveCount : 0;
+      effectivePercent = eligibleCount ? Math.min(100, Math.max(1, Math.round((sampleSize / eligibleCount) * 100))) : 30;
+    } else {
+      effectivePercent = Math.min(100, Math.max(1, Number(options.samplePercent ?? 30)));
+      sampleSize = eligibleCount ? Math.max(1, Math.ceil((eligibleCount * effectivePercent) / 100)) : 0;
+    }
+
+    const sample = shuffle(eligible).slice(0, sampleSize);
+    job = {
+      ...emptyJob(),
+      status: "running",
+      sourceFile: options.file ?? files()[0]?.name ?? null,
+      samplePercent: effectivePercent,
+      sampleCount: effectiveCount,
+      eligible: eligibleCount,
+      total: sample.length,
+      startedAt: Date.now(),
+    };
     save();
-    try {
-      for (const proxy of sample) {
-        const result = await testProxyDetailed(proxy);
-        job.results = [result, ...job.results].slice(0, 500);
+
+    let lastSavedAt = Date.now();
+    let nextIndex = 0;
+
+    async function worker() {
+      while (nextIndex < sample.length) {
+        const currentIndex = nextIndex++;
+        const proxy = sample[currentIndex];
+        try {
+          const result = await testProxy(proxy);
+          job.results = [result, ...job.results].slice(0, 500);
+        } catch (error) {
+          const failedResult: DetailedDiagnosticResult = {
+            id: Buffer.from(proxy.endpoint).toString("base64url"),
+            endpoint: proxy.endpoint,
+            protocol: proxy.protocol,
+            status: "FAILED",
+            statusCode: null,
+            latencyMs: 0,
+            exitIp: null,
+            country: null,
+            isp: null,
+            isProxyOrHosting: null,
+            headerLeakage: null,
+            leakedHeaders: [],
+            checkedAt: Date.now(),
+            error: (error as Error).message || "Diagnostic check error",
+          };
+          job.results = [failedResult, ...job.results].slice(0, 500);
+        }
         job.checked += 1;
-        save();
+        const now = Date.now();
+        if (now - lastSavedAt >= persistIntervalMs) {
+          lastSavedAt = now;
+          save();
+        }
       }
-      job.status = "done"; job.finishedAt = Date.now(); save(); return true;
-    } catch (error) { job.status = "error"; job.error = (error as Error).message; job.finishedAt = Date.now(); save(); return false; }
-    finally { running = false; }
+    }
+
+    try {
+      const concurrency = Math.max(1, Math.min(getConcurrency(), sample.length || 1));
+      await Promise.all(Array.from({ length: concurrency }, () => worker()));
+      job.status = "done";
+      job.finishedAt = Date.now();
+      save();
+      return true;
+    } catch (error) {
+      job.status = "error";
+      job.error = (error as Error).message;
+      job.finishedAt = Date.now();
+      save();
+      return false;
+    } finally {
+      running = false;
+    }
   }
 
   return { files, getJob: () => ({ ...job, running }), run, isRunning: () => running };

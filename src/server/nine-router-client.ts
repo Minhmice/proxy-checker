@@ -150,3 +150,28 @@ export async function bulkSetActive(updates: Array<{ id: string; isActive: boole
   }
   return results;
 }
+
+export async function updatePool(id: string, patch: { name?: string; isActive?: boolean }) {
+  const body = await request<{ proxyPool?: unknown }>(`/api/proxy-pools/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(patch),
+  });
+  return body.proxyPool ?? body;
+}
+
+export async function deletePool(id: string) {
+  await request<unknown>(`/api/proxy-pools/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function createPool(input: { name: string; proxyUrl: string; type: string; isActive: false }): Promise<{ id: string; name: string; proxyUrl: string; type?: string }> {
+  const body = await request<{ proxyPool: { id: string; name: string; proxyUrl: string; type?: string } }>(
+    "/api/proxy-pools",
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    }
+  );
+  return body.proxyPool;
+}

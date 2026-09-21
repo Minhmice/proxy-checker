@@ -1,12 +1,41 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { PoolRecord, PoolStats } from "../lib/types.js";
+import type { ParsedProxy, PoolRecord, PoolStats, RemoteState, TestState } from "../lib/types.js";
 import { getSettingsSecrets } from "./app-config.js";
 import { getActivitySnapshot, logActivity, resetSyncProgress, setSyncProgress } from "./activity-log.js";
-import { checkMany } from "./checker.js";
+import { checkMany, checkProxy as defaultCheckProxy } from "./checker.js";
 import { createMetricsHistory } from "./metrics-history.js";
-import { bulkSetActive, listPools, nineRouterAuthMode, nineRouterConfigured, setPoolActive } from "./nine-router-client.js";
+import {
+  bulkSetActive as defaultBulkSetActive,
+  createPool as defaultCreatePool,
+  deletePool as defaultDeletePool,
+  listPools as defaultListPools,
+  nineRouterAuthMode,
+  nineRouterConfigured,
+  setPoolActive as defaultSetPoolActive,
+  updatePool as defaultUpdatePool,
+} from "./nine-router-client.js";
 import { parseProxy } from "./proxy-core.js";
+
+export interface PoolRankerDeps {
+  listPools: typeof defaultListPools;
+  setPoolActive: typeof defaultSetPoolActive;
+  bulkSetActive: typeof defaultBulkSetActive;
+  deletePool: typeof defaultDeletePool;
+  createPool: typeof defaultCreatePool;
+  updatePool: typeof defaultUpdatePool;
+  checkProxy: typeof defaultCheckProxy;
+}
+
+const defaultDeps: PoolRankerDeps = {
+  listPools: defaultListPools,
+  setPoolActive: defaultSetPoolActive,
+  bulkSetActive: defaultBulkSetActive,
+  deletePool: defaultDeletePool,
+  createPool: defaultCreatePool,
+  updatePool: defaultUpdatePool,
+  checkProxy: defaultCheckProxy,
+};
 
 interface PoolState {
   pools: Record<string, PoolRecord>;
@@ -15,11 +44,68 @@ interface PoolState {
   lastError: string;
 }
 
-export function createPoolRanker({ dataDir }: { dataDir: string }) {
+function normalizeRecord(raw: unknown, fallbackKey: string): PoolRecord {
+  const item = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const localId = String(item.localId || item.id || fallbackKey);
+  const rawRemoteId = item.remoteId !== undefined ? item.remoteId : item.id;
+  const remoteId = rawRemoteId === null || rawRemoteId === undefined ? null : String(rawRemoteId);
+  const rawRemoteState = item.remoteState as RemoteState | undefined;
+  const remoteState: RemoteState =
+    rawRemoteState === "removed" || rawRemoteState === "revived" || rawRemoteState === "delete_failed"
+      ? rawRemoteState
+      : "linked";
+  const rawTestState = item.testState as TestState | undefined;
+  const testState: TestState =
+    rawTestState === "queued" || rawTestState === "checking" || rawTestState === "retrying"
+      ? rawTestState
+      : "idle";
+  const tier =
+    remoteState === "removed" || remoteState === "delete_failed" || remoteState === "revived"
+      ? "removed"
+      : item.tier === "active" || item.tier === "reserve" || item.tier === "dead"
+      ? item.tier
+      : "reserve";
+
+  return {
+    localId,
+    remoteId,
+    remoteState,
+    testState,
+    name: String(item.name || "Unnamed proxy"),
+    proxyUrl: String(item.proxyUrl || ""),
+    type: String(item.type || "http"),
+    status: item.status === "usable" ? "usable" : "dead",
+    tier,
+    healthStatus: item.healthStatus === "pending" || item.healthStatus === "checking" ? item.healthStatus : "done",
+    latency_ms: typeof item.latency_ms === "number" ? item.latency_ms : null,
+    exit_ip: typeof item.exit_ip === "string" ? item.exit_ip : null,
+    checked_at: typeof item.checked_at === "number" ? item.checked_at : 0,
+    isActiveOnRouter: item.isActiveOnRouter === true,
+    successes: Number(item.successes || 0),
+    failures: Number(item.failures || 0),
+    firstFailure: typeof item.firstFailure === "string" ? item.firstFailure : undefined,
+    last_error: typeof item.last_error === "string" ? item.last_error : undefined,
+  };
+}
+
+function validatePoolName(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("Pool name cannot be empty");
+  const codePoints = Array.from(trimmed).length;
+  if (codePoints > 100) throw new Error("Pool name cannot exceed 100 characters");
+  return trimmed;
+}
+
+export function createPoolRanker(
+  { dataDir }: { dataDir: string },
+  injectedDeps: Partial<PoolRankerDeps> = {}
+) {
+  const deps: PoolRankerDeps = { ...defaultDeps, ...injectedDeps };
   const stateFile = path.join(dataDir, "pool-state.json");
   const metrics = createMetricsHistory({ dataDir });
   let syncing = false;
   let lastError = "";
+  const busyIds = new Set<string>();
 
   function emptyState(): PoolState {
     return { pools: {}, lastSyncAt: null, stats: { total: 0, active: 0, reserve: 0, dead: 0 }, lastError: "" };
@@ -27,8 +113,19 @@ export function createPoolRanker({ dataDir }: { dataDir: string }) {
 
   function readState(): PoolState {
     try {
-      const state = JSON.parse(fs.readFileSync(stateFile, "utf8")) as PoolState;
-      return { ...emptyState(), ...state, pools: state.pools ?? {} };
+      const raw = JSON.parse(fs.readFileSync(stateFile, "utf8")) as Record<string, unknown>;
+      const rawPools = (raw.pools && typeof raw.pools === "object" ? raw.pools : {}) as Record<string, unknown>;
+      const pools: Record<string, PoolRecord> = {};
+      for (const [key, value] of Object.entries(rawPools)) {
+        const normalized = normalizeRecord(value, key);
+        pools[normalized.localId] = normalized;
+      }
+      return {
+        pools,
+        lastSyncAt: typeof raw.lastSyncAt === "number" ? raw.lastSyncAt : null,
+        stats: computeStats(Object.values(pools)),
+        lastError: typeof raw.lastError === "string" ? raw.lastError : "",
+      };
     } catch {
       return emptyState();
     }
@@ -41,12 +138,22 @@ export function createPoolRanker({ dataDir }: { dataDir: string }) {
     fs.renameSync(temp, stateFile);
   }
 
+  function mutatePool(localId: string, mutator: (pool: PoolRecord) => void): PoolRecord {
+    const state = readState();
+    const pool = state.pools[localId];
+    if (!pool) throw new Error(`Pool not found: ${localId}`);
+    mutator(pool);
+    state.stats = computeStats(Object.values(state.pools));
+    writeState(state);
+    return pool;
+  }
+
   function rankUsable(entries: PoolRecord[]) {
     return [...entries].sort(
       (a, b) =>
         (a.latency_ms ?? Number.MAX_SAFE_INTEGER) - (b.latency_ms ?? Number.MAX_SAFE_INTEGER) ||
         (b.successes ?? 0) - (a.successes ?? 0) ||
-        String(a.id).localeCompare(String(b.id))
+        String(a.localId).localeCompare(String(b.localId))
     );
   }
 
@@ -64,27 +171,36 @@ export function createPoolRanker({ dataDir }: { dataDir: string }) {
     };
   }
 
-  function publishPools(poolMap: Record<string, PoolRecord>, skipped: string[], lastSyncAt: number | null, lastError = "") {
+  function publishPools(poolMap: Record<string, PoolRecord>, skipped: string[], lastSyncAt: number | null, error = "") {
     writeState({
       pools: poolMap,
       lastSyncAt,
       stats: computeStats(Object.values(poolMap), skipped),
-      lastError,
+      lastError: error,
     });
   }
 
   function assignTiers(checkedPools: PoolRecord[]) {
     const activeLimit = getSettingsSecrets().activePoolLimit;
-    const usable = rankUsable(checkedPools.filter((pool) => pool.status === "usable"));
-    const usableIds = new Set(usable.map((pool) => pool.id));
+    const eligibleUsable = checkedPools.filter(
+      (pool) => pool.status === "usable" && pool.remoteState === "linked"
+    );
+    const ranked = rankUsable(eligibleUsable);
+    const activeIds = new Set(ranked.slice(0, activeLimit).map((p) => p.localId));
+    const usableIds = new Set(ranked.map((p) => p.localId));
+
     for (const pool of checkedPools) {
-      if (!usableIds.has(pool.id)) {
+      if (pool.remoteState === "removed" || pool.remoteState === "delete_failed" || pool.remoteState === "revived") {
+        pool.tier = "removed";
+        pool.isActiveOnRouter = false;
+        continue;
+      }
+      if (!usableIds.has(pool.localId)) {
         pool.tier = "dead";
         pool.isActiveOnRouter = false;
         continue;
       }
-      const rank = usable.findIndex((item) => item.id === pool.id);
-      if (rank < activeLimit) {
+      if (activeIds.has(pool.localId)) {
         pool.tier = "active";
         pool.isActiveOnRouter = true;
       } else {
@@ -111,7 +227,7 @@ export function createPoolRanker({ dataDir }: { dataDir: string }) {
       const previous = readState();
       setSyncProgress({ phase: "login" });
       logActivity("info", "Logging into 9Router…");
-      const remotePools = await listPools();
+      const remotePools = await deps.listPools();
       logActivity("info", `9Router login OK — connected to ${getSettingsSecrets().nineRouterUrl}`);
       const httpPools = remotePools.filter((pool) => pool.type === "http" || !pool.type);
       const skipped: string[] = [];
@@ -127,19 +243,38 @@ export function createPoolRanker({ dataDir }: { dataDir: string }) {
         `Fetched ${remotePools.length} pool(s) from 9Router (${httpPools.length} HTTP/SOCKS, ${skipped.length} relay skipped)`
       );
 
-      if (remotePools.length === 0) {
-        logActivity("warn", "9Router returned 0 proxy pools — add proxies in 9Router → Proxy Pools first");
+      for (const [id, record] of Object.entries(previous.pools)) {
+        if (record.remoteState !== "linked") {
+          poolMap[id] = { ...record };
+        }
       }
 
-      const checkTargets: Array<{ pool: (typeof remotePools)[0]; proxy: NonNullable<ReturnType<typeof parseProxy>> }> =
-        [];
+      const existingByRemoteId = new Map<string, PoolRecord>();
+      const existingByEndpoint = new Map<string, PoolRecord>();
+      for (const record of Object.values(previous.pools)) {
+        if (record.remoteId) existingByRemoteId.set(record.remoteId, record);
+        const parsed = parseProxy(record.proxyUrl);
+        if (parsed) existingByEndpoint.set(parsed.endpoint, record);
+      }
+
+      const checkTargets: Array<{
+        localId: string;
+        pool: { id: string; name: string; proxyUrl: string; type?: string };
+        proxy: ParsedProxy;
+      }> = [];
 
       for (const pool of httpPools) {
-        const prev = previous.pools[pool.id];
-        const proxy = parseProxy(pool.proxyUrl);
-        if (!proxy) {
-          poolMap[pool.id] = {
-            id: pool.id,
+        const parsed = parseProxy(pool.proxyUrl);
+        const matched = existingByRemoteId.get(pool.id) ?? (parsed ? existingByEndpoint.get(parsed.endpoint) : undefined);
+        const localId = matched?.localId ?? pool.id;
+        const prev = previous.pools[localId] ?? matched;
+
+        if (!parsed) {
+          poolMap[localId] = {
+            localId,
+            remoteId: pool.id,
+            remoteState: "linked",
+            testState: "idle",
             name: pool.name,
             proxyUrl: pool.proxyUrl,
             type: pool.type ?? "http",
@@ -152,13 +287,18 @@ export function createPoolRanker({ dataDir }: { dataDir: string }) {
             isActiveOnRouter: false,
             successes: prev?.successes ?? 0,
             failures: (prev?.failures ?? 0) + 1,
+            firstFailure: "Invalid proxy URL",
             last_error: "Invalid proxy URL",
           };
           continue;
         }
-        checkTargets.push({ pool, proxy });
-        poolMap[pool.id] = {
-          id: pool.id,
+
+        checkTargets.push({ localId, pool, proxy: parsed });
+        poolMap[localId] = {
+          localId,
+          remoteId: pool.id,
+          remoteState: "linked",
+          testState: "idle",
           name: pool.name,
           proxyUrl: pool.proxyUrl,
           type: pool.type ?? "http",
@@ -171,6 +311,7 @@ export function createPoolRanker({ dataDir }: { dataDir: string }) {
           isActiveOnRouter: prev?.isActiveOnRouter ?? false,
           successes: prev?.successes ?? 0,
           failures: prev?.failures ?? 0,
+          firstFailure: prev?.firstFailure,
           last_error: prev?.last_error,
         };
       }
@@ -178,21 +319,15 @@ export function createPoolRanker({ dataDir }: { dataDir: string }) {
       publishPools(poolMap, skipped, previous.lastSyncAt);
       if (checkTargets.length > 0) {
         logActivity("info", `Listed ${checkTargets.length} proxies — starting health checks…`);
-      }
-
-      if (checkTargets.length === 0) {
-        logActivity("warn", "Nothing to health-check — no valid HTTP/SOCKS proxy URLs");
-      } else {
         setSyncProgress({ phase: "check", total: checkTargets.length, checked: 0 });
-        logActivity("info", `Health-checking ${checkTargets.length} proxies (concurrency ${checkConcurrency})…`);
       }
 
       let lastLoggedAt = 0;
       let lastPublishedAt = Date.now();
       await checkMany(checkTargets.map((item) => item.proxy), checkConcurrency, {
         onStart: (index) => {
-          const id = checkTargets[index].pool.id;
-          if (poolMap[id]) poolMap[id] = { ...poolMap[id], healthStatus: "checking" };
+          const { localId } = checkTargets[index];
+          if (poolMap[localId]) poolMap[localId] = { ...poolMap[localId], healthStatus: "checking" };
           const now = Date.now();
           if (now - lastPublishedAt >= 150) {
             publishPools(poolMap, skipped, previous.lastSyncAt);
@@ -200,16 +335,10 @@ export function createPoolRanker({ dataDir }: { dataDir: string }) {
           }
         },
         onResult: (index, result) => {
-          const { pool } = checkTargets[index];
-          const prev = previous.pools[pool.id] ?? { successes: 0, failures: 0 };
-          if (result.latency_ms >= 5000) {
-            logActivity(
-              "warn",
-              `Slow check ${result.latency_ms}ms: ${pool.name} (${result.last_error || result.status})`
-            );
-          }
-          poolMap[pool.id] = {
-            ...poolMap[pool.id],
+          const { localId } = checkTargets[index];
+          const prev = previous.pools[localId] ?? { successes: 0, failures: 0 };
+          poolMap[localId] = {
+            ...poolMap[localId],
             healthStatus: "done",
             status: result.status,
             latency_ms: result.latency_ms,
@@ -217,6 +346,7 @@ export function createPoolRanker({ dataDir }: { dataDir: string }) {
             checked_at: result.checked_at,
             successes: (prev.successes ?? 0) + result.successes,
             failures: (prev.failures ?? 0) + result.failures,
+            firstFailure: result.status === "dead" ? poolMap[localId]?.firstFailure ?? result.last_error : undefined,
             last_error: result.last_error,
           };
           const now = Date.now();
@@ -238,25 +368,24 @@ export function createPoolRanker({ dataDir }: { dataDir: string }) {
       const checkedPools = Object.values(poolMap);
       assignTiers(checkedPools);
       for (const pool of checkedPools) pool.healthStatus = "done";
-      const usable = checkedPools.filter((pool) => pool.status === "usable").length;
+      const usable = checkedPools.filter((pool) => pool.status === "usable" && pool.remoteState === "linked").length;
       setSyncProgress({ phase: "rank" });
       logActivity(
         "info",
-        `Ranking complete: ${usable} usable, ${checkedPools.length - usable} dead → top ${activePoolLimit} active`
+        `Ranking complete: ${usable} usable, ${checkedPools.length - usable} dead/removed → top ${activePoolLimit} active`
       );
 
       setSyncProgress({ phase: "activate" });
-      logActivity("info", `Updating ${checkedPools.length} pool toggle(s) on 9Router…`);
-      const updates = checkedPools.map((pool) => ({ id: pool.id, isActive: pool.isActiveOnRouter }));
-      const activationResults = await bulkSetActive(updates);
+      logActivity("info", `Updating pool toggle(s) on 9Router…`);
+      const updates = checkedPools
+        .filter((pool) => pool.remoteId && pool.remoteState === "linked")
+        .map((pool) => ({ id: pool.remoteId!, isActive: pool.isActiveOnRouter }));
+      const activationResults = await deps.bulkSetActive(updates);
       const failed = activationResults.filter((item) => !item.ok);
-
-      const pools: Record<string, PoolRecord> = {};
-      for (const pool of checkedPools) pools[pool.id] = pool;
 
       const stats = computeStats(checkedPools, skipped);
       const state: PoolState = {
-        pools,
+        pools: poolMap,
         lastSyncAt: Date.now(),
         stats,
         lastError: failed.length ? `${failed.length} activation update(s) failed` : "",
@@ -267,17 +396,12 @@ export function createPoolRanker({ dataDir }: { dataDir: string }) {
 
       const elapsed = Math.round((Date.now() - startedAt) / 1000);
       setSyncProgress({ phase: "done", checked: checkTargets.length, total: checkTargets.length });
-      if (stats.active === 0 && stats.total > 0) {
-        logActivity("warn", `Sync finished in ${elapsed}s — 0 active proxies (all failed or too slow)`);
-      } else if (stats.total === 0) {
-        logActivity("warn", `Sync finished in ${elapsed}s — no proxies to manage`);
-      } else {
-        logActivity(
-          "success",
-          `Sync finished in ${elapsed}s — ${stats.active} active, ${stats.reserve} reserve, ${stats.dead} dead`
-        );
+      logActivity("success", `Sync finished in ${elapsed}s — ${stats.active} active, ${stats.reserve} reserve`);
+
+      const removedToCheck = Object.values(poolMap).filter((p) => p.remoteState === "removed");
+      if (removedToCheck.length > 0) {
+        void testPools(removedToCheck.map((p) => p.localId)).catch(() => {});
       }
-      if (failed.length) logActivity("warn", `${failed.length} activation update(s) failed on 9Router`);
 
       return {
         started: true,
@@ -309,16 +433,13 @@ export function createPoolRanker({ dataDir }: { dataDir: string }) {
     const state = readState();
     const pools = Object.values(state.pools);
     if (tier === "all") return pools;
-    if (syncing) {
-      return pools.filter(
-        (pool) =>
-          pool.healthStatus === "pending" ||
-          pool.healthStatus === "checking" ||
-          pool.tier !== "dead"
-      );
+    if (tier === "removed") {
+      return pools.filter((pool) => pool.remoteState === "removed" || pool.remoteState === "delete_failed" || pool.remoteState === "revived");
     }
-    if (!tier) return pools.filter((pool) => pool.tier !== "dead");
-    return pools.filter((pool) => pool.tier === tier);
+    if (tier === "active" || tier === "reserve" || tier === "dead") {
+      return pools.filter((pool) => pool.tier === tier && pool.remoteState === "linked");
+    }
+    return pools.filter((pool) => pool.remoteState === "linked" && pool.tier !== "dead");
   }
 
   function getStatus() {
@@ -339,10 +460,13 @@ export function createPoolRanker({ dataDir }: { dataDir: string }) {
     };
   }
 
-  async function activatePool(id: string, isActive: boolean) {
+  async function activatePool(localId: string, isActive: boolean) {
     const state = readState();
-    const pool = state.pools[id];
+    const pool = state.pools[localId];
     if (!pool) throw new Error("Pool not found in local state");
+    if (pool.remoteState !== "linked" || !pool.remoteId) {
+      throw new Error("Only linked pools can be activated on 9Router");
+    }
     const activeLimit = getSettingsSecrets().activePoolLimit;
     if (isActive) {
       const activeCount = Object.values(state.pools).filter(
@@ -352,14 +476,215 @@ export function createPoolRanker({ dataDir }: { dataDir: string }) {
         throw new Error(`Active pool limit (${activeLimit}) reached`);
       }
     }
-    await setPoolActive(id, isActive);
+    await deps.setPoolActive(pool.remoteId, isActive);
     pool.isActiveOnRouter = isActive;
     pool.tier = isActive ? "active" : pool.status === "usable" ? "reserve" : "dead";
-    state.stats.active = Object.values(state.pools).filter((item) => item.tier === "active").length;
-    state.stats.reserve = Object.values(state.pools).filter((item) => item.tier === "reserve").length;
+    state.stats = computeStats(Object.values(state.pools));
     writeState(state);
     metrics.recordFromPools(Object.values(state.pools), state.stats);
     return pool;
+  }
+
+  async function renamePool(localId: string, name: string): Promise<PoolRecord> {
+    const validName = validatePoolName(name);
+    const pool = readState().pools[localId];
+    if (!pool) throw new Error(`Pool not found: ${localId}`);
+
+    if (pool.remoteState === "linked" && pool.remoteId) {
+      await deps.updatePool(pool.remoteId, { name: validName });
+    }
+
+    return mutatePool(localId, (target) => {
+      target.name = validName;
+    });
+  }
+
+  async function removePool(localId: string): Promise<PoolRecord> {
+    const pool = readState().pools[localId];
+    if (!pool) throw new Error(`Pool not found: ${localId}`);
+
+    if (pool.remoteId) {
+      try {
+        await deps.deletePool(pool.remoteId);
+      } catch (error) {
+        const status = (error as { status?: number }).status;
+        if (status !== 404) {
+          mutatePool(localId, (target) => {
+            target.remoteState = "delete_failed";
+            target.tier = "removed";
+            target.isActiveOnRouter = false;
+            target.last_error = (error as Error).message;
+          });
+          throw error;
+        }
+      }
+    }
+
+    return mutatePool(localId, (target) => {
+      target.remoteId = null;
+      target.remoteState = "removed";
+      target.tier = "removed";
+      target.isActiveOnRouter = false;
+      target.testState = "idle";
+    });
+  }
+
+  async function restorePool(localId: string): Promise<PoolRecord> {
+    const pool = readState().pools[localId];
+    if (!pool) throw new Error(`Pool not found: ${localId}`);
+    if (pool.remoteState !== "revived" && pool.remoteState !== "removed") {
+      throw new Error(`Cannot restore pool in ${pool.remoteState} state`);
+    }
+
+    const remotePools = await deps.listPools();
+    const parsedTarget = parseProxy(pool.proxyUrl);
+    const matched = remotePools.find((r) => {
+      if (r.id === pool.remoteId) return true;
+      const remoteParsed = parseProxy(r.proxyUrl);
+      return parsedTarget && remoteParsed && remoteParsed.endpoint === parsedTarget.endpoint;
+    });
+
+    let assignedRemoteId = matched?.id;
+    if (!assignedRemoteId) {
+      const created = await deps.createPool({
+        name: pool.name,
+        proxyUrl: pool.proxyUrl,
+        type: pool.type || "http",
+        isActive: false,
+      });
+      assignedRemoteId = created.id;
+    }
+
+    return mutatePool(localId, (target) => {
+      target.remoteId = assignedRemoteId!;
+      target.remoteState = "linked";
+      target.tier = "reserve";
+      target.isActiveOnRouter = false;
+      target.testState = "idle";
+    });
+  }
+
+  async function runSinglePoolTest(localId: string) {
+    const pool = readState().pools[localId];
+    if (!pool) return;
+    const parsed = parseProxy(pool.proxyUrl);
+    if (!parsed) {
+      mutatePool(localId, (target) => {
+        target.testState = "idle";
+        target.status = "dead";
+        target.failures += 1;
+        target.firstFailure = "Invalid proxy URL";
+        target.last_error = "Invalid proxy URL";
+      });
+      return;
+    }
+
+    mutatePool(localId, (target) => {
+      target.testState = "checking";
+    });
+
+    let result = await deps.checkProxy(parsed);
+    let firstFailMsg: string | undefined;
+
+    if (result.status === "dead") {
+      firstFailMsg = result.last_error || "Check failed";
+      mutatePool(localId, (target) => {
+        target.testState = "retrying";
+        target.firstFailure = firstFailMsg;
+        target.failures += 1;
+        target.last_error = firstFailMsg;
+      });
+      result = await deps.checkProxy(parsed);
+    }
+
+    if (result.status === "usable") {
+      mutatePool(localId, (target) => {
+        target.testState = "idle";
+        target.status = "usable";
+        target.latency_ms = result.latency_ms;
+        target.exit_ip = result.exit_ip;
+        target.checked_at = result.checked_at;
+        target.successes += 1;
+        if (firstFailMsg) {
+          target.firstFailure = firstFailMsg;
+        } else {
+          target.firstFailure = undefined;
+          target.last_error = undefined;
+        }
+        if (target.remoteState === "removed") {
+          target.remoteState = "revived";
+        }
+      });
+      return;
+    }
+
+    const secondFailMsg = result.last_error || firstFailMsg || "Proxy check failed";
+    mutatePool(localId, (target) => {
+      target.testState = "idle";
+      target.status = "dead";
+      target.failures += 1;
+      target.firstFailure = firstFailMsg;
+      target.last_error = secondFailMsg;
+    });
+
+    if (pool.remoteState === "linked" && pool.remoteId) {
+      try {
+        await deps.deletePool(pool.remoteId);
+        mutatePool(localId, (target) => {
+          target.remoteId = null;
+          target.remoteState = "removed";
+          target.tier = "removed";
+          target.isActiveOnRouter = false;
+        });
+      } catch (error) {
+        const status = (error as { status?: number }).status;
+        if (status === 404) {
+          mutatePool(localId, (target) => {
+            target.remoteId = null;
+            target.remoteState = "removed";
+            target.tier = "removed";
+            target.isActiveOnRouter = false;
+          });
+        } else {
+          mutatePool(localId, (target) => {
+            target.remoteState = "delete_failed";
+            target.tier = "removed";
+            target.isActiveOnRouter = false;
+            target.last_error = (error as Error).message;
+          });
+        }
+      }
+    }
+  }
+
+  async function testPools(ids: string[]): Promise<{ accepted: string[]; busy: string[] }> {
+    const accepted: string[] = [];
+    const busy: string[] = [];
+    const uniqueIds = Array.from(new Set(ids));
+    const current = readState().pools;
+
+    for (const id of uniqueIds) {
+      if (!current[id]) continue;
+      if (busyIds.has(id)) {
+        busy.push(id);
+      } else {
+        busyIds.add(id);
+        accepted.push(id);
+        mutatePool(id, (target) => {
+          target.testState = "queued";
+        });
+      }
+    }
+
+    for (const id of accepted) {
+      try {
+        await runSinglePoolTest(id);
+      } finally {
+        busyIds.delete(id);
+      }
+    }
+
+    return { accepted, busy };
   }
 
   function isSyncing() {
@@ -370,5 +695,17 @@ export function createPoolRanker({ dataDir }: { dataDir: string }) {
     return metrics.list(sinceMs);
   }
 
-  return { syncPools, listByTier, getStatus, activatePool, readState, isSyncing, getMetrics };
+  return {
+    syncPools,
+    listByTier,
+    getStatus,
+    activatePool,
+    readState,
+    isSyncing,
+    getMetrics,
+    renamePool,
+    removePool,
+    restorePool,
+    testPools,
+  };
 }

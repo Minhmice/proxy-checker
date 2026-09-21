@@ -21,12 +21,19 @@ export interface CheckResult {
   last_error: string;
 }
 
-export type PoolTier = "active" | "reserve" | "dead";
+export type PoolTier = "active" | "reserve" | "dead" | "removed";
+
+export type RemoteState = "linked" | "removed" | "revived" | "delete_failed";
+
+export type TestState = "idle" | "queued" | "checking" | "retrying";
 
 export type HealthStatus = "pending" | "checking" | "done";
 
 export interface PoolRecord {
-  id: string;
+  localId: string;
+  remoteId: string | null;
+  remoteState: RemoteState;
+  testState: TestState;
   name: string;
   proxyUrl: string;
   type: string;
@@ -39,6 +46,7 @@ export interface PoolRecord {
   isActiveOnRouter: boolean;
   successes: number;
   failures: number;
+  firstFailure?: string;
   last_error?: string;
 }
 
@@ -153,6 +161,7 @@ export interface DiagnosticJob {
   status: "idle" | "running" | "done" | "error";
   sourceFile: string | null;
   samplePercent: number;
+  sampleCount: number | null;
   eligible: number;
   total: number;
   checked: number;

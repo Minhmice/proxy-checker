@@ -115,13 +115,26 @@ async function handleNineRouter(request: http.IncomingMessage, response: http.Se
     return json(response, { started: true }, 202);
   }
 
+  if (request.method === "POST" && pathname === "/api/ninerouter/test") {
+    const body = await readBody(request);
+    const ids = Array.isArray(body.ids)
+      ? body.ids.map(String).map((s) => s.trim()).filter(Boolean)
+      : [];
+    if (!ids.length) {
+      return json(response, { error: "ids must be a non-empty array of strings" }, 400);
+    }
+    const result = await poolRanker.testPools(ids);
+    return json(response, result);
+  }
+
   if (request.method === "POST" && pathname === "/api/ninerouter/activate") {
     const body = await readBody(request);
-    if (!body.id || body.isActive === undefined) {
+    const targetId = body.localId ?? body.id;
+    if (!targetId || body.isActive === undefined) {
       return json(response, { error: "id and isActive are required" }, 400);
     }
     try {
-      const pool = await poolRanker.activatePool(String(body.id), body.isActive === true);
+      const pool = await poolRanker.activatePool(String(targetId), body.isActive === true);
       return json(response, { pool });
     } catch (error) {
       const message = (error as Error).message;
@@ -129,9 +142,58 @@ async function handleNineRouter(request: http.IncomingMessage, response: http.Se
     }
   }
 
+  const poolActionMatch = pathname.match(/^\/api\/ninerouter\/pools\/([^/]+)(?:\/(restore))?$/);
+  if (poolActionMatch) {
+    const localId = decodeURIComponent(poolActionMatch[1]);
+    const action = poolActionMatch[2];
+
+    if (request.method === "PATCH" && !action) {
+      const body = await readBody(request);
+      if (typeof body.name !== "string") {
+        return json(response, { error: "name is required" }, 400);
+      }
+      try {
+        const pool = await poolRanker.renamePool(localId, body.name);
+        return json(response, { pool });
+      } catch (error) {
+        const err = error as Error & { status?: number };
+        const message = err.message || "Failed to rename pool";
+        if (message.includes("not found")) return json(response, { error: message }, 404);
+        if (message.includes("cannot be empty") || message.includes("cannot exceed")) {
+          return json(response, { error: message }, 400);
+        }
+        return json(response, { error: message }, 502);
+      }
+    }
+
+    if (request.method === "DELETE" && !action) {
+      try {
+        const pool = await poolRanker.removePool(localId);
+        return json(response, { pool });
+      } catch (error) {
+        const err = error as Error & { status?: number };
+        const message = err.message || "Failed to delete pool";
+        if (message.includes("not found")) return json(response, { error: message }, 404);
+        return json(response, { error: message }, 502);
+      }
+    }
+
+    if (request.method === "POST" && action === "restore") {
+      try {
+        const pool = await poolRanker.restorePool(localId);
+        return json(response, { pool });
+      } catch (error) {
+        const err = error as Error & { status?: number };
+        const message = err.message || "Failed to restore pool";
+        if (message.includes("not found")) return json(response, { error: message }, 404);
+        if (message.includes("Cannot restore")) return json(response, { error: message }, 409);
+        return json(response, { error: message }, 502);
+      }
+    }
+  }
+
   return json(response, { error: "not found" }, 404);
 }
-
 async function handleDiagnostics(request: http.IncomingMessage, response: http.ServerResponse, pathname: string) {
   if (request.method === "GET" && pathname === "/api/diagnostics/files") {
     return json(response, { files: diagnostics.files(), job: diagnostics.getJob() });
@@ -153,7 +215,11 @@ async function handleDiagnostics(request: http.IncomingMessage, response: http.S
   if (request.method === "POST" && pathname === "/api/diagnostics/run") {
     if (diagnostics.isRunning()) return json(response, { started: false, running: true }, 409);
     const body = await readBody(request);
-    void diagnostics.run({ file: typeof body.file === "string" ? body.file : undefined, samplePercent: 30 });
+    void diagnostics.run({
+      file: typeof body.file === "string" ? body.file : undefined,
+      samplePercent: body.samplePercent !== undefined ? Number(body.samplePercent) : undefined,
+      sampleCount: body.sampleCount !== undefined ? Number(body.sampleCount) : undefined,
+    });
     return json(response, { started: true }, 202);
   }
   if (request.method === "POST" && pathname === "/api/diagnostics/promote") {
