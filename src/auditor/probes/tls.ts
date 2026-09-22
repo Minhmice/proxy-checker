@@ -9,6 +9,8 @@ export interface TlsProbeOptions {
   allowPrivateTargets?: boolean;
   expectedSpkiSha256?: string;
   directCertFingerprint256?: string;
+  directResult?: { valid?: boolean; certificateValid?: boolean; secure?: boolean };
+  directValid?: boolean;
   ca?: string | Buffer;
 }
 
@@ -21,11 +23,17 @@ export function computeSpkiSha256(rawCert: Buffer): string {
 export async function probeTlsIntegrity(
   proxy: ParsedProxyInput,
   options: TlsProbeOptions
-): Promise<TlsResult & { possibleMitm: boolean; spkiSha256?: string }> {
+): Promise<TlsResult & { possibleMitm: boolean; spkiSha256?: string; certDifference?: boolean }> {
   const timeoutMs = options.timeoutMs ?? 5000;
   const parsed = new URL(options.endpoint);
   const host = parsed.hostname;
   const port = parsed.port ? Number(parsed.port) : 443;
+
+  const directSucceeded = Boolean(
+    options.directResult?.valid === true ||
+    options.directResult?.certificateValid === true ||
+    options.directValid === true
+  );
 
   const { socket: plainSocket } = await openProxyTunnel(
     proxy,
@@ -38,11 +46,11 @@ export async function probeTlsIntegrity(
   );
 
   const { promise, resolve } = Promise.withResolvers<
-    TlsResult & { possibleMitm: boolean; spkiSha256?: string }
+    TlsResult & { possibleMitm: boolean; spkiSha256?: string; certDifference?: boolean }
   >();
 
   let settled = false;
-  const finish = (result: TlsResult & { possibleMitm: boolean; spkiSha256?: string }) => {
+  const finish = (result: TlsResult & { possibleMitm: boolean; spkiSha256?: string; certDifference?: boolean }) => {
     if (settled) return;
     settled = true;
     resolve(result);
@@ -68,12 +76,11 @@ export async function probeTlsIntegrity(
       const protocol = tlsSocket.getProtocol() || undefined;
       const alpn = tlsSocket.alpnProtocol || undefined;
 
-      let possibleMitm = false;
       let certificateValid = true;
+      let certDifference = false;
 
       if (options.expectedSpkiSha256 && spkiSha256) {
         if (spkiSha256.toLowerCase() !== options.expectedSpkiSha256.toLowerCase()) {
-          possibleMitm = true;
           certificateValid = false;
         }
       }
@@ -83,9 +90,11 @@ export async function probeTlsIntegrity(
           cert.fingerprint256.replace(/:/g, "").toLowerCase() !==
           options.directCertFingerprint256.replace(/:/g, "").toLowerCase()
         ) {
-          possibleMitm = true;
+          certDifference = true;
         }
       }
+
+      const possibleMitm = !certificateValid && directSucceeded;
 
       finish({
         secure: true,
@@ -94,13 +103,14 @@ export async function probeTlsIntegrity(
         certificateValid,
         alpn: alpn || undefined,
         possibleMitm,
+        certDifference,
         spkiSha256,
       });
     } catch (err) {
       finish({
         secure: false,
         certificateValid: false,
-        possibleMitm: true,
+        possibleMitm: directSucceeded,
         error: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -115,7 +125,7 @@ export async function probeTlsIntegrity(
     finish({
       secure: false,
       certificateValid: false,
-      possibleMitm: false,
+      possibleMitm: directSucceeded,
       error: `Timeout after ${timeoutMs}ms during TLS handshake`,
     });
   });
@@ -126,7 +136,7 @@ export async function probeTlsIntegrity(
     finish({
       secure: false,
       certificateValid: false,
-      possibleMitm: false,
+      possibleMitm: directSucceeded,
       error: err.message,
     });
   });

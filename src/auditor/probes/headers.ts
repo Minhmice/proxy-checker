@@ -15,11 +15,21 @@ const TARGET_LEAK_HEADERS: Record<string, true> = {
   "proxy-connection": true,
 };
 
+const ALWAYS_REDACT_HEADER_NAMES: Record<string, true> = {
+  authorization: true,
+  "proxy-authorization": true,
+  cookie: true,
+  "set-cookie": true,
+  "x-api-key": true,
+  "x-auth-token": true,
+};
+
 function redactValue(val: string, baselineIps: string[]): string {
   let redacted = val;
   for (const ip of baselineIps) {
     if (!ip) continue;
-    const regex = new RegExp(ip.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+    const escaped = ip.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(`(?<![0-9a-zA-Z.:])${escaped}(?![0-9a-zA-Z.:])`, "gi");
     redacted = redacted.replace(regex, "[REDACTED_IP]");
   }
   redacted = redacted.replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, "[REDACTED_IP]");
@@ -32,6 +42,13 @@ function redactValue(val: string, baselineIps: string[]): string {
   redacted = redacted.replace(/\b(token|key|cookie)=([^;\s,]+)/gi, "$1=[REDACTED]");
 
   return redacted;
+}
+
+function matchesExactIp(val: string, ip: string): boolean {
+  if (!ip) return false;
+  const escaped = ip.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const regex = new RegExp(`(?<![0-9a-zA-Z.:])${escaped}(?![0-9a-zA-Z.:])`, "i");
+  return regex.test(val);
 }
 
 export async function probeHeaderLeak(
@@ -120,21 +137,25 @@ export async function probeHeaderLeak(
       if (lower === "via") viaPresent = true;
       if (lower === "x-forwarded-for") xForwardedForPresent = true;
 
+      const isAlwaysRedact = ALWAYS_REDACT_HEADER_NAMES[lower] === true;
       const matchedTargetHeader = TARGET_LEAK_HEADERS[lower] === true;
       const suspicious =
+        isAlwaysRedact ||
         matchedTargetHeader ||
         lower.startsWith("x-") ||
         lower.includes("proxy");
 
       if (suspicious) {
-        const lowerVal = v.toLowerCase();
-        const revealsRealIp = normalizedBaseline.some((bIp) => lowerVal.includes(bIp));
+        const revealsRealIp = normalizedBaseline.some((bIp) => matchesExactIp(v, bIp));
         if (revealsRealIp) {
           originIpExposed = true;
         }
+
+        const value = isAlwaysRedact ? "[REDACTED]" : redactValue(v, normalizedBaseline);
+
         leakHeaders.push({
           name: k,
-          value: redactValue(v, normalizedBaseline),
+          value,
           revealsRealIp,
         });
       }

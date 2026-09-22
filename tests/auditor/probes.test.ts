@@ -457,3 +457,71 @@ test("direct baseline preserves host identity and settles aborted responses", as
     await target.close();
   }
 });
+
+test("header leak does not falsely match substring IPs and redacts sensitive header names", async () => {
+  const target = await startHttpFixture((_req, res) => {
+    res.writeHead(200, {
+      "X-Forwarded-For": "203.0.113.70",
+      Cookie: "session=12345",
+      Authorization: "Bearer secret-abc",
+      "X-API-Key": "my-secret-key",
+    });
+    res.end("ok");
+  });
+  const p = await startMockHttpProxy();
+  try {
+    const result = await probeHeaderLeak(withPort(p.port), ["203.0.113.7"], {
+      endpoint: `http://127.0.0.1:${target.port}/`,
+      timeoutMs: 1000,
+      allowPrivateTargets: true,
+    });
+    assert.equal(result.originIpExposed, false);
+    assert.equal(result.headers?.some((h) => h.revealsRealIp), false);
+    const cookieHeader = result.headers?.find((h) => h.name.toLowerCase() === "cookie");
+    assert.equal(cookieHeader?.value, "[REDACTED]");
+    const authHeader = result.headers?.find((h) => h.name.toLowerCase() === "authorization");
+    assert.equal(authHeader?.value, "[REDACTED]");
+    const apiKeyHeader = result.headers?.find((h) => h.name.toLowerCase() === "x-api-key");
+    assert.equal(apiKeyHeader?.value, "[REDACTED]");
+  } finally {
+    await Promise.all([target.close(), p.close()]);
+  }
+});
+
+test("TLS probe sets possibleMitm true only when proxy TLS fails but direct succeeded, and treats fingerprint diff as certDifference not mitm", async () => {
+  const { promise: pListen, resolve: resListen, reject: rejListen } = Promise.withResolvers<void>();
+  const server = https.createServer({ key: tlsKey, cert: tlsCert }, (_req, res) => res.end("tls"));
+  server.once("error", rejListen);
+  server.listen(0, "127.0.0.1", () => resListen());
+  await pListen;
+
+  const p = await startMockHttpProxy();
+  try {
+    const address = server.address() as net.AddressInfo;
+    // Case A: Proxy TLS fails (untrusted self-signed), but direct was valid -> possibleMitm true
+    const mitmResult = await probeTlsIntegrity(withPort(p.port), {
+      endpoint: `https://localhost:${address.port}/`,
+      timeoutMs: 1000,
+      allowPrivateTargets: true,
+      directResult: { valid: true },
+    });
+    assert.equal(mitmResult.certificateValid, false);
+    assert.equal(mitmResult.possibleMitm, true);
+
+    // Case B: Proxy TLS succeeds with CA, but fingerprint differs -> possibleMitm false, certDifference true
+    const cdnResult = await probeTlsIntegrity(withPort(p.port), {
+      endpoint: `https://localhost:${address.port}/`,
+      timeoutMs: 1000,
+      allowPrivateTargets: true,
+      ca: tlsCert,
+      directCertFingerprint256: "AA:BB:CC:DD",
+    });
+    assert.equal(cdnResult.certificateValid, true);
+    assert.equal(cdnResult.possibleMitm, false);
+    assert.equal(cdnResult.certDifference, true);
+  } finally {
+    const { promise: pClose, resolve: resClose } = Promise.withResolvers<void>();
+    server.close(() => resClose());
+    await Promise.all([p.close(), pClose]);
+  }
+});
