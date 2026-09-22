@@ -66,7 +66,7 @@ export async function probeExitIp(
   for (const endpoint of endpoints) {
     try {
       const target = parseUrl(endpoint);
-      const isHttps = target.protocol === "https" || target.port === 443;
+      const isHttps = target.protocol === "https";
 
       const { socket: rawSocket } = await openProxyTunnel(
         proxy,

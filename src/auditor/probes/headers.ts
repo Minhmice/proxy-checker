@@ -47,7 +47,7 @@ function redactValue(val: string, baselineIps: string[]): string {
 function matchesExactIp(val: string, ip: string): boolean {
   if (!ip) return false;
   const escaped = ip.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const regex = new RegExp(`(?<![0-9a-zA-Z.:])${escaped}(?![0-9a-zA-Z.:])`, "i");
+  const regex = new RegExp(`(?:\\b|")(${escaped})(?::\\d+)?(?:\\b|")`, "i");
   return regex.test(val);
 }
 
@@ -87,7 +87,7 @@ export async function probeHeaderLeak(
     }
   );
 
-  const isHttps = protocol === "https" || port === 443;
+  const isHttps = protocol === "https";
   let appSocket: net.Socket = rawSocket;
 
   try {

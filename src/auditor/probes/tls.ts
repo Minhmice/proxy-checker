@@ -20,6 +20,54 @@ export function computeSpkiSha256(rawCert: Buffer): string {
   return crypto.createHash("sha256").update(spkiDer).digest("hex");
 }
 
+function isTlsCertVerificationError(err: Error & { code?: string }): boolean {
+  const message = (err.message || "").toLowerCase();
+  const code = (err.code || "").toUpperCase();
+
+  const certErrorCodes = new Set([
+    "UNABLE_TO_GET_ISSUER_CERT",
+    "UNABLE_TO_GET_CRL",
+    "UNABLE_TO_DECRYPT_CERT_SIGNATURE",
+    "UNABLE_TO_DECRYPT_CRL_SIGNATURE",
+    "UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY",
+    "CERT_SIGNATURE_FAILURE",
+    "CRL_SIGNATURE_FAILURE",
+    "CERT_NOT_YET_VALID",
+    "CERT_HAS_EXPIRED",
+    "CRL_NOT_YET_VALID",
+    "CRL_HAS_EXPIRED",
+    "ERROR_IN_CERT_NOT_BEFORE_FIELD",
+    "ERROR_IN_CERT_NOT_AFTER_FIELD",
+    "ERROR_IN_CRL_NOT_BEFORE_FIELD",
+    "ERROR_IN_CRL_NOT_AFTER_FIELD",
+    "OUT_OF_MEM",
+    "DEPTH_ZERO_SELF_SIGNED_CERT",
+    "SELF_SIGNED_CERT_IN_CHAIN",
+    "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+    "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    "CERT_CHAIN_TOO_LONG",
+    "CERT_REVOKED",
+    "INVALID_CA",
+    "PATH_LENGTH_EXCEEDED",
+    "INVALID_PURPOSE",
+    "CERT_UNTRUSTED",
+    "CERT_REJECTED",
+    "HOSTNAME_MISMATCH",
+    "ERR_TLS_CERT_ALTNAME_INVALID",
+  ]);
+
+  if (certErrorCodes.has(code)) return true;
+
+  return (
+    message.includes("self-signed") ||
+    message.includes("expired") ||
+    message.includes("hostname") ||
+    message.includes("altname") ||
+    message.includes("certificate") ||
+    message.includes("unable to verify")
+  );
+}
+
 export async function probeTlsIntegrity(
   proxy: ParsedProxyInput,
   options: TlsProbeOptions
@@ -35,15 +83,26 @@ export async function probeTlsIntegrity(
     options.directValid === true
   );
 
-  const { socket: plainSocket } = await openProxyTunnel(
-    proxy,
-    { host, port },
-    {
-      timeoutMs,
-      allowPrivateTargets: options.allowPrivateTargets ?? false,
-      targetDomain: host,
-    }
-  );
+  let plainSocket: import("node:net").Socket;
+  try {
+    const tunnel = await openProxyTunnel(
+      proxy,
+      { host, port },
+      {
+        timeoutMs,
+        allowPrivateTargets: options.allowPrivateTargets ?? false,
+        targetDomain: host,
+      }
+    );
+    plainSocket = tunnel.socket;
+  } catch (err) {
+    return {
+      secure: false,
+      certificateValid: false,
+      possibleMitm: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 
   const { promise, resolve } = Promise.withResolvers<
     TlsResult & { possibleMitm: boolean; spkiSha256?: string; certDifference?: boolean }
@@ -107,10 +166,11 @@ export async function probeTlsIntegrity(
         spkiSha256,
       });
     } catch (err) {
+      const isCertError = err instanceof Error && isTlsCertVerificationError(err);
       finish({
         secure: false,
         certificateValid: false,
-        possibleMitm: directSucceeded,
+        possibleMitm: isCertError && directSucceeded,
         error: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -125,7 +185,7 @@ export async function probeTlsIntegrity(
     finish({
       secure: false,
       certificateValid: false,
-      possibleMitm: directSucceeded,
+      possibleMitm: false,
       error: `Timeout after ${timeoutMs}ms during TLS handshake`,
     });
   });
@@ -133,10 +193,11 @@ export async function probeTlsIntegrity(
   tlsSocket.once("error", (err: Error & { code?: string }) => {
     tlsSocket.destroy();
     plainSocket.destroy();
+    const isCertError = isTlsCertVerificationError(err);
     finish({
       secure: false,
       certificateValid: false,
-      possibleMitm: directSucceeded,
+      possibleMitm: isCertError && directSucceeded,
       error: err.message,
     });
   });

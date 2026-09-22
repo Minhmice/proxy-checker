@@ -458,9 +458,10 @@ test("direct baseline preserves host identity and settles aborted responses", as
   }
 });
 
-test("header leak does not falsely match substring IPs and redacts sensitive header names", async () => {
+test("header leak does not falsely match substring IPs, matches IP with port/quote, and redacts sensitive header names", async () => {
   const target = await startHttpFixture((_req, res) => {
     res.writeHead(200, {
+      Forwarded: 'for="203.0.113.7:54321"',
       "X-Forwarded-For": "203.0.113.70",
       Cookie: "session=12345",
       Authorization: "Bearer secret-abc",
@@ -475,8 +476,11 @@ test("header leak does not falsely match substring IPs and redacts sensitive hea
       timeoutMs: 1000,
       allowPrivateTargets: true,
     });
-    assert.equal(result.originIpExposed, false);
-    assert.equal(result.headers?.some((h) => h.revealsRealIp), false);
+    assert.equal(result.originIpExposed, true);
+    const fwdHeader = result.headers?.find((h) => h.name.toLowerCase() === "forwarded");
+    assert.equal(fwdHeader?.revealsRealIp, true);
+    const xffHeader = result.headers?.find((h) => h.name.toLowerCase() === "x-forwarded-for");
+    assert.equal(xffHeader?.revealsRealIp, false);
     const cookieHeader = result.headers?.find((h) => h.name.toLowerCase() === "cookie");
     assert.equal(cookieHeader?.value, "[REDACTED]");
     const authHeader = result.headers?.find((h) => h.name.toLowerCase() === "authorization");
@@ -485,6 +489,23 @@ test("header leak does not falsely match substring IPs and redacts sensitive hea
     assert.equal(apiKeyHeader?.value, "[REDACTED]");
   } finally {
     await Promise.all([target.close(), p.close()]);
+  }
+});
+
+test("TLS probe does NOT set possibleMitm on network timeouts or socket errors", async () => {
+  const p = await startMockHttpProxy();
+  try {
+    // Target port is closed -> connection refused / socket error, NOT a TLS cert verification error
+    const result = await probeTlsIntegrity(withPort(p.port), {
+      endpoint: "https://127.0.0.1:59999/",
+      timeoutMs: 1000,
+      allowPrivateTargets: true,
+      directResult: { valid: true },
+    });
+    assert.equal(result.certificateValid, false);
+    assert.equal(result.possibleMitm, false);
+  } finally {
+    await p.close();
   }
 });
 
