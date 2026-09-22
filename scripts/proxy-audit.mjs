@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL, URL } from "node:url";
 
 const SENSITIVE_URL_PATTERN = /([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)([^/@\s]+)@/g;
 

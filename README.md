@@ -2,6 +2,14 @@
 
 One Node.js application: a Next.js dashboard plus a native TCP checker that syncs with **9Router proxy pools**, health-checks them in parallel, activates the top 50 on 9Router, and shows a clean Active / Reserve view (dead proxies hidden).
 
+## Standalone safety auditor
+
+The independent `src/auditor/` API and `proxy-audit` CLI evaluate proxy transport security, privacy, reputation, and reliability without changing 9Router pools. See [Proxy Safety Auditor](docs/PROXY_AUDITOR.md) for installation, CLI/API examples, security assumptions, score explanations, and limitations.
+
+```sh
+npm run proxy-audit -- check "http://proxy.example.com:8080" --json
+```
+
 ## Settings (recommended)
 
 After the first run, open **Settings** in the dashboard to change 9Router credentials, sync interval, health-check concurrency, control password, and more. Values are stored in `data/settings.json` and apply immediately. Server always listens on port `1300`.

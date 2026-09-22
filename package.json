@@ -1,13 +1,24 @@
 {
   "name": "minhmiceproxy",
   "private": true,
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "bin": {
+    "proxy-audit": "scripts/proxy-audit.mjs"
+  },
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:stop": "node scripts/dev-stop.mjs",
     "dev:restart": "node scripts/dev-stop.mjs && node --import tsx src/server/server.ts",
     "build": "next build",
     "start": "node --import tsx src/server/server.ts",
-    "test": "node --import tsx --test tests/**/*.test.ts"
+    "test": "node --import tsx --test tests/**/*.test.ts",
+    "test:auditor": "node --import tsx --test tests/auditor/*.test.ts",
+    "test:integration": "node --import tsx --test tests/auditor/transport.test.ts tests/auditor/probes.test.ts tests/auditor/api.test.ts tests/auditor/cli.test.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/auditor scripts/proxy-audit.mjs",
+    "proxy-audit": "node scripts/proxy-audit.mjs"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",
@@ -24,12 +35,16 @@
     "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^26.1.2",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
+    "eslint": "^10.11.0",
+    "playwright": "^1.63.0",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.23.1",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.70.1"
   }
 }
