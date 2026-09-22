@@ -5,6 +5,8 @@ import {
   type HttpResponse,
   type TimingBreakdown,
   type TransportOptions,
+  MAX_BODY_BYTES,
+  MAX_HEADERS_BYTES,
 } from "./common.js";
 import { openHttpProxyTunnel, requestThroughProxy } from "./http.js";
 import { openSocks4ProxyTunnel } from "./socks4.js";
@@ -16,6 +18,8 @@ export {
   type HttpResponse,
   type TimingBreakdown,
   type TransportOptions,
+  MAX_BODY_BYTES,
+  MAX_HEADERS_BYTES,
 } from "./common.js";
 export { openHttpProxyTunnel, requestThroughProxy } from "./http.js";
 export { openSocks4ProxyTunnel } from "./socks4.js";

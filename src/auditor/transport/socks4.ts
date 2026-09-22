@@ -22,7 +22,7 @@ export async function openSocks4ProxyTunnel(
     throw new Error(`SOCKS4 protocol requires an IPv4 destination host, got: ${pinnedTargetIp}`);
   }
 
-  const { socket, dnsMs, tcpConnectMs } = await connectSocketToProxy(proxy, timeoutMs);
+  const { socket, dnsMs, tcpConnectMs } = await connectSocketToProxy(proxy, timeoutMs, options);
 
   const startHandshake = Date.now();
   const reader = new BufferedSocketReader(socket);

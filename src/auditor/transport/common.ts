@@ -5,6 +5,9 @@ import { isPrivateIp } from "../security/ip-policy.js";
 import { validateTargetHost } from "../security/ssrf.js";
 import type { ParsedProxyInput } from "../types.js";
 
+export const MAX_HEADERS_BYTES = 64 * 1024;
+export const MAX_BODY_BYTES = 5 * 1024 * 1024;
+
 export interface TimingBreakdown {
   dnsMs: number;
   tcpConnectMs: number;
@@ -115,13 +118,20 @@ export class BufferedSocketReader {
     return chunk;
   }
 
-  async readUntil(delimiter: Buffer | string, timeoutMs = 5000): Promise<{ matched: Buffer; remainder: Buffer }> {
+  async readUntil(delimiter: Buffer | string, timeoutMs = 5000, maxBytes = MAX_HEADERS_BYTES): Promise<{ matched: Buffer; remainder: Buffer }> {
     const delim = typeof delimiter === "string" ? Buffer.from(delimiter) : delimiter;
     const startTime = Date.now();
 
     while (true) {
+      if (this.buffer.length > maxBytes) {
+        throw new Error(`Header/data size exceeded maximum limit of ${maxBytes} bytes`);
+      }
+
       const idx = this.buffer.indexOf(delim);
       if (idx !== -1) {
+        if (idx + delim.length > maxBytes) {
+          throw new Error(`Header/data size exceeded maximum limit of ${maxBytes} bytes`);
+        }
         const matched = this.buffer.subarray(0, idx + delim.length);
         this.buffer = this.buffer.subarray(idx + delim.length);
         return { matched, remainder: this.buffer };
@@ -152,13 +162,25 @@ export class BufferedSocketReader {
     }
   }
 
-  async readAll(timeoutMs = 5000): Promise<Buffer> {
+  async readAll(timeoutMs = 5000, maxBytes = MAX_BODY_BYTES): Promise<Buffer> {
     const startTime = Date.now();
     while (!this.closed) {
-      if (this.error) throw this.error;
+      if (this.error) {
+        this.socket.destroy();
+        throw this.error;
+      }
+
+      if (this.buffer.length > maxBytes) {
+        this.socket.destroy();
+        throw new Error(`Response body size exceeded limit of ${maxBytes} bytes`);
+      }
+
       const elapsed = Date.now() - startTime;
       const remaining = timeoutMs - elapsed;
-      if (remaining <= 0) break;
+      if (remaining <= 0) {
+        this.socket.destroy();
+        throw new Error(`Timeout after ${timeoutMs}ms while reading response body`);
+      }
 
       const { promise, resolve } = Promise.withResolvers<void>();
       const timer = setTimeout(() => {
@@ -171,6 +193,11 @@ export class BufferedSocketReader {
       });
 
       await promise;
+    }
+
+    if (this.buffer.length > maxBytes) {
+      this.socket.destroy();
+      throw new Error(`Response body size exceeded limit of ${maxBytes} bytes`);
     }
 
     const result = this.buffer;
@@ -188,6 +215,11 @@ export class BufferedSocketReader {
   release(): Buffer {
     if (!this.isReleased) {
       this.isReleased = true;
+      try {
+        this.socket.pause();
+      } catch {
+        // Socket may already be destroyed or closed
+      }
       this.socket.removeListener("data", this.onData);
       this.socket.removeListener("end", this.onEnd);
       this.socket.removeListener("close", this.onClose);
@@ -227,22 +259,23 @@ export async function resolveAndPinTargetAddress(
 
 export async function connectSocketToProxy(
   proxy: ParsedProxyInput,
-  timeoutMs: number
+  timeoutMs: number,
+  options: TransportOptions = {}
 ): Promise<{ socket: net.Socket; dnsMs: number; tcpConnectMs: number; targetIp: string }> {
-  let dnsMs = 0;
-  let targetIp = proxy.host;
+  const startDns = Date.now();
+  const proxyValidation = await validateTargetHost(proxy.host, {
+    allowPrivate: options.allowPrivateTargets,
+    allowPrivateTargets: options.allowPrivateTargets,
+  });
 
-  if (!net.isIP(proxy.host)) {
-    const startDns = Date.now();
-    const lookupResult = await Promise.race([
-      dns.lookup(proxy.host, { family: 4 }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`DNS resolution timed out for proxy host: ${proxy.host}`)), timeoutMs)
-      ),
-    ]);
-    dnsMs = Math.max(0, Date.now() - startDns);
-    targetIp = lookupResult.address;
+  if (!proxyValidation.valid || proxyValidation.resolvedIps.length === 0) {
+    throw new Error(
+      `SSRF validation rejected proxy host ${proxy.host}: ${proxyValidation.reason || "restricted"}`
+    );
   }
+
+  const dnsMs = Math.max(0, Date.now() - startDns);
+  const targetIp = proxyValidation.resolvedIps[0];
 
   const startTcp = Date.now();
   const remainingTimeout = timeoutMs - dnsMs;

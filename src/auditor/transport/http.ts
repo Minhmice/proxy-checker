@@ -21,7 +21,7 @@ export async function openHttpProxyTunnel(
 
   const pinnedTargetIp = await resolveAndPinTargetAddress(target, options);
 
-  const { socket, dnsMs, tcpConnectMs } = await connectSocketToProxy(proxy, timeoutMs);
+  const { socket, dnsMs, tcpConnectMs } = await connectSocketToProxy(proxy, timeoutMs, options);
 
   const startHandshake = Date.now();
   const reader = new BufferedSocketReader(socket);
@@ -113,9 +113,8 @@ export async function requestThroughProxy(
     const bodyBytes = typeof req.body === "string" ? Buffer.from(req.body, "utf8") : req.body;
     socket.write(bodyBytes);
   }
-
   const reader = new BufferedSocketReader(socket);
-
+  socket.resume();
   try {
     let remaining = deadline - Date.now();
     if (remaining <= 0) throw new Error(`Timeout after ${timeoutMs}ms before reading HTTP response headers`);

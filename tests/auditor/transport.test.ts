@@ -264,9 +264,9 @@ test("regression 1: BufferedSocketReader releases listeners cleanly without trap
     );
 
     assert.equal(tunnel.socket.listenerCount("data"), 0, "socket data listeners should be released after handshake");
-
     const receivedChunks: Buffer[] = [];
     tunnel.socket.on("data", (chunk: Buffer) => receivedChunks.push(chunk));
+    tunnel.socket.resume();
 
     const wireReq = `GET /fast-pipe HTTP/1.1\r\nHost: 127.0.0.1:${target.port}\r\nConnection: close\r\n\r\n`;
     tunnel.socket.write(wireReq);
@@ -476,5 +476,83 @@ test("regression 5: HTTP CONNECT errors sanitize raw proxy error text and creden
     assert.ok(!capturedMessage.includes("secret-token-12345"), `Error should not contain raw server text: ${capturedMessage}`);
   } finally {
     await proxy.close();
+  }
+});
+
+test("regression 6: connectSocketToProxy validates proxy host against SSRF policy", async () => {
+  const { parsed: privateProxy } = parseProxyInput("http://127.0.0.1:8080");
+  await assert.rejects(
+    openProxyTunnel(
+      privateProxy,
+      { host: "example.com", port: 80 },
+      { timeoutMs: 2000 }
+    ),
+    /SSRF validation rejected proxy host/i
+  );
+});
+
+test("regression 7: readAll throws and destroys socket when timeout occurs before stream ends", async () => {
+  const server = await startScriptedRawHttpServer((socket) => {
+    socket.write("HTTP/1.1 200 OK\r\n\r\npartial stream without closing");
+  });
+  const proxy = await startMockHttpProxy();
+
+  try {
+    const { parsed } = parseProxyInput(`http://127.0.0.1:${proxy.port}`);
+    const tunnel = await openProxyTunnel(
+      parsed,
+      { host: "127.0.0.1", port: server.port },
+      { timeoutMs: 3000, allowPrivateTargets: true }
+    );
+
+    await assert.rejects(
+      requestThroughProxy(tunnel.socket, {
+        method: "GET",
+        path: "/",
+        host: `127.0.0.1:${server.port}`,
+        timeoutMs: 100,
+      }),
+      /timeout/i
+    );
+    assert.ok(tunnel.socket.destroyed, "socket should be destroyed on readAll timeout");
+  } finally {
+    await proxy.close();
+    await server.close();
+  }
+});
+
+test("regression 8: reader enforces byte caps on headers and body", async () => {
+  const server = await startScriptedRawHttpServer((socket) => {
+    socket.on("data", (chunk) => {
+      const text = chunk.toString("utf8");
+      if (text.includes("/huge-headers")) {
+        const hugeHeader = "X-Huge: " + "a".repeat(70 * 1024) + "\r\n";
+        socket.write(`HTTP/1.1 200 OK\r\n${hugeHeader}\r\n`);
+        socket.end();
+      }
+    });
+  });
+  const proxy = await startMockHttpProxy();
+
+  try {
+    const { parsed } = parseProxyInput(`http://127.0.0.1:${proxy.port}`);
+    const tunnel = await openProxyTunnel(
+      parsed,
+      { host: "127.0.0.1", port: server.port },
+      { timeoutMs: 3000, allowPrivateTargets: true }
+    );
+
+    await assert.rejects(
+      requestThroughProxy(tunnel.socket, {
+        method: "GET",
+        path: "/huge-headers",
+        host: `127.0.0.1:${server.port}`,
+        timeoutMs: 2000,
+      }),
+      /maximum limit/i
+    );
+  } finally {
+    await proxy.close();
+    await server.close();
   }
 });
