@@ -72,7 +72,9 @@ export async function openSocks4ProxyTunnel(
 
     const response = await reader.readBytes(8, remainingTimeout);
 
-    const vn = response[0];
+    if (response[0] !== 0x00) {
+      throw new Error(`Invalid SOCKS4 reply version: ${response[0]}`);
+    }
     const cd = response[1];
 
     if (cd !== 0x5a) {

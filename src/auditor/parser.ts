@@ -101,10 +101,8 @@ export function parseProxyInput(input: ProxyInput): {
         parsed,
         redacted: createRedactedProxyInfo(protocol, host, port, username),
       };
-    } catch (err: unknown) {
-      // Rethrow normalized error without exposing any sensitive parameters
-      const message = err instanceof Error ? err.message : "Failed to parse proxy URL";
-      throw new Error(`Invalid proxy URL configuration: ${message}`);
+    } catch {
+      throw new Error("Invalid proxy URL configuration");
     }
   }
 

@@ -1,14 +1,7 @@
 import type net from "node:net";
 import type { ParsedProxyInput } from "../types.js";
-import {
-  type HttpRequestOptions,
-  type HttpResponse,
-  type TimingBreakdown,
-  type TransportOptions,
-  MAX_BODY_BYTES,
-  MAX_HEADERS_BYTES,
-} from "./common.js";
-import { openHttpProxyTunnel, requestThroughProxy } from "./http.js";
+import type { TimingBreakdown, TransportOptions } from "./common.js";
+import { openHttpProxyTunnel } from "./http.js";
 import { openSocks4ProxyTunnel } from "./socks4.js";
 import { openSocks5ProxyTunnel } from "./socks5.js";
 

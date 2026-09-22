@@ -10,6 +10,7 @@ export interface ProbeOptions {
   endpoint?: string;
   maxBytes?: number;
   ca?: string | Buffer;
+  signal?: AbortSignal;
 }
 
 function parseUrl(rawUrl: string): {
@@ -103,6 +104,7 @@ export async function probeDirectBaseline(
       ca: options.ca,
       rejectUnauthorized: true,
       servername: isHttps ? target.hostname : undefined,
+      signal: options.signal,
     },
     (res) => {
       const chunks: Buffer[] = [];

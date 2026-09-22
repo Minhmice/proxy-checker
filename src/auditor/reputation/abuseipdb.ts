@@ -101,7 +101,7 @@ export async function fetchAbuseIpDb(
             : undefined,
       },
     };
-  } catch (err) {
+  } catch {
     return {
       provider: "abuseipdb",
       status: "error",

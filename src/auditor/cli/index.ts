@@ -1,11 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { checkProxy, type ProxyAuditOptions } from "../index.js";
-import type { ProxyAuditResult } from "../types.js";
+import type { ProxyAuditResult, ProxyInput } from "../types.js";
 import { formatCsvRecords, formatHumanResult, sanitizeCredentials, sanitizeResult } from "./formatters.js";
 import { normalizeConcurrency, processProxyLines, writeFileAtomic } from "./bulk.js";
 
-export type AuditProxyRunner = (proxy: unknown, options?: ProxyAuditOptions) => Promise<ProxyAuditResult>;
+export type AuditProxyRunner = (proxy: ProxyInput, options?: ProxyAuditOptions) => Promise<ProxyAuditResult>;
 
 const USAGE = `Usage:
   proxy-audit check <proxy> [--json] [--pretty] [--timeout <ms>] [--attempts <n>] [--no-reputation] [--browser]

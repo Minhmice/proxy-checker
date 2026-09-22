@@ -13,6 +13,7 @@ export interface IntegrityOptions {
   timeoutMs?: number;
   allowPrivateTargets?: boolean;
   ca?: string | Buffer;
+  signal?: AbortSignal;
 }
 
 export async function probeContentIntegrity(
@@ -37,6 +38,7 @@ export async function probeContentIntegrity(
       timeoutMs,
       allowPrivateTargets: options.allowPrivateTargets ?? false,
       targetDomain: host,
+      signal: options.signal,
     }
   );
 

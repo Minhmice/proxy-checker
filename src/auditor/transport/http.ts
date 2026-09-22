@@ -116,6 +116,7 @@ export async function requestThroughProxy(
     Host: req.host,
     Connection: "close",
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ProxySafetyAuditor/1.0",
+    "Accept-Encoding": "identity",
     ...(req.headers || {}),
   };
 
@@ -157,6 +158,14 @@ export async function requestThroughProxy(
         const val = line.slice(colon + 1).trim();
         resHeaders[key] = val;
       }
+    }
+
+    if (statusCode >= 300 && statusCode < 400 && resHeaders["location"]) {
+      throw new Error(`Endpoint redirects are prohibited by safety policy: HTTP ${statusCode} to ${resHeaders["location"]}`);
+    }
+    const encoding = (resHeaders["content-encoding"] || "").toLowerCase();
+    if (encoding && encoding !== "identity") {
+      throw new Error(`Compressed response encoding (${encoding}) prohibited by safety policy; expected identity`);
     }
 
     let rawBody: Buffer;

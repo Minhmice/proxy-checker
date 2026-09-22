@@ -120,7 +120,7 @@ export async function fetchIpinfo(
         residential: explicitResidential,
       },
     };
-  } catch (err) {
+  } catch {
     return {
       provider: "ipinfo",
       status: "error",

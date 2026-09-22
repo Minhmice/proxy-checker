@@ -226,7 +226,7 @@ test("exit IP uses TLS for HTTPS endpoints", async () => {
     assert.equal(result.ip, "198.51.100.22");
   } finally {
     const { promise: pClose, resolve: resClose } = Promise.withResolvers<void>();
-    server.close(resClose);
+    server.close((error) => error ? resClose(Promise.reject(error)) : resClose());
     await Promise.all([p.close(), pClose]);
   }
 });
@@ -263,7 +263,7 @@ test("content integrity validates SPKI and HMAC on the payload TLS connection", 
     assert.equal(connections, 1);
   } finally {
     const { promise: pClose, resolve: resClose } = Promise.withResolvers<void>();
-    server.close(resClose);
+    server.close((error) => error ? resClose(Promise.reject(error)) : resClose());
     await Promise.all([p.close(), pClose]);
   }
 });
@@ -397,7 +397,7 @@ test("TLS verification cannot be disabled by runtime options", async () => {
     assert.match(baseline.error || "", /self-signed certificate/i);
   } finally {
     const { promise: pClose, resolve: resClose } = Promise.withResolvers<void>();
-    server.close(resClose);
+    server.close((error) => error ? resClose(Promise.reject(error)) : resClose());
     await Promise.all([p.close(), pClose]);
   }
 });
@@ -429,7 +429,7 @@ test("header leak uses TLS and redacts credential-shaped values", async () => {
     assert.match(values, /\[REDACTED/);
   } finally {
     const { promise: pClose, resolve: resClose } = Promise.withResolvers<void>();
-    server.close(resClose);
+    server.close((error) => error ? resClose(Promise.reject(error)) : resClose());
     await Promise.all([p.close(), pClose]);
   }
 });

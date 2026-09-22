@@ -43,7 +43,7 @@ export function canonicalizeIp(ip: string): string {
 
     // Split on ::
     const doubleColonParts = clean.split("::");
-    let fullWords: string[] = [];
+    let fullWords: string[];
 
     if (doubleColonParts.length === 2) {
       const leftWords = doubleColonParts[0] ? doubleColonParts[0].split(":") : [];
@@ -160,6 +160,7 @@ export async function probeHeaderLeak(
       timeoutMs,
       allowPrivateTargets: options.allowPrivateTargets ?? false,
       targetDomain: target.host,
+      signal: options.signal,
     }
   );
 

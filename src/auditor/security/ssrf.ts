@@ -69,7 +69,7 @@ export async function validateTargetHost(
   const dnsTimeoutPromise = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error(`DNS resolution timed out after ${dnsTimeoutMs}ms`)), dnsTimeoutMs);
   });
-  let resolvedIps: string[] = [];
+  let resolvedIps: string[];
   try {
     try {
       const resolvePromise = Promise.allSettled([

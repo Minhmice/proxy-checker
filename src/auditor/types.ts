@@ -70,6 +70,7 @@ export interface ConnectivityResult {
 export interface BaselineResult {
   established: boolean;
   statusCode?: number;
+  ip?: string;
   latencyMs?: number;
   error?: string;
   [key: string]: unknown;

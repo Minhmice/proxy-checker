@@ -75,6 +75,7 @@ export async function probeExitIp(
           timeoutMs,
           allowPrivateTargets: options.allowPrivateTargets ?? false,
           targetDomain: target.host,
+          signal: options.signal,
         }
       );
 

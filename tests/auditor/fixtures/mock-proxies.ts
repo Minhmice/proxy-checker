@@ -1,5 +1,6 @@
 import http from "node:http";
 import net from "node:net";
+import type { Duplex } from "node:stream";
 
 export interface MockServerHandle {
   port: number;
@@ -90,7 +91,7 @@ export function startMockHttpProxy(options?: {
   rejectedStatusLine?: string;
 }): Promise<MockServerHandle> {
   const { promise, resolve, reject } = Promise.withResolvers<MockServerHandle>();
-  const activeSockets = new Set<net.Socket>();
+  const activeSockets = new Set<Duplex>();
 
   const server = http.createServer((req, res) => {
     if (options?.username || options?.password) {
@@ -283,7 +284,7 @@ export function startMockSocks5Proxy(options?: {
     activeSockets.add(socket);
     socket.once("close", () => activeSockets.delete(socket));
 
-    let stage: "methods" | "auth" | "request" | "pipe" = "methods";
+    let stage: string = "methods";
     let buffer = Buffer.alloc(0);
 
     const onData = (chunk: Buffer) => {

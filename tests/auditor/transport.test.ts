@@ -291,7 +291,7 @@ test("regression 1: BufferedSocketReader releases listeners cleanly without trap
 test("regression 2: requestThroughProxy handles chunked transfer-encoding and content-length strictly", async () => {
   const server = await startScriptedRawHttpServer((socket) => {
     let buffer = Buffer.alloc(0);
-    socket.on("data", (chunk) => {
+    socket.on("data", (chunk: Buffer) => {
       buffer = Buffer.concat([buffer, chunk]);
       const headerEnd = buffer.indexOf("\r\n\r\n");
       if (headerEnd === -1) return;

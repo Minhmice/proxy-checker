@@ -1,4 +1,3 @@
-import dns from "node:dns/promises";
 import net from "node:net";
 import tls from "node:tls";
 import { isPrivateIp } from "../security/ip-policy.js";
@@ -21,6 +20,8 @@ export interface TransportOptions {
   targetDomain?: string;
   allowPrivateTargets?: boolean;
   resolvedIp?: string;
+  signal?: AbortSignal;
+  ca?: string | Buffer;
 }
 
 export interface HttpRequestOptions {
@@ -256,7 +257,6 @@ export async function resolveAndPinTargetAddress(
   if (!validation.valid || validation.resolvedIps.length === 0) {
     throw new Error(`SSRF validation rejected target ${target.host}: ${validation.reason || "restricted"}`);
   }
-
   return validation.resolvedIps[0];
 }
 
@@ -265,6 +265,9 @@ export async function connectSocketToProxy(
   timeoutMs: number,
   options: TransportOptions = {}
 ): Promise<{ socket: net.Socket; dnsMs: number; tcpConnectMs: number; targetIp: string }> {
+  if (options.signal?.aborted) {
+    throw new Error("Operation aborted");
+  }
   const startDns = Date.now();
   const remainingDeadline = () => Math.max(1, timeoutMs - (Date.now() - startDns));
   const proxyValidation = await validateTargetHost(proxy.host, {
@@ -298,6 +301,15 @@ export async function connectSocketToProxy(
 
   timer = setTimeout(onTimeout, remainingTimeout);
 
+  const onAbort = () => {
+    if (timer) clearTimeout(timer);
+    socket.destroy();
+    reject(new Error("Operation aborted"));
+  };
+  if (options.signal) {
+    options.signal.addEventListener("abort", onAbort, { once: true });
+  }
+
   const socket: net.Socket =
     proxy.protocol === "https"
       ? tls.connect({
@@ -314,21 +326,23 @@ export async function connectSocketToProxy(
 
   socket.once("connect", () => {
     if (timer) clearTimeout(timer);
+    if (options.signal) options.signal.removeEventListener("abort", onAbort);
     resolve(socket);
   });
 
   if (proxy.protocol === "https") {
     socket.once("secureConnect", () => {
       if (timer) clearTimeout(timer);
+      if (options.signal) options.signal.removeEventListener("abort", onAbort);
       resolve(socket);
     });
   }
 
   socket.once("error", (err) => {
     if (timer) clearTimeout(timer);
+    if (options.signal) options.signal.removeEventListener("abort", onAbort);
     reject(err);
   });
-
   const connectedSocket = await promise;
   const tcpConnectMs = Math.max(0, Date.now() - startTcp);
 

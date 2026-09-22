@@ -12,6 +12,7 @@ export interface TlsProbeOptions {
   directResult?: { valid?: boolean; certificateValid?: boolean; secure?: boolean };
   directValid?: boolean;
   ca?: string | Buffer;
+  signal?: AbortSignal;
 }
 
 export function computeSpkiSha256(rawCert: Buffer): string {
@@ -92,6 +93,7 @@ export async function probeTlsIntegrity(
         timeoutMs,
         allowPrivateTargets: options.allowPrivateTargets ?? false,
         targetDomain: host,
+        signal: options.signal,
       }
     );
     plainSocket = tunnel.socket;

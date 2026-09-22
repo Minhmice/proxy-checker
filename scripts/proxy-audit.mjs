@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const SENSITIVE_URL_PATTERN = /([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)([^/@\s]+)@/g;
 
@@ -50,9 +50,10 @@ try {
     }
   } else {
     const scriptPath = fileURLToPath(import.meta.url);
+    const tsxPath = pathToFileURL(fileURLToPath(new URL("../node_modules/tsx/dist/loader.mjs", import.meta.url))).href;
     const child = spawn(
       process.execPath,
-      ["--import", "tsx", scriptPath, ...process.argv.slice(2)],
+      ["--import", tsxPath, scriptPath, ...process.argv.slice(2)],
       {
         stdio: ["inherit", "pipe", "pipe"],
         env: {

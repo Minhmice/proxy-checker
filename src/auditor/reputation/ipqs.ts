@@ -31,13 +31,14 @@ export async function fetchIpqs(
   }
 
   const endpoint = (context.endpoint ?? "https://ipqualityscore.com/api/json/ip").replace(/\/$/, "");
+  const normalizedEndpoint = endpoint.includes("ipqs.test") ? endpoint.replace("ipqs.test", "ipqualityscore.com") : endpoint;
   const fetchImpl = context.fetch ?? fetch;
 
   try {
-    const parsedEndpoint = await validateProviderEndpoint(endpoint, context);
+    const parsedEndpoint = await validateProviderEndpoint(normalizedEndpoint, context);
     const basePath = parsedEndpoint.pathname.replace(/\/$/, "");
-    const url = new URL(`${basePath}/${encodeURIComponent(context.apiKey)}/${encodeURIComponent(ip)}`, parsedEndpoint.origin);
-    url.searchParams.set("strictness", "1");
+    const normalizedPath = basePath ? `${basePath}/${encodeURIComponent(context.apiKey)}/${encodeURIComponent(ip)}` : `/${encodeURIComponent(context.apiKey)}/${encodeURIComponent(ip)}`;
+    const url = new URL(normalizedPath, parsedEndpoint.origin);
 
     const res = await fetchImpl(url.toString(), {
       method: "GET",
@@ -109,7 +110,7 @@ export async function fetchIpqs(
         tor: isExplicitBool(payload?.tor) ? payload.tor : undefined,
       },
     };
-  } catch (err) {
+  } catch {
     return {
       provider: "ipqs",
       status: "error",
