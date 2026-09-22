@@ -89,6 +89,15 @@ test("calculateScores preserves nullable categories and never treats missing evi
   assert.equal(calculateScores(evidence).overallSafety, null);
 });
 
+test("transportSecurity reflects verified TLS when optional content integrity is absent", () => {
+  const evidence = safeEvidence();
+  evidence.contentIntegrity = undefined;
+
+  const scores = calculateScores(evidence);
+  assert.equal(scores.transportSecurity, 100);
+  assert.equal(scores.overallSafety, 100);
+});
+
 const criticalCases: Array<[string, (evidence: AuditEvidence) => void, string]> = [
   ["SSRF violation", (e) => { e.security.ssrfProtection.passed = false; }, "SSRF_VIOLATION"],
   ["connection failure", (e) => { e.connectivity = { reachable: false, error: "ECONNREFUSED" }; }, "CONNECTION_FAILED"],
@@ -153,11 +162,17 @@ test("risk factors expose every severity with stable codes, evidence, and recomm
   evidence.security.ssrfProtection = { passed: false, resolvedIps: ["127.0.0.1"], reason: "private target" };
   evidence.network = { ...evidence.network, isDatacenter: true, isVpn: true };
   evidence.headerLeak = { detected: true, originIpExposed: false, headers: [{ name: "via", value: "proxy" }] };
-  evidence.stability = undefined;
+  evidence.exitIp = { ip: "203.0.113.10", matchesDeclared: false };
   evidence.reputation = { score: 80, maliciousSignals: ["abuse_confidence_80"] };
 
   const result = determineVerdict(evidence, calculateScores(evidence));
-  assert.equal(result.riskFactors.every((factor) => ["info", "low", "medium", "high", "critical"].includes(factor.severity)), true);
+  assert.deepEqual(new Set(result.riskFactors.map((factor) => factor.severity)), new Set([
+    "info",
+    "low",
+    "medium",
+    "high",
+    "critical",
+  ]));
 
   for (const factor of result.riskFactors) {
     assert.match(factor.code, /^[A-Z][A-Z0-9_]+$/);
@@ -168,3 +183,113 @@ test("risk factors expose every severity with stable codes, evidence, and recomm
   assert.equal(new Set(result.recommendations).size, result.recommendations.length);
 });
 
+test("datacenter and vpn classifications do not trigger risk warnings or anti-detection advice", () => {
+  const evidence = safeEvidence();
+  evidence.network = { isDatacenter: true, isVpn: true, isProxy: true, asn: "AS12345" };
+
+  const result = determineVerdict(evidence, calculateScores(evidence));
+  assert.equal(result.verdict, "PASS");
+  assert.equal(result.riskFactors.every((factor) => factor.severity === "info"), true);
+  for (const rec of result.recommendations) {
+    assert.doesNotMatch(rec, /residential|mobile|anti-detection/i);
+  }
+});
+
+test("observed warning takes precedence over unrelated incomplete evidence", () => {
+  const evidence = safeEvidence();
+  evidence.tls = undefined;
+  evidence.dns = { resolved: true, dnsLeakDetected: true };
+
+  const result = determineVerdict(evidence, calculateScores(evidence));
+  assert.equal(result.verdict, "WARN");
+  assert.equal(result.riskFactors.some((factor) => factor.code === "DNS_LEAK"), true);
+  assert.equal(result.riskFactors.some((factor) => factor.code === "INSUFFICIENT_EVIDENCE"), true);
+});
+
+test("insufficient evidence alone stays UNKNOWN instead of escalating to WARN", () => {
+  const evidence = safeEvidence();
+  evidence.reputation = { score: null };
+
+  const result = determineVerdict(evidence, calculateScores(evidence));
+  assert.equal(result.verdict, "UNKNOWN");
+  assert.deepEqual(result.riskFactors.map((factor) => factor.code), ["INSUFFICIENT_EVIDENCE"]);
+});
+
+const unstableCases: Array<[string, (evidence: AuditEvidence) => void]> = [
+  ["explicit unstable status", (e) => { e.stability = { ...e.stability, stable: false }; }],
+  ["success rate below 80 percent", (e) => { e.stability = { ...e.stability, successRate: 79 }; }],
+  ["p95 latency above 3000ms", (e) => { e.stability = { ...e.stability, p95LatencyMs: 3_001 }; }],
+];
+
+for (const [name, mutate] of unstableCases) {
+  test(`${name} produces explained reliability WARN`, () => {
+    const evidence = safeEvidence();
+    mutate(evidence);
+
+    const result = determineVerdict(evidence, calculateScores(evidence));
+    const factor = result.riskFactors.find((candidate) => candidate.code === "UNSTABLE_RELIABILITY");
+    assert.equal(result.verdict, "WARN");
+    assert.equal(factor?.severity, "medium");
+    assert.equal(factor?.evidence.successRate, evidence.stability?.successRate);
+    assert.equal(factor?.recommendations.length, 1);
+  });
+}
+
+test("confirmed browser origin leak is critical despite incomplete evidence", () => {
+  const evidence = safeEvidence();
+  evidence.reputation = { score: null };
+  evidence.browserAudit = { supported: true, navigationSucceeded: true, webrtcLeakDetected: true };
+
+  const result = determineVerdict(evidence, calculateScores(evidence));
+  const factor = result.riskFactors.find((candidate) => candidate.code === "BROWSER_ORIGIN_LEAK");
+  assert.equal(result.verdict, "FAIL");
+  assert.equal(factor?.severity, "critical");
+  assert.equal(factor?.evidence.webrtcLeakDetected, true);
+  assert.equal(factor?.recommendations.length, 1);
+});
+
+test("sub-threshold reputation deduction is explained without escalating verdict", () => {
+  const evidence = safeEvidence();
+  evidence.reputation = { score: 15, fraudScore: 10, spamScore: 20, maliciousSignals: [] };
+
+  const result = determineVerdict(evidence, calculateScores(evidence));
+  const factor = result.riskFactors.find((candidate) => candidate.code === "REPUTATION_CONCERNS");
+  assert.equal(result.verdict, "PASS");
+  assert.equal(calculateScores(evidence).reputation, 85);
+  assert.equal(factor?.severity, "info");
+  assert.equal(factor?.evidence.score, 15);
+  assert.equal(factor?.recommendations.length, 1);
+});
+
+test("present probe objects with missing fields remain explicitly incomplete", () => {
+  const evidence = safeEvidence();
+  evidence.tls = {};
+  evidence.dns = { dnsLeakDetected: null };
+  evidence.headerLeak = {};
+  evidence.reputation = { score: null };
+  evidence.stability = {};
+
+  const result = determineVerdict(evidence, calculateScores(evidence));
+  const factor = result.riskFactors.find((candidate) => candidate.code === "INSUFFICIENT_EVIDENCE");
+  assert.equal(result.verdict, "UNKNOWN");
+  assert.deepEqual(factor?.evidence.missingMeasurements, [
+    "tls.secure",
+    "tls.certificateValid",
+    "dns.dnsLeakDetected",
+    "headerLeak.detected",
+    "reputation.score",
+    "stability.stable",
+    "stability.successRate",
+  ]);
+});
+
+test("supported browser audit without leak result keeps privacy unknown", () => {
+  const evidence = safeEvidence();
+  evidence.browserAudit = { supported: true, navigationSucceeded: true };
+
+  const scores = calculateScores(evidence);
+  const result = determineVerdict(evidence, scores);
+  assert.equal(scores.privacy, null);
+  assert.equal(result.verdict, "UNKNOWN");
+  assert.equal(result.riskFactors.some((factor) => factor.code === "INSUFFICIENT_EVIDENCE"), true);
+});

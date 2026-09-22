@@ -52,8 +52,11 @@ function transportScore(evidence: AuditEvidence): number | null {
   const tls = evidence.tls;
   const integrity = evidence.contentIntegrity;
   if (!tls || typeof tls.secure !== "boolean" || typeof tls.certificateValid !== "boolean") return null;
-  if (!integrity || typeof integrity.intact !== "boolean") return null;
+
   const tlsScore = tls.secure && tls.certificateValid ? 100 : 0;
+  if (!integrity || typeof integrity.intact !== "boolean") {
+    return tlsScore;
+  }
   const integrityScore = integrity.intact ? 100 : 0;
   return Math.min(tlsScore, integrityScore);
 }
@@ -62,15 +65,17 @@ function privacyScore(evidence: AuditEvidence): number | null {
   const dns = evidence.dns;
   const headers = evidence.headerLeak;
   const exitIp = evidence.exitIp;
+  const browser = evidence.browserAudit;
   if (!dns || typeof dns.dnsLeakDetected !== "boolean") return null;
   if (!headers || typeof headers.detected !== "boolean") return null;
   if (!exitIp || typeof exitIp.ip !== "string") return null;
+  if (browser?.supported === true && typeof browser.webrtcLeakDetected !== "boolean") return null;
 
   let score = dns.dnsLeakDetected ? 50 : 100;
   if (headers.originIpExposed === true) score = 0;
   else if (headers.detected) score = Math.min(score, 70);
   if (exitIp.matchesDeclared === false) score = Math.min(score, 70);
-  if (evidence.browserAudit?.webrtcLeakDetected === true) score = 0;
+  if (browser?.webrtcLeakDetected === true) score = 0;
   return score;
 }
 
