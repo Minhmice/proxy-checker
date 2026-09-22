@@ -65,45 +65,49 @@ export async function validateTargetHost(
   }
 
   const dnsTimeoutMs = options?.timeoutMs ?? 3000;
-  const dnsTimeoutPromise = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error(`DNS resolution timed out after ${dnsTimeoutMs}ms`)), dnsTimeoutMs)
-  );
-
+  let timer: NodeJS.Timeout | null = null;
+  const dnsTimeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`DNS resolution timed out after ${dnsTimeoutMs}ms`)), dnsTimeoutMs);
+  });
   let resolvedIps: string[] = [];
   try {
-    const resolvePromise = Promise.allSettled([
-      dns.resolve4(normalized),
-      dns.resolve6(normalized),
-    ]);
-    const [ipv4Addresses, ipv6Addresses] = await Promise.race([
-      resolvePromise,
-      dnsTimeoutPromise,
-    ]);
-    const records: string[] = [];
-    if (ipv4Addresses.status === "fulfilled") {
-      records.push(...ipv4Addresses.value);
-    }
-    if (ipv6Addresses.status === "fulfilled") {
-      records.push(...ipv6Addresses.value);
-    }
-
-    resolvedIps = Array.from(new Set(records));
-  } catch {
-    resolvedIps = [];
-  }
-
-  if (resolvedIps.length === 0) {
     try {
-      const lookupPromise = dns.lookup(normalized, { all: true });
-      const lookup = await Promise.race([lookupPromise, dnsTimeoutPromise]);
-      resolvedIps = Array.from(new Set(lookup.map((item) => item.address)));
-    } catch (error) {
-      return {
-        valid: false,
-        resolvedIps: [],
-        reason: `Failed to resolve host ${normalized}: ${error instanceof Error ? error.message : String(error)}`,
-      };
+      const resolvePromise = Promise.allSettled([
+        dns.resolve4(normalized),
+        dns.resolve6(normalized),
+      ]);
+      const [ipv4Addresses, ipv6Addresses] = await Promise.race([
+        resolvePromise,
+        dnsTimeoutPromise,
+      ]);
+      const records: string[] = [];
+      if (ipv4Addresses.status === "fulfilled") {
+        records.push(...ipv4Addresses.value);
+      }
+      if (ipv6Addresses.status === "fulfilled") {
+        records.push(...ipv6Addresses.value);
+      }
+
+      resolvedIps = Array.from(new Set(records));
+    } catch {
+      resolvedIps = [];
     }
+
+    if (resolvedIps.length === 0) {
+      try {
+        const lookupPromise = dns.lookup(normalized, { all: true });
+        const lookup = await Promise.race([lookupPromise, dnsTimeoutPromise]);
+        resolvedIps = Array.from(new Set(lookup.map((item) => item.address)));
+      } catch (error) {
+        return {
+          valid: false,
+          resolvedIps: [],
+          reason: `Failed to resolve host ${normalized}: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+    }
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 
   if (resolvedIps.length === 0) {

@@ -265,9 +265,11 @@ export async function connectSocketToProxy(
   options: TransportOptions = {}
 ): Promise<{ socket: net.Socket; dnsMs: number; tcpConnectMs: number; targetIp: string }> {
   const startDns = Date.now();
+  const remainingDeadline = () => Math.max(1, timeoutMs - (Date.now() - startDns));
   const proxyValidation = await validateTargetHost(proxy.host, {
     allowPrivate: options.allowPrivateTargets,
     allowPrivateTargets: options.allowPrivateTargets,
+    timeoutMs: remainingDeadline(),
   });
 
   if (!proxyValidation.valid || proxyValidation.resolvedIps.length === 0) {

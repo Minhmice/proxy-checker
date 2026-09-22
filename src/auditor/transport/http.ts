@@ -169,14 +169,14 @@ export async function requestThroughProxy(
           await reader.readUntil("\r\n", remaining);
           break;
         }
+        if (totalChunkBytes + chunkSize > MAX_BODY_BYTES) {
+          throw new Error(`Body exceeds max allowed size of ${MAX_BODY_BYTES} bytes`);
+        }
 
         remaining = deadline - Date.now();
         if (remaining <= 0) throw new Error(`Timeout after ${timeoutMs}ms while reading chunk data`);
         const chunkData = await reader.readBytes(chunkSize, remaining);
         totalChunkBytes += chunkSize;
-        if (totalChunkBytes > MAX_BODY_BYTES) {
-          throw new Error(`Body exceeds max allowed size of ${MAX_BODY_BYTES} bytes`);
-        }
         chunks.push(chunkData);
         remaining = deadline - Date.now();
         if (remaining <= 0) throw new Error(`Timeout after ${timeoutMs}ms while reading chunk terminator`);
