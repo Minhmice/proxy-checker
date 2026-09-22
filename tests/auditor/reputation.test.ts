@@ -91,7 +91,7 @@ test("aggregation degrades unavailable and failed providers without throwing", a
 
   assert.deepEqual(result.raw.map(({ provider, status }) => ({ provider, status })), [
     { provider: "ipinfo", status: "unavailable" },
-    { provider: "ipqs", status: "error" },
+    { provider: "ipqs", status: "unavailable" },
     { provider: "abuseipdb", status: "error" },
   ]);
   assert.deepEqual(result.network, {});
@@ -114,4 +114,104 @@ test("aggregation keeps privacy indicators separate from malicious abuse", async
   assert.deepEqual(result.reputation.privacySignals, ["vpn", "proxy"]);
   assert.deepEqual(result.reputation.maliciousSignals, []);
   assert.equal(result.reputation.score, 0);
+});
+
+test("aggregation serves fresh cache without calling providers or extending TTL", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "proxy-auditor-cache-first-"));
+  const cachePath = path.join(directory, "cache.json");
+  let calls = 0;
+  const options = {
+    cachePath,
+    apiKeys: { ipinfo: "a", ipqs: "b", abuseipdb: "c" },
+    fetch: async (input: string | URL | Request) => {
+      calls += 1;
+      const url = String(input);
+      if (url.includes("ipinfo")) return json({ org: "AS64500 Cached ISP", privacy: { vpn: true } });
+      if (url.includes("ipqualityscore")) return json({ success: true, fraud_score: 40, vpn: true });
+      return json({ data: { abuseConfidenceScore: 20, totalReports: 2 } });
+    },
+  };
+
+  const first = await fetchReputationSignals("198.51.100.44", options);
+  const before = JSON.parse(await readFile(cachePath, "utf8")) as {
+    asn: Record<string, { expiresAt: number }>;
+    reputation: Record<string, { expiresAt: number }>;
+  };
+  const second = await fetchReputationSignals("198.51.100.44", options);
+  const after = JSON.parse(await readFile(cachePath, "utf8")) as typeof before;
+
+  assert.equal(calls, 3);
+  assert.deepEqual(second.network, first.network);
+  assert.deepEqual(second.reputation, first.reputation);
+  assert.equal(after.asn["198.51.100.44"]?.expiresAt, before.asn["198.51.100.44"]?.expiresAt);
+  assert.equal(after.reputation["198.51.100.44"]?.expiresAt, before.reputation["198.51.100.44"]?.expiresAt);
+});
+
+test("cache merges new IPs with existing file data and ignores malformed entries", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "proxy-auditor-cache-merge-"));
+  const filePath = path.join(directory, "cache.json");
+  const first = new ReputationCache({ filePath });
+  await first.set("198.51.100.1", "asn", { asn: "AS64501" });
+  const second = new ReputationCache({ filePath });
+  await second.set("198.51.100.2", "asn", { asn: "AS64502" });
+
+  assert.deepEqual(await second.get("198.51.100.1", "asn"), { asn: "AS64501" });
+  assert.deepEqual(await second.get("198.51.100.2", "asn"), { asn: "AS64502" });
+
+  await writeFile(filePath, JSON.stringify({ asn: { broken: { data: { asn: "AS1" } } }, reputation: {} }), "utf8");
+  const malformed = new ReputationCache({ filePath });
+  assert.equal(await malformed.get("broken", "asn"), undefined);
+});
+
+test("provider failures hide URL credentials and HTTP 429 is unavailable", async () => {
+  const secret = "token-that-must-not-leak";
+  const throwingFetch = async () => {
+    throw new Error(`request failed for https://provider.test/${secret}?token=${secret}`);
+  };
+  const [ipinfoFailure, ipqsFailure] = await Promise.all([
+    fetchIpinfo("198.51.100.9", { apiKey: secret, fetch: throwingFetch }),
+    fetchIpqs("198.51.100.9", { apiKey: secret, fetch: throwingFetch }),
+  ]);
+  assert.equal(ipinfoFailure.error?.includes(secret), false);
+  assert.equal(ipqsFailure.error?.includes(secret), false);
+
+  const [ipinfo429, ipqs429, abuse429] = await Promise.all([
+    fetchIpinfo("198.51.100.9", { apiKey: "a", fetch: async () => json({}, 429) }),
+    fetchIpqs("198.51.100.9", { apiKey: "b", fetch: async () => json({}, 429) }),
+    fetchAbuseIpDb("198.51.100.9", { apiKey: "c", fetch: async () => json({}, 429) }),
+  ]);
+  assert.deepEqual([ipinfo429.status, ipqs429.status, abuse429.status], ["unavailable", "unavailable", "unavailable"]);
+});
+
+test("aggregation starts provider requests concurrently", async () => {
+  const pending: Array<() => void> = [];
+  let started = 0;
+  const request = fetchReputationSignals("203.0.113.77", {
+    apiKeys: { ipinfo: "a", ipqs: "b", abuseipdb: "c" },
+    fetch: async (input) => {
+      started += 1;
+      const { promise, resolve } = Promise.withResolvers<void>();
+      pending.push(resolve);
+      await promise;
+      const url = String(input);
+      if (url.includes("ipinfo")) return json({ org: "AS64500 Example" });
+      if (url.includes("ipqualityscore")) return json({ success: true, fraud_score: 10 });
+      return json({ data: { abuseConfidenceScore: 10, totalReports: 0 } });
+    },
+  });
+
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(started, 3);
+  for (const resolve of pending) resolve();
+  await request;
+});
+
+test("one provider score is not treated as consensus", async () => {
+  const result = await fetchReputationSignals("203.0.113.78", {
+    apiKeys: { ipqs: "only-provider" },
+    fetch: async () => json({ success: true, fraud_score: 91 }),
+  });
+
+  assert.equal(result.reputation.fraudScore, 91);
+  assert.equal(result.reputation.score, null);
 });

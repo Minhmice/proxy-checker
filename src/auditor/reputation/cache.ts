@@ -32,18 +32,38 @@ export class ReputationCache {
     this.reputationTtlMs = options.reputationTtlMs ?? 6 * 60 * 60 * 1_000;
   }
 
+  private sanitizeStore(parsed: unknown): CacheStore {
+    const validStore: CacheStore = { asn: {}, reputation: {} };
+    if (!parsed || typeof parsed !== "object") return validStore;
+
+    const candidate = parsed as Partial<CacheStore>;
+    for (const section of ["asn", "reputation"] as const) {
+      const source = candidate[section];
+      if (source && typeof source === "object") {
+        for (const [ip, rawEntry] of Object.entries(source)) {
+          if (
+            rawEntry &&
+            typeof rawEntry === "object" &&
+            typeof (rawEntry as { expiresAt?: unknown }).expiresAt === "number" &&
+            (rawEntry as { data?: unknown }).data !== undefined
+          ) {
+            validStore[section][ip] = rawEntry as CacheEntry<unknown>;
+          }
+        }
+      }
+    }
+    return validStore;
+  }
+
   private async loadFromFile(): Promise<void> {
     if (!this.filePath) return;
     try {
       const content = await readFile(this.filePath, "utf8");
-      const parsed = JSON.parse(content) as CacheStore;
-      if (parsed && typeof parsed === "object") {
-        this.inMemory.asn = parsed.asn && typeof parsed.asn === "object" ? parsed.asn : {};
-        this.inMemory.reputation =
-          parsed.reputation && typeof parsed.reputation === "object" ? parsed.reputation : {};
-      }
+      const sanitized = this.sanitizeStore(JSON.parse(content));
+      this.inMemory.asn = { ...sanitized.asn, ...this.inMemory.asn };
+      this.inMemory.reputation = { ...sanitized.reputation, ...this.inMemory.reputation };
     } catch {
-      // corrupt or missing file: keep empty in-memory store
+      // corrupt or missing file: keep in-memory store intact
     }
   }
 
@@ -51,15 +71,33 @@ export class ReputationCache {
     if (!this.filePath) return;
     const dir = path.dirname(this.filePath);
     await mkdir(dir, { recursive: true });
+
+    let merged: CacheStore = {
+      asn: { ...this.inMemory.asn },
+      reputation: { ...this.inMemory.reputation },
+    };
+
+    try {
+      const onDiskContent = await readFile(this.filePath, "utf8");
+      const onDisk = this.sanitizeStore(JSON.parse(onDiskContent));
+      merged = {
+        asn: { ...onDisk.asn, ...this.inMemory.asn },
+        reputation: { ...onDisk.reputation, ...this.inMemory.reputation },
+      };
+      this.inMemory = merged;
+    } catch {
+      // no readable file yet or corrupt file to overwrite
+    }
+
     const tempFile = `${this.filePath}.tmp.${Date.now()}.${Math.random().toString(36).slice(2)}`;
-    await writeFile(tempFile, JSON.stringify(this.inMemory, null, 2), "utf8");
+    await writeFile(tempFile, JSON.stringify(merged, null, 2), "utf8");
     await rename(tempFile, this.filePath);
   }
 
   async get<T>(ip: string, section: "asn" | "reputation"): Promise<T | undefined> {
     await this.loadFromFile();
     const entry = this.inMemory[section][ip];
-    if (!entry) return undefined;
+    if (!entry || typeof entry.expiresAt !== "number") return undefined;
     if (this.now() > entry.expiresAt) {
       delete this.inMemory[section][ip];
       return undefined;

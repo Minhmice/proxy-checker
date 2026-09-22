@@ -31,9 +31,9 @@ export async function fetchIpqs(
     if (!res.ok) {
       return {
         provider: "ipqs",
-        status: "error",
+        status: res.status === 429 ? "unavailable" : "error",
         statusCode: res.status,
-        error: `HTTP ${res.status}`,
+        error: res.status === 429 ? "Quota exceeded (HTTP 429)" : `HTTP ${res.status}`,
       };
     }
 
@@ -81,7 +81,7 @@ export async function fetchIpqs(
     return {
       provider: "ipqs",
       status: "error",
-      error: err instanceof Error ? err.message : String(err),
+      error: "Network request failed for ipqs",
     };
   }
 }

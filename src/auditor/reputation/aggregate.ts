@@ -17,6 +17,14 @@ function roundTwo(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
+interface CachedReputationData {
+  reputation: ReputationResult & {
+    privacySignals?: string[];
+    maliciousSignals?: string[];
+  };
+  network: Partial<NetworkResult>;
+}
+
 export async function fetchReputationSignals(
   ip: string,
   options: ReputationOptions = {}
@@ -29,58 +37,73 @@ export async function fetchReputationSignals(
       })
     : sharedCache;
 
+  const cachedAsn = await cache.get<{ asn?: string; org?: string }>(ip, "asn");
+  const cachedReputation = await cache.get<CachedReputationData>(ip, "reputation");
+
+  if (cachedAsn && cachedReputation) {
+    const fullNetwork: NetworkResult = {
+      ...(cachedReputation.network ?? {}),
+      asn: cachedAsn.asn,
+      organization: cachedAsn.org ?? cachedReputation.network?.organization,
+    };
+    return {
+      network: fullNetwork,
+      reputation: cachedReputation.reputation,
+      raw: [
+        { provider: "ipinfo", status: "ok", cached: true },
+        { provider: "ipqs", status: "ok", cached: true },
+        { provider: "abuseipdb", status: "ok", cached: true },
+      ],
+    };
+  }
+
   const limiter = sharedLimiter;
   const timeoutMs = options.timeoutMs ?? 5000;
   const fetchImpl = options.fetch ?? fetch;
 
-  const rawReports: RawProviderReport[] = [];
+  const [ipinfoReport, ipqsReport, abuseReport] = await Promise.all([
+    (async () => {
+      await limiter.acquire("ipinfo");
+      return fetchIpinfo(ip, {
+        apiKey: options.apiKeys?.ipinfo,
+        endpoint: options.endpoints?.ipinfo,
+        timeoutMs,
+        fetch: fetchImpl,
+      });
+    })(),
+    (async () => {
+      await limiter.acquire("ipqs");
+      return fetchIpqs(ip, {
+        apiKey: options.apiKeys?.ipqs,
+        endpoint: options.endpoints?.ipqs,
+        timeoutMs,
+        fetch: fetchImpl,
+      });
+    })(),
+    (async () => {
+      await limiter.acquire("abuseipdb");
+      return fetchAbuseIpDb(ip, {
+        apiKey: options.apiKeys?.abuseipdb,
+        endpoint: options.endpoints?.abuseipdb,
+        timeoutMs,
+        fetch: fetchImpl,
+      });
+    })(),
+  ]);
 
-  // IPinfo
-  await limiter.acquire("ipinfo");
-  const ipinfoReport = await fetchIpinfo(ip, {
-    apiKey: options.apiKeys?.ipinfo,
-    endpoint: options.endpoints?.ipinfo,
-    timeoutMs,
-    fetch: fetchImpl,
-  });
-  rawReports.push(ipinfoReport);
-
-  // IPQS
-  await limiter.acquire("ipqs");
-  const ipqsReport = await fetchIpqs(ip, {
-    apiKey: options.apiKeys?.ipqs,
-    endpoint: options.endpoints?.ipqs,
-    timeoutMs,
-    fetch: fetchImpl,
-  });
-  rawReports.push(ipqsReport);
-
-  // AbuseIPDB
-  await limiter.acquire("abuseipdb");
-  const abuseReport = await fetchAbuseIpDb(ip, {
-    apiKey: options.apiKeys?.abuseipdb,
-    endpoint: options.endpoints?.abuseipdb,
-    timeoutMs,
-    fetch: fetchImpl,
-  });
-  rawReports.push(abuseReport);
-
+  const rawReports: RawProviderReport[] = [ipinfoReport, ipqsReport, abuseReport];
   const ipinfoData = ipinfoReport.status === "ok" ? ipinfoReport.data : undefined;
   const ipqsData = ipqsReport.status === "ok" ? ipqsReport.data : undefined;
   const abuseData = abuseReport.status === "ok" ? abuseReport.data : undefined;
 
-  // Cache resolution / population for ASN
   let networkAsn = ipinfoData?.asn || ipqsData?.asn;
   let networkOrg = ipinfoData?.isp || ipqsData?.isp;
 
   if (networkAsn) {
     await cache.set(ip, "asn", { asn: networkAsn, org: networkOrg });
-  } else {
-    const cachedAsn = await cache.get<{ asn?: string; org?: string }>(ip, "asn");
-    if (cachedAsn?.asn) {
-      networkAsn = cachedAsn.asn;
-      networkOrg = cachedAsn.org ?? networkOrg;
-    }
+  } else if (cachedAsn?.asn) {
+    networkAsn = cachedAsn.asn;
+    networkOrg = cachedAsn.org ?? networkOrg;
   }
 
   const network: NetworkResult = {};
@@ -115,17 +138,8 @@ export async function fetchReputationSignals(
   }
 
   let finalScore: number | null = null;
-  if (validScores.length > 0) {
+  if (validScores.length >= 2) {
     finalScore = roundTwo(validScores.reduce((a, b) => a + b, 0) / validScores.length);
-  } else {
-    const cachedReputation = await cache.get<{ score?: number }>(ip, "reputation");
-    if (typeof cachedReputation?.score === "number") {
-      finalScore = cachedReputation.score;
-    }
-  }
-
-  if (finalScore !== null) {
-    await cache.set(ip, "reputation", { score: finalScore });
   }
 
   const reputation: ReputationResult & {
@@ -141,6 +155,20 @@ export async function fetchReputationSignals(
     privacySignals,
     maliciousSignals,
   };
+
+  const hasNewReputationData = Boolean(ipinfoData || ipqsData || abuseData);
+  if (hasNewReputationData) {
+    await cache.set(ip, "reputation", {
+      reputation,
+      network: {
+        isDatacenter: network.isDatacenter,
+        isVpn: network.isVpn,
+        isProxy: network.isProxy,
+        isTor: network.isTor,
+        organization: network.organization,
+      },
+    });
+  }
 
   return { network, reputation, raw: rawReports };
 }

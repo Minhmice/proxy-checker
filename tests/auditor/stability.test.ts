@@ -52,6 +52,30 @@ test("rotation counts exit IP transitions separately from distinct IPs", async (
   assert.equal(result.rotation.changesObserved, 2);
 });
 
+test("rotation preserves all observed IPs across endpoints without single consensus", async () => {
+  const result = await probeStabilityAndRotation(proxy, 2, {
+    now: clock([0, 10, 10, 20]),
+    sample: async () => ({
+      observations: [
+        { endpoint: "http://ep1.test", ip: "198.51.100.10" },
+        { endpoint: "http://ep2.test", ip: "198.51.100.20" },
+      ],
+    }),
+  });
+
+  assert.deepEqual(result.rotation.distinctIpsObserved, ["198.51.100.10", "198.51.100.20"]);
+  assert.equal(result.rotation.supported, true);
+  assert.equal(result.rotation.exitIpChanged, true);
+});
+
+test("stability reports failure when no endpoints are configured", async () => {
+  const result = await probeStabilityAndRotation(proxy, 2, { endpoints: [] });
+  assert.equal(result.stability.samplesSucceeded, 0);
+  assert.equal(result.stability.successRate, 0);
+  assert.equal(result.stability.packetLossPercent, 100);
+  assert.equal(result.stability.stable, false);
+});
+
 test("stability handles every request failing without invalid numeric metrics", async () => {
   const result = await probeStabilityAndRotation(proxy, 2, {
     now: clock([0, 5, 5, 10]),

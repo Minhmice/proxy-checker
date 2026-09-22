@@ -7,7 +7,7 @@ import { probeExitIp, type ProbeOptions } from "./exit-ip.js";
 
 export interface StabilityProbeOptions extends ProbeOptions {
   now?: () => number;
-  sample?: (attemptIndex: number) => Promise<{ ip?: string }>;
+  sample?: (attemptIndex: number) => Promise<{ ip?: string; observations?: Array<{ ip?: string }> }>;
 }
 
 function roundTwo(value: number): number {
@@ -37,23 +37,37 @@ export async function probeStabilityAndRotation(
 ): Promise<{ stability: StabilityResult; rotation: RotationResult }> {
   const boundedAttempts = Math.max(1, Math.min(attempts, 20));
   const now = options.now ?? (() => Date.now());
+  const configuredEndpoints =
+    options.endpoints !== undefined
+      ? options.endpoints
+      : options.endpoint
+        ? [options.endpoint]
+        : undefined;
+
   const sample =
     options.sample ??
     (async () => {
-      const observation = await probeExitIp(proxy, options);
-      if (!observation.ip && observation.observations.length > 0) {
-        const firstError = observation.observations.find((o) => o.error)?.error;
-        if (firstError) throw new Error(firstError);
+      if (configuredEndpoints && configuredEndpoints.length === 0) {
+        throw new Error("No endpoints configured for stability probe");
       }
-      return { ip: observation.ip };
+      const observation = await probeExitIp(proxy, options);
+      if (observation.observations.length === 0) {
+        throw new Error("No endpoints configured for exit IP probe");
+      }
+      const validObservations = observation.observations.filter((o) => Boolean(o.ip));
+      if (validObservations.length === 0 && observation.observations.length > 0) {
+        const firstError = observation.observations.find((o) => o.error)?.error;
+        throw new Error(firstError || "No successful exit IP observations");
+      }
+      return { ip: observation.ip, observations: observation.observations };
     });
 
   let succeeded = 0;
   const latencies: number[] = [];
-  const observedIps: string[] = [];
   let distinctIps: string[] = [];
   let changesObserved = 0;
   let lastIp: string | undefined;
+
   for (let index = 0; index < boundedAttempts; index += 1) {
     const start = now();
     try {
@@ -62,15 +76,26 @@ export async function probeStabilityAndRotation(
       succeeded += 1;
       latencies.push(elapsed);
 
+      const ipsInSample: string[] = [];
       if (response?.ip) {
-        observedIps.push(response.ip);
-        if (!distinctIps.includes(response.ip)) {
-          distinctIps.push(response.ip);
+        ipsInSample.push(response.ip);
+      }
+      if (response?.observations) {
+        for (const obs of response.observations) {
+          if (obs.ip && !ipsInSample.includes(obs.ip)) {
+            ipsInSample.push(obs.ip);
+          }
         }
-        if (lastIp && lastIp !== response.ip) {
+      }
+
+      for (const ip of ipsInSample) {
+        if (!distinctIps.includes(ip)) {
+          distinctIps.push(ip);
+        }
+        if (lastIp && lastIp !== ip) {
           changesObserved += 1;
         }
-        lastIp = response.ip;
+        lastIp = ip;
       }
     } catch {
       now();
