@@ -569,3 +569,26 @@ test("header leak exact IPv6 candidate extraction avoids false substring match",
     await Promise.all([target.close(), p.close()]);
   }
 });
+
+test("header leak canonicalizes IPv6 representations for accurate leak detection", async () => {
+  const target = await startHttpFixture((_req, res) => {
+    res.writeHead(200, {
+      Forwarded: 'for="[2001:0db8:0:0:0:0:0:1]:443"',
+    });
+    res.end("ok");
+  });
+  const p = await startMockHttpProxy();
+  try {
+    // Baseline is 2001:db8::1, header has expanded 2001:0db8:0:0:0:0:0:1 -> must MATCH!
+    const result = await probeHeaderLeak(withPort(p.port), ["2001:db8::1"], {
+      endpoint: `http://127.0.0.1:${target.port}/`,
+      timeoutMs: 1000,
+      allowPrivateTargets: true,
+    });
+    assert.equal(result.originIpExposed, true);
+    const fwdHeader = result.headers?.find((h) => h.name.toLowerCase() === "forwarded");
+    assert.equal(fwdHeader?.revealsRealIp, true);
+  } finally {
+    await Promise.all([target.close(), p.close()]);
+  }
+});

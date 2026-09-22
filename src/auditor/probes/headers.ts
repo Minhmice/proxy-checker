@@ -24,6 +24,48 @@ const ALWAYS_REDACT_HEADER_NAMES: Record<string, true> = {
   "x-auth-token": true,
 };
 
+export function canonicalizeIp(ip: string): string {
+  const trimmed = ip.trim().toLowerCase();
+  if (net.isIPv4(trimmed)) {
+    return trimmed;
+  }
+  if (net.isIPv6(trimmed)) {
+    let clean = trimmed;
+    // Handle IPv4-mapped IPv6 like ::ffff:192.0.2.1
+    if (clean.includes(".")) {
+      const lastColon = clean.lastIndexOf(":");
+      const ipv4Part = clean.slice(lastColon + 1);
+      const v4Octets = ipv4Part.split(".").map(Number);
+      const hex1 = ((v4Octets[0] << 8) | v4Octets[1]).toString(16);
+      const hex2 = ((v4Octets[2] << 8) | v4Octets[3]).toString(16);
+      clean = clean.slice(0, lastColon) + `:${hex1}:${hex2}`;
+    }
+
+    // Split on ::
+    const doubleColonParts = clean.split("::");
+    let fullWords: string[] = [];
+
+    if (doubleColonParts.length === 2) {
+      const leftWords = doubleColonParts[0] ? doubleColonParts[0].split(":") : [];
+      const rightWords = doubleColonParts[1] ? doubleColonParts[1].split(":") : [];
+      const missingCount = 8 - (leftWords.length + rightWords.length);
+      const zeroFill = new Array(Math.max(0, missingCount)).fill("0");
+      fullWords = [...leftWords, ...zeroFill, ...rightWords];
+    } else {
+      fullWords = clean.split(":");
+    }
+
+    // Normalize each 16-bit word to lower-case hex without leading zeros (or 0)
+    const normalizedWords = fullWords.map((w) => {
+      const parsed = Number.parseInt(w || "0", 16);
+      return Number.isNaN(parsed) ? "0" : parsed.toString(16);
+    });
+
+    return normalizedWords.join(":");
+  }
+  return trimmed;
+}
+
 export function extractIpCandidates(headerValue: string): string[] {
   const candidates: string[] = [];
   // Split on commas, semicolons, and whitespace
@@ -162,8 +204,8 @@ export async function probeHeaderLeak(
     let xForwardedForPresent = false;
     let originIpExposed = false;
 
-    const normalizedBaseline = baselineIps
-      .map((ip) => ip.trim().toLowerCase())
+    const canonicalBaseline = baselineIps
+      .map(canonicalizeIp)
       .filter((ip) => Boolean(ip));
 
     for (const [k, v] of Object.entries(res.headers)) {
@@ -180,8 +222,8 @@ export async function probeHeaderLeak(
         lower.includes("proxy");
 
       if (suspicious) {
-        const candidates = extractIpCandidates(v);
-        const revealsRealIp = normalizedBaseline.some((bIp) =>
+        const candidates = extractIpCandidates(v).map(canonicalizeIp);
+        const revealsRealIp = canonicalBaseline.some((bIp) =>
           candidates.includes(bIp)
         );
 
@@ -189,7 +231,7 @@ export async function probeHeaderLeak(
           originIpExposed = true;
         }
 
-        const value = isAlwaysRedact ? "[REDACTED]" : redactValue(v, normalizedBaseline);
+        const value = isAlwaysRedact ? "[REDACTED]" : redactValue(v, baselineIps);
 
         leakHeaders.push({
           name: k,
