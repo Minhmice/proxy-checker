@@ -1,3 +1,6 @@
+import type { ProxyAuditResult, ProxyInput } from "../auditor/types.js";
+export type { ProxyAuditResult, ProxyInput };
+
 export type ProxyProtocol = "http" | "socks5";
 
 export interface ParsedProxy {
@@ -172,4 +175,46 @@ export interface DiagnosticJob {
   results: DetailedDiagnosticResult[];
   error: string;
   running?: boolean;
+}
+
+export type AuditorJobStatus = "queued" | "running" | "cancelling" | "cancelled" | "done" | "error";
+export type AuditorJobMode = "single" | "bulk";
+
+export interface AuditorJobOptions {
+  attempts: number;
+  timeoutMs: number;
+  concurrency: number;
+  reputation: boolean;
+  browser: boolean;
+}
+
+export interface AuditorJobResult {
+  index: number;
+  result?: ProxyAuditResult;
+  error?: string;
+}
+
+export interface AuditorJob {
+  id: string;
+  mode: AuditorJobMode;
+  status: AuditorJobStatus;
+  sourceName: string | null;
+  createdAt: number;
+  startedAt: number | null;
+  finishedAt: number | null;
+  total: number;
+  checked: number;
+  passCount: number;
+  warnCount: number;
+  failCount: number;
+  unknownCount: number;
+  duplicateCount: number;
+  browserAudit: boolean;
+  attempts: number;
+  timeoutMs: number;
+  concurrency: number;
+  results: AuditorJobResult[];
+  resultsCapped: boolean;
+  persistenceWarning: string;
+  error: string;
 }
