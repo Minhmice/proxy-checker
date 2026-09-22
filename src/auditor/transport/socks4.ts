@@ -1,0 +1,83 @@
+import net from "node:net";
+import type { ParsedProxyInput } from "../types.js";
+import {
+  BufferedSocketReader,
+  type TimingBreakdown,
+  type TransportOptions,
+  connectSocketToProxy,
+} from "./common.js";
+
+export async function openSocks4ProxyTunnel(
+  proxy: ParsedProxyInput,
+  target: { host: string; port: number },
+  options: TransportOptions = {}
+): Promise<{ socket: net.Socket; timings: TimingBreakdown }> {
+  const timeoutMs = options.timeoutMs ?? 10000;
+  const startTime = Date.now();
+
+  if (!net.isIPv4(target.host)) {
+    throw new Error(`SOCKS4 protocol requires an IPv4 destination host, got: ${target.host}`);
+  }
+
+  const { socket, dnsMs, tcpConnectMs } = await connectSocketToProxy(proxy, timeoutMs);
+
+  const startHandshake = Date.now();
+  const reader = new BufferedSocketReader(socket);
+
+  try {
+    const ipOctets = target.host.split(".").map(Number);
+    const userId = proxy.username ? Buffer.from(proxy.username, "utf8") : Buffer.alloc(0);
+
+    const reqBuf = Buffer.alloc(8 + userId.length + 1);
+    reqBuf[0] = 0x04; // VN: SOCKS4
+    reqBuf[1] = 0x01; // CD: CONNECT
+    reqBuf.writeUInt16BE(target.port, 2); // DSTPORT
+    reqBuf[4] = ipOctets[0]; // DSTIP
+    reqBuf[5] = ipOctets[1];
+    reqBuf[6] = ipOctets[2];
+    reqBuf[7] = ipOctets[3];
+    if (userId.length > 0) {
+      userId.copy(reqBuf, 8);
+    }
+    reqBuf[8 + userId.length] = 0x00; // NULL terminator
+
+    socket.write(reqBuf);
+
+    const remainingTimeout = Math.max(100, timeoutMs - (Date.now() - startTime));
+    const response = await reader.readBytes(8, remainingTimeout);
+
+    const vn = response[0];
+    const cd = response[1];
+
+    if (cd !== 0x5a) {
+      const errorMap: Record<number, string> = {
+        0x5b: "Request rejected or failed",
+        0x5c: "Request failed because client is not running identd",
+        0x5d: "Request failed because client's identd could not confirm user ID",
+      };
+      const msg = errorMap[cd] || `Unknown SOCKS4 error code: ${cd}`;
+      throw new Error(`SOCKS4 connection rejected (code ${cd}): ${msg}`);
+    }
+
+    const leftover = reader.release();
+    if (leftover.length > 0) {
+      socket.unshift(leftover);
+    }
+
+    const proxyHandshakeMs = Math.max(0, Date.now() - startHandshake);
+    const totalMs = Math.max(0, Date.now() - startTime);
+
+    return {
+      socket,
+      timings: {
+        dnsMs,
+        tcpConnectMs,
+        proxyHandshakeMs,
+        totalMs,
+      },
+    };
+  } catch (err) {
+    socket.destroy();
+    throw err;
+  }
+}
