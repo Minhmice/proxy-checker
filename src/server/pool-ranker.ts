@@ -344,7 +344,7 @@ export function createPoolRanker(
       logActivity("info", "Logging into 9Router…");
       const remotePools = await deps.listPools();
       logActivity("info", `9Router login OK — connected to ${getSettingsSecrets().nineRouterUrl}`);
-      const httpPools = remotePools.filter((pool) => pool.type === "http" || !pool.type);
+      const httpPools = remotePools.filter((pool) => !pool.type || ["http", "socks", "socks5"].includes(pool.type.toLowerCase()));
       const skipped: string[] = [];
       const poolMap: Record<string, PoolRecord> = {};
 
