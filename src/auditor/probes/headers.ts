@@ -1,4 +1,4 @@
-import type net from "node:net";
+import net from "node:net";
 import tls from "node:tls";
 import type { HeaderLeakResult, ParsedProxyInput } from "../types.js";
 import { openProxyTunnel, requestThroughProxy } from "../transport/index.js";
@@ -24,6 +24,47 @@ const ALWAYS_REDACT_HEADER_NAMES: Record<string, true> = {
   "x-auth-token": true,
 };
 
+export function extractIpCandidates(headerValue: string): string[] {
+  const candidates: string[] = [];
+  // Split on commas, semicolons, and whitespace
+  const rawTokens = headerValue.split(/[,;\s]+/);
+
+  for (const raw of rawTokens) {
+    if (!raw) continue;
+    // Strip quotes and leading "for=" prefix (case-insensitive)
+    let token = raw.replace(/^"+|"+$/g, "");
+    token = token.replace(/^for=/i, "");
+    token = token.replace(/^"+|"+$/g, "");
+    if (!token) continue;
+
+    // Pattern 1: [IPv6]:port or [IPv6]
+    const bracketMatch = token.match(/^\[([0-9a-fA-F:]+)\](?::\d+)?$/);
+    if (bracketMatch && bracketMatch[1] && net.isIPv6(bracketMatch[1])) {
+      candidates.push(bracketMatch[1].toLowerCase());
+      continue;
+    }
+
+    // Pattern 2: IPv4:port
+    const colonIdx = token.indexOf(":");
+    if (colonIdx !== -1) {
+      const partBefore = token.slice(0, colonIdx);
+      const partAfter = token.slice(colonIdx + 1);
+      if (net.isIPv4(partBefore) && /^\d+$/.test(partAfter)) {
+        candidates.push(partBefore);
+        continue;
+      }
+    }
+
+    // Pattern 3: Bare IPv4 or IPv6
+    if (net.isIP(token)) {
+      candidates.push(token.toLowerCase());
+      continue;
+    }
+  }
+
+  return candidates;
+}
+
 function redactValue(val: string, baselineIps: string[]): string {
   let redacted = val;
   for (const ip of baselineIps) {
@@ -42,13 +83,6 @@ function redactValue(val: string, baselineIps: string[]): string {
   redacted = redacted.replace(/\b(token|key|cookie)=([^;\s,]+)/gi, "$1=[REDACTED]");
 
   return redacted;
-}
-
-function matchesExactIp(val: string, ip: string): boolean {
-  if (!ip) return false;
-  const escaped = ip.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const regex = new RegExp(`(?:\\b|")(${escaped})(?::\\d+)?(?:\\b|")`, "i");
-  return regex.test(val);
 }
 
 export async function probeHeaderLeak(
@@ -146,7 +180,11 @@ export async function probeHeaderLeak(
         lower.includes("proxy");
 
       if (suspicious) {
-        const revealsRealIp = normalizedBaseline.some((bIp) => matchesExactIp(v, bIp));
+        const candidates = extractIpCandidates(v);
+        const revealsRealIp = normalizedBaseline.some((bIp) =>
+          candidates.includes(bIp)
+        );
+
         if (revealsRealIp) {
           originIpExposed = true;
         }

@@ -546,3 +546,26 @@ test("TLS probe sets possibleMitm true only when proxy TLS fails but direct succ
     await Promise.all([p.close(), pClose]);
   }
 });
+
+test("header leak exact IPv6 candidate extraction avoids false substring match", async () => {
+  const target = await startHttpFixture((_req, res) => {
+    res.writeHead(200, {
+      Forwarded: 'for="[2001:db8::1:2]:443"',
+      "X-Forwarded-For": "2001:db8::1:2",
+    });
+    res.end("ok");
+  });
+  const p = await startMockHttpProxy();
+  try {
+    // Baseline is 2001:db8::1, header has 2001:db8::1:2 -> must NOT match!
+    const result = await probeHeaderLeak(withPort(p.port), ["2001:db8::1"], {
+      endpoint: `http://127.0.0.1:${target.port}/`,
+      timeoutMs: 1000,
+      allowPrivateTargets: true,
+    });
+    assert.equal(result.originIpExposed, false);
+    assert.equal(result.headers?.some((h) => h.revealsRealIp), false);
+  } finally {
+    await Promise.all([target.close(), p.close()]);
+  }
+});
