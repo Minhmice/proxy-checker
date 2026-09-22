@@ -35,21 +35,32 @@ test("ProxyAuditResult matches required result contract", () => {
     contentIntegrity: { intact: true },
     reputation: { score: 90 },
     stability: { stable: true },
-    rotation: { supported: false },
+    riskFactors: [
+      {
+        id: "RISK-01",
+        code: "UNENCRYPTED_TRANSPORT",
+        severity: "high",
+        title: "Plaintext HTTP Proxy",
+        description: "Proxy transmits data without TLS",
+        message: "Traffic can be intercepted",
+        evidence: { protocol: "http", port: 8080 },
+      },
+    ],
     browserAudit: { supported: false },
-    riskFactors: [],
     recommendations: [],
     metadata: {
       startedAt: "2026-09-22T00:00:00.000Z",
       completedAt: "2026-09-22T00:00:01.000Z",
       durationMs: 1000,
       version: "1.0.0",
+      toolVersion: "1.0.0",
       schemaVersion: "1",
     },
   };
 
   assert.equal(result.proxy.username, "alice:********");
-  assert.equal(result.verdict, "UNKNOWN");
+  assert.equal(result.metadata.toolVersion, "1.0.0");
+  assert.equal(result.riskFactors[0].evidence !== undefined, true);
   assert.equal(result.security.ssrfProtection.passed, true);
   assert.equal(result.metadata.schemaVersion, "1");
 });

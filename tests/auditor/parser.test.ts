@@ -50,11 +50,20 @@ test("rejects malformed ports, unsupported protocols, and empty hosts", () => {
     "http://127.0.0.1:0",
     "http://127.0.0.1:65536",
     "http://127.0.0.1:not-a-port",
+    "http://127.0.0.1:8080garbage",
     "ftp://127.0.0.1:8080",
     "http://:8080",
   ]) {
     assert.throws(() => parseProxyInput(input));
   }
+
+  assert.throws(() =>
+    parseProxyInput({
+      protocol: "http",
+      host: "1.2.3.4",
+      port: ("8080garbage" as unknown as number),
+    })
+  );
 });
 
 test("does not leak plaintext password when URL parsing fails", () => {
@@ -77,14 +86,14 @@ test("does not leak plaintext password when URL parsing fails", () => {
 test("rejects prototype pollution attempts as protocols", () => {
   assert.throws(() =>
     parseProxyInput({
-      protocol: "constructor",
+      protocol: ("constructor" as unknown as "http"),
       host: "example.com",
       port: 8080,
     })
   );
   assert.throws(() =>
     parseProxyInput({
-      protocol: "__proto__",
+      protocol: ("__proto__" as unknown as "http"),
       host: "example.com",
       port: 8080,
     })

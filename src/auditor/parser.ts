@@ -19,7 +19,7 @@ function normalizeProtocol(raw: string): ProxyProtocol {
 }
 
 function normalizePort(port: number | string): number {
-  const parsed = typeof port === "number" ? port : Number.parseInt(String(port), 10);
+  const parsed = typeof port === "number" ? port : Number(String(port).trim());
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
     throw new Error("Invalid proxy port: must be an integer between 1 and 65535");
   }

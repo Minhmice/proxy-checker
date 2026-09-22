@@ -19,7 +19,7 @@ export interface RedactedProxyInfo {
 export type ProxyInput =
   | string
   | {
-      protocol: string;
+      protocol: ProxyProtocol;
       host: string;
       port: number;
       username?: string;
@@ -38,10 +38,13 @@ export interface SecurityScore {
 
 export interface RiskFactor {
   id: string;
+  code?: string;
   severity: "low" | "medium" | "high" | "critical";
   title: string;
   description: string;
+  message?: string;
   category?: string;
+  evidence?: Record<string, unknown>;
 }
 
 export interface SecurityAuditResult {
@@ -178,6 +181,7 @@ export interface AuditMetadata {
   completedAt: string;
   durationMs: number;
   version: string;
+  toolVersion: string;
   schemaVersion: string;
 }
 
