@@ -5,6 +5,7 @@ import { isPrivateIp } from "./ip-policy.js";
 export interface ValidateTargetHostOptions {
   allowPrivate?: boolean;
   allowPrivateTargets?: boolean;
+  timeoutMs?: number;
 }
 
 export interface ValidateTargetHostResult {
@@ -63,13 +64,21 @@ export async function validateTargetHost(
     };
   }
 
+  const dnsTimeoutMs = options?.timeoutMs ?? 3000;
+  const dnsTimeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error(`DNS resolution timed out after ${dnsTimeoutMs}ms`)), dnsTimeoutMs)
+  );
+
   let resolvedIps: string[] = [];
   try {
-    const [ipv4Addresses, ipv6Addresses] = await Promise.allSettled([
+    const resolvePromise = Promise.allSettled([
       dns.resolve4(normalized),
       dns.resolve6(normalized),
     ]);
-
+    const [ipv4Addresses, ipv6Addresses] = await Promise.race([
+      resolvePromise,
+      dnsTimeoutPromise,
+    ]);
     const records: string[] = [];
     if (ipv4Addresses.status === "fulfilled") {
       records.push(...ipv4Addresses.value);
@@ -85,7 +94,8 @@ export async function validateTargetHost(
 
   if (resolvedIps.length === 0) {
     try {
-      const lookup = await dns.lookup(normalized, { all: true });
+      const lookupPromise = dns.lookup(normalized, { all: true });
+      const lookup = await Promise.race([lookupPromise, dnsTimeoutPromise]);
       resolvedIps = Array.from(new Set(lookup.map((item) => item.address)));
     } catch (error) {
       return {

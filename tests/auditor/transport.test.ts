@@ -556,3 +556,98 @@ test("regression 8: reader enforces byte caps on headers and body", async () => 
     await server.close();
   }
 });
+
+test("regression 9: readAll rejects when socket errors even if socket is closed", async () => {
+  const server = await startScriptedRawHttpServer((socket) => {
+    socket.write("HTTP/1.1 200 OK\r\n\r\npartial-content");
+    // keep socket open without sending EOF
+  });
+  const proxy = await startMockHttpProxy();
+
+  try {
+    const { parsed } = parseProxyInput(`http://127.0.0.1:${proxy.port}`);
+    const tunnel = await openProxyTunnel(
+      parsed,
+      { host: "127.0.0.1", port: server.port },
+      { timeoutMs: 3000, allowPrivateTargets: true }
+    );
+
+    setTimeout(() => {
+      tunnel.socket.destroy(new Error("ECONNRESET triggered intentionally"));
+    }, 30);
+
+    await assert.rejects(
+      requestThroughProxy(tunnel.socket, {
+        method: "GET",
+        path: "/",
+        host: `127.0.0.1:${server.port}`,
+        timeoutMs: 1000,
+      }),
+      /ECONNRESET/i
+    );
+  } finally {
+    await proxy.close();
+    await server.close();
+  }
+});
+
+test("regression 10: header size cap does not falsely trigger when body is included in same packet", async () => {
+  const server = await startScriptedRawHttpServer((socket) => {
+    socket.on("data", () => {
+      const headers = "HTTP/1.1 200 OK\r\nContent-Length: 70000\r\n\r\n";
+      const body = "x".repeat(70000);
+      socket.write(headers + body);
+    });
+  });
+  const proxy = await startMockHttpProxy();
+
+  try {
+    const { parsed } = parseProxyInput(`http://127.0.0.1:${proxy.port}`);
+    const tunnel = await openProxyTunnel(
+      parsed,
+      { host: "127.0.0.1", port: server.port },
+      { timeoutMs: 3000, allowPrivateTargets: true }
+    );
+
+    const res = await requestThroughProxy(tunnel.socket, {
+      method: "GET",
+      path: "/",
+      host: `127.0.0.1:${server.port}`,
+      timeoutMs: 2000,
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.rawBody.length, 70000);
+  } finally {
+    await proxy.close();
+    await server.close();
+  }
+});
+
+test("regression 11: requestThroughProxy rejects content-length exceeding MAX_BODY_BYTES", async () => {
+  const server = await startScriptedRawHttpServer((socket) => {
+    socket.write("HTTP/1.1 200 OK\r\nContent-Length: 10000000\r\n\r\n");
+  });
+  const proxy = await startMockHttpProxy();
+
+  try {
+    const { parsed } = parseProxyInput(`http://127.0.0.1:${proxy.port}`);
+    const tunnel = await openProxyTunnel(
+      parsed,
+      { host: "127.0.0.1", port: server.port },
+      { timeoutMs: 3000, allowPrivateTargets: true }
+    );
+
+    await assert.rejects(
+      requestThroughProxy(tunnel.socket, {
+        method: "GET",
+        path: "/",
+        host: `127.0.0.1:${server.port}`,
+        timeoutMs: 2000,
+      }),
+      /Body exceeds max allowed size/i
+    );
+  } finally {
+    await proxy.close();
+    await server.close();
+  }
+});

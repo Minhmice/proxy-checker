@@ -123,10 +123,6 @@ export class BufferedSocketReader {
     const startTime = Date.now();
 
     while (true) {
-      if (this.buffer.length > maxBytes) {
-        throw new Error(`Header/data size exceeded maximum limit of ${maxBytes} bytes`);
-      }
-
       const idx = this.buffer.indexOf(delim);
       if (idx !== -1) {
         if (idx + delim.length > maxBytes) {
@@ -137,6 +133,10 @@ export class BufferedSocketReader {
         return { matched, remainder: this.buffer };
       }
 
+      // If delimiter not found yet, only check if the unparsed buffer exceeds maxBytes
+      if (this.buffer.length > maxBytes) {
+        throw new Error(`Header/data size exceeded maximum limit of ${maxBytes} bytes`);
+      }
       if (this.error) throw this.error;
       if (this.closed) {
         throw new Error("Socket closed before delimiter was received");
@@ -164,12 +164,14 @@ export class BufferedSocketReader {
 
   async readAll(timeoutMs = 5000, maxBytes = MAX_BODY_BYTES): Promise<Buffer> {
     const startTime = Date.now();
-    while (!this.closed) {
+    while (true) {
       if (this.error) {
         this.socket.destroy();
         throw this.error;
       }
-
+      if (this.closed) {
+        break;
+      }
       if (this.buffer.length > maxBytes) {
         this.socket.destroy();
         throw new Error(`Response body size exceeded limit of ${maxBytes} bytes`);

@@ -6,6 +6,7 @@ import {
   type HttpResponse,
   type TimingBreakdown,
   type TransportOptions,
+  MAX_BODY_BYTES,
   connectSocketToProxy,
   resolveAndPinTargetAddress,
 } from "./common.js";
@@ -147,6 +148,7 @@ export async function requestThroughProxy(
 
     if (isChunked) {
       const chunks: Buffer[] = [];
+      let totalChunkBytes = 0;
       while (true) {
         remaining = deadline - Date.now();
         if (remaining <= 0) throw new Error(`Timeout after ${timeoutMs}ms while reading chunked body`);
@@ -171,8 +173,11 @@ export async function requestThroughProxy(
         remaining = deadline - Date.now();
         if (remaining <= 0) throw new Error(`Timeout after ${timeoutMs}ms while reading chunk data`);
         const chunkData = await reader.readBytes(chunkSize, remaining);
+        totalChunkBytes += chunkSize;
+        if (totalChunkBytes > MAX_BODY_BYTES) {
+          throw new Error(`Body exceeds max allowed size of ${MAX_BODY_BYTES} bytes`);
+        }
         chunks.push(chunkData);
-
         remaining = deadline - Date.now();
         if (remaining <= 0) throw new Error(`Timeout after ${timeoutMs}ms while reading chunk terminator`);
         const terminator = await reader.readBytes(2, remaining);
@@ -186,7 +191,9 @@ export async function requestThroughProxy(
       if (Number.isNaN(expectedLength) || expectedLength < 0) {
         throw new Error(`Invalid Content-Length header: ${contentLengthHeader}`);
       }
-
+      if (expectedLength > MAX_BODY_BYTES) {
+        throw new Error(`Body exceeds max allowed size of ${MAX_BODY_BYTES} bytes`);
+      }
       remaining = deadline - Date.now();
       if (remaining <= 0) throw new Error(`Timeout after ${timeoutMs}ms while reading content-length body`);
       rawBody = await reader.readBytes(expectedLength, remaining);
