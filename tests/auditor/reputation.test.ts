@@ -10,31 +10,116 @@ import { fetchIpinfo } from "../../src/auditor/reputation/ipinfo.js";
 import { fetchIpqs } from "../../src/auditor/reputation/ipqs.js";
 import { fetchAbuseIpDb } from "../../src/auditor/reputation/abuseipdb.js";
 
-const json = (body: unknown, status = 200): Response => new Response(JSON.stringify(body), {
-  status,
-  headers: { "content-type": "application/json" },
-});
+const json = (body: unknown, status = 200, headers: Record<string, string> = {}): Response =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json", ...headers },
+  });
 
-test("provider adapters parse typed IPinfo, IPQS, and AbuseIPDB reports", async () => {
+test("provider adapters parse typed reports with explicit booleans, ISO checkedAt, and redacted raw", async () => {
+  const clock = () => 1_700_000_000_000;
   const ipinfo = await fetchIpinfo("198.51.100.8", {
-    apiKey: "ipinfo-key",
+    apiKey: "ipinfo-secret-token",
     endpoint: "https://ipinfo.test",
-    fetch: async () => json({ country: "US", org: "AS64500 Example ISP", privacy: { hosting: true, vpn: false, proxy: false, tor: false } }),
+    now: clock,
+    fetch: async () =>
+      json({
+        country: "US",
+        region: "California",
+        city: "Los Angeles",
+        asn: { asn: "AS64500", name: "Example ISP" },
+        privacy: { hosting: true, vpn: false, relay: true },
+        company: { type: "isp" },
+      }),
   });
   const ipqs = await fetchIpqs("198.51.100.8", {
-    apiKey: "ipqs-key",
+    apiKey: "ipqs-secret-token",
     endpoint: "https://ipqs.test",
-    fetch: async () => json({ success: true, fraud_score: 88, vpn: true, proxy: true, tor: false, ISP: "Example ISP", ASN: 64500 }),
+    now: clock,
+    fetch: async () =>
+      json({
+        success: true,
+        fraud_score: 88,
+        vpn: true,
+        recent_abuse: true,
+        frequent_abuser: true,
+        bot_status: false,
+        connection_type: "Corporate",
+        ISP: "Example ISP",
+        ASN: 64500,
+      }),
   });
   const abuse = await fetchAbuseIpDb("198.51.100.8", {
-    apiKey: "abuse-key",
+    apiKey: "abuse-secret-key",
     endpoint: "https://abuse.test",
-    fetch: async () => json({ data: { abuseConfidenceScore: 67, totalReports: 12 } }),
+    now: clock,
+    fetch: async () =>
+      json({
+        data: {
+          abuseConfidenceScore: 67,
+          totalReports: 12,
+          numDistinctUsers: 5,
+          lastReportedAt: "2026-09-20T10:00:00Z",
+          usageType: "Data Center",
+          domain: "example.test",
+        },
+      }),
   });
 
-  assert.deepEqual(ipinfo.data, { asn: "AS64500", isp: "Example ISP", country: "US", hosting: true, vpn: false, proxy: false, tor: false });
-  assert.deepEqual(ipqs.data, { asn: "AS64500", isp: "Example ISP", fraudScore: 88, vpn: true, proxy: true, tor: false });
-  assert.deepEqual(abuse.data, { abuseConfidenceScore: 67, totalReports: 12 });
+  assert.equal(ipinfo.status, "success");
+  assert.equal(ipinfo.checkedAt, new Date(1_700_000_000_000).toISOString());
+  assert.equal(ipinfo.data?.tor, undefined);
+  assert.equal(ipinfo.data?.proxy, undefined);
+  assert.equal(ipinfo.data?.relay, true);
+  assert.equal(ipinfo.data?.residential, true);
+  assert.deepEqual(ipinfo.data?.city, "Los Angeles");
+
+  assert.equal(ipqs.status, "success");
+  assert.equal(ipqs.checkedAt, new Date(1_700_000_000_000).toISOString());
+  assert.equal(ipqs.data?.recentAbuse, true);
+  assert.equal(ipqs.data?.frequentAbuser, true);
+  assert.equal(ipqs.data?.bot, false);
+  assert.equal(ipqs.data?.connectionType, "Corporate");
+  assert.equal(ipqs.data?.tor, undefined);
+
+  assert.equal(abuse.status, "success");
+  assert.equal(abuse.checkedAt, new Date(1_700_000_000_000).toISOString());
+  assert.equal(abuse.data?.numDistinctUsers, 5);
+  assert.equal(abuse.data?.lastReportedAt, "2026-09-20T10:00:00Z");
+  assert.equal(abuse.data?.usageType, "Data Center");
+  assert.equal(abuse.data?.domain, "example.test");
+
+  assert.equal(JSON.stringify(ipinfo.raw).includes("ipinfo-secret-token"), false);
+  assert.equal(JSON.stringify(ipqs.raw).includes("ipqs-secret-token"), false);
+  assert.equal(JSON.stringify(abuse.raw).includes("abuse-secret-key"), false);
+});
+
+test("provider adapters enforce response cap, redirect error, and private endpoint restriction", async () => {
+  const bigPayload = { data: "x".repeat(1024 * 1024 + 10) };
+  const bigResponse = await fetchIpinfo("198.51.100.8", {
+    apiKey: "key",
+    endpoint: "https://ipinfo.test",
+    fetch: async () => json(bigPayload),
+  });
+  assert.equal(bigResponse.status, "error");
+  assert.equal(bigResponse.error, "Network request failed for ipinfo");
+
+  let redirectOption: string | undefined;
+  await fetchIpqs("198.51.100.8", {
+    apiKey: "key",
+    endpoint: "https://ipqs.test",
+    fetch: async (_input, init) => {
+      redirectOption = init?.redirect;
+      return json({ success: true });
+    },
+  });
+  assert.equal(redirectOption, "error");
+
+  const blockedPrivate = await fetchIpinfo("198.51.100.8", {
+    apiKey: "key",
+    endpoint: "https://127.0.0.1:8080",
+  });
+  assert.equal(blockedPrivate.status, "error");
 });
 
 test("reputation cache expires ASN after 24h and reputation after 6h", async () => {
@@ -62,21 +147,28 @@ test("reputation cache recovers from corrupt files and rewrites valid JSON atomi
   const saved = await readFile(filePath, "utf8");
   assert.doesNotThrow(() => JSON.parse(saved));
 });
-test("token buckets are isolated per provider", async () => {
+
+test("token buckets honor signal and deadline cancellation", async () => {
   let now = 0;
-  const waits: number[] = [];
   const limiter = new ProviderRateLimiter({
     capacity: 1,
     refillPerSecond: 1,
     now: () => now,
-    sleep: async (ms) => { waits.push(ms); now += ms; },
+    sleep: async (ms) => { now += ms; },
   });
 
   await limiter.acquire("ipinfo");
-  await limiter.acquire("ipqs");
-  assert.deepEqual(waits, []);
-  await limiter.acquire("ipinfo");
-  assert.deepEqual(waits, [1_000]);
+  const controller = new AbortController();
+  controller.abort(new Error("custom-abort"));
+  await assert.rejects(
+    limiter.acquire("ipinfo", { signal: controller.signal }),
+    /custom-abort/
+  );
+
+  await assert.rejects(
+    limiter.acquire("ipinfo", { deadlineMs: now - 1 }),
+    /deadline/
+  );
 });
 
 test("aggregation degrades unavailable and failed providers without throwing", async () => {
@@ -94,26 +186,26 @@ test("aggregation degrades unavailable and failed providers without throwing", a
     { provider: "ipqs", status: "unavailable" },
     { provider: "abuseipdb", status: "error" },
   ]);
-  assert.deepEqual(result.network, {});
+  assert.deepEqual(result.network, { type: "unknown" });
   assert.equal(result.reputation.score, null);
 });
 
-test("aggregation keeps privacy indicators separate from malicious abuse", async () => {
+test("aggregation distinguishes privacy from malicious and sets unknown network type without inference", async () => {
   const result = await fetchReputationSignals("198.51.100.8", {
     apiKeys: { ipinfo: "a", ipqs: "b", abuseipdb: "c" },
     fetch: async (input) => {
       const url = String(input);
-      if (url.includes("ipinfo")) return json({ org: "AS64500 Privacy Network", privacy: { vpn: true, proxy: true, tor: false, hosting: false } });
-      if (url.includes("ipqualityscore")) return json({ success: true, fraud_score: 0, vpn: true, proxy: true, tor: false });
+      if (url.includes("ipinfo")) return json({ org: "AS64500 Broadband Provider", privacy: { vpn: true } });
+      if (url.includes("ipqualityscore")) return json({ success: true, fraud_score: 0, recent_abuse: true });
       return json({ data: { abuseConfidenceScore: 0, totalReports: 0 } });
     },
   });
 
   assert.equal(result.network.isVpn, true);
-  assert.equal(result.network.isProxy, true);
-  assert.deepEqual(result.reputation.privacySignals, ["vpn", "proxy"]);
-  assert.deepEqual(result.reputation.maliciousSignals, []);
-  assert.equal(result.reputation.score, 0);
+  assert.equal(result.network.isResidential, undefined);
+  assert.equal(result.network.type, "unknown");
+  assert.deepEqual(result.reputation.privacySignals, ["vpn"]);
+  assert.deepEqual(result.reputation.maliciousSignals, ["recent_abuse"]);
 });
 
 test("aggregation serves fresh cache without calling providers or extending TTL", async () => {
@@ -169,16 +261,16 @@ test("provider failures hide URL credentials and HTTP 429 is unavailable", async
     throw new Error(`request failed for https://provider.test/${secret}?token=${secret}`);
   };
   const [ipinfoFailure, ipqsFailure] = await Promise.all([
-    fetchIpinfo("198.51.100.9", { apiKey: secret, fetch: throwingFetch }),
-    fetchIpqs("198.51.100.9", { apiKey: secret, fetch: throwingFetch }),
+    fetchIpinfo("198.51.100.9", { apiKey: secret, endpoint: "https://ipinfo.test", fetch: throwingFetch }),
+    fetchIpqs("198.51.100.9", { apiKey: secret, endpoint: "https://ipqs.test", fetch: throwingFetch }),
   ]);
   assert.equal(ipinfoFailure.error?.includes(secret), false);
   assert.equal(ipqsFailure.error?.includes(secret), false);
 
   const [ipinfo429, ipqs429, abuse429] = await Promise.all([
-    fetchIpinfo("198.51.100.9", { apiKey: "a", fetch: async () => json({}, 429) }),
-    fetchIpqs("198.51.100.9", { apiKey: "b", fetch: async () => json({}, 429) }),
-    fetchAbuseIpDb("198.51.100.9", { apiKey: "c", fetch: async () => json({}, 429) }),
+    fetchIpinfo("198.51.100.9", { apiKey: "a", endpoint: "https://ipinfo.test", fetch: async () => json({}, 429) }),
+    fetchIpqs("198.51.100.9", { apiKey: "b", endpoint: "https://ipqs.test", fetch: async () => json({}, 429) }),
+    fetchAbuseIpDb("198.51.100.9", { apiKey: "c", endpoint: "https://abuse.test", fetch: async () => json({}, 429) }),
   ]);
   assert.deepEqual([ipinfo429.status, ipqs429.status, abuse429.status], ["unavailable", "unavailable", "unavailable"]);
 });
@@ -188,6 +280,7 @@ test("aggregation starts provider requests concurrently", async () => {
   let started = 0;
   const request = fetchReputationSignals("203.0.113.77", {
     apiKeys: { ipinfo: "a", ipqs: "b", abuseipdb: "c" },
+    endpoints: { ipinfo: "https://ipinfo.test", ipqs: "https://ipqs.test", abuseipdb: "https://abuse.test" },
     fetch: async (input) => {
       started += 1;
       const { promise, resolve } = Promise.withResolvers<void>();
@@ -209,6 +302,7 @@ test("aggregation starts provider requests concurrently", async () => {
 test("one provider score is not treated as consensus", async () => {
   const result = await fetchReputationSignals("203.0.113.78", {
     apiKeys: { ipqs: "only-provider" },
+    endpoints: { ipqs: "https://ipqs.test" },
     fetch: async () => json({ success: true, fraud_score: 91 }),
   });
 
@@ -223,6 +317,7 @@ test("cache hit replays real provider statuses and data instead of synthetic suc
   const options = {
     cachePath,
     apiKeys: { ipinfo: "a", ipqs: "b", abuseipdb: "c" },
+    endpoints: { ipinfo: "https://ipinfo.test", ipqs: "https://ipqs.test", abuseipdb: "https://abuse.test" },
     fetch: async (input: string | URL | Request) => {
       calls += 1;
       const url = String(input);
@@ -249,6 +344,7 @@ test("partial provider failure retries failed providers after successful provide
   const options = {
     cachePath,
     apiKeys: { ipinfo: "a", ipqs: "b", abuseipdb: "c" },
+    endpoints: { ipinfo: "https://ipinfo.test", ipqs: "https://ipqs.test", abuseipdb: "https://abuse.test" },
     fetch: async (input: string | URL | Request) => {
       calls += 1;
       const url = String(input);
@@ -263,8 +359,8 @@ test("partial provider failure retries failed providers after successful provide
   recovered = true;
   const second = await fetchReputationSignals("198.51.100.93", options);
   assert.equal(calls, 6);
-  assert.deepEqual(first.raw.map((report) => report.status), ["ok", "unavailable", "error"]);
-  assert.deepEqual(second.raw.map((report) => report.status), ["ok", "ok", "ok"]);
+  assert.deepEqual(first.raw.map((report) => report.status), ["success", "unavailable", "error"]);
+  assert.deepEqual(second.raw.map((report) => report.status), ["success", "success", "success"]);
 });
 
 test("custom TTLs apply to in-memory aggregate cache without cache path", async () => {
@@ -273,6 +369,7 @@ test("custom TTLs apply to in-memory aggregate cache without cache path", async 
     cacheTtlAsnMs: 0,
     cacheTtlReputationMs: 0,
     apiKeys: { ipinfo: "a", ipqs: "b", abuseipdb: "c" },
+    endpoints: { ipinfo: "https://ipinfo.test", ipqs: "https://ipqs.test", abuseipdb: "https://abuse.test" },
     fetch: async (input: string | URL | Request) => {
       calls += 1;
       const url = String(input);
@@ -294,6 +391,7 @@ test("custom TTL cache is reused until expiry", async () => {
     cacheTtlReputationMs: 60_000,
     now: () => now,
     apiKeys: { ipinfo: "a", ipqs: "b", abuseipdb: "c" },
+    endpoints: { ipinfo: "https://ipinfo.test", ipqs: "https://ipqs.test", abuseipdb: "https://abuse.test" },
     fetch: async (input: string | URL | Request) => {
       calls += 1;
       const url = String(input);
@@ -317,6 +415,7 @@ test("all-provider failure is not cached so next call retries", async () => {
   const options = {
     cachePath: path.join(directory, "cache.json"),
     apiKeys: { ipinfo: "a", ipqs: "b", abuseipdb: "c" },
+    endpoints: { ipinfo: "https://ipinfo.test", ipqs: "https://ipqs.test", abuseipdb: "https://abuse.test" },
     fetch: async () => {
       calls += 1;
       return json({}, 500);

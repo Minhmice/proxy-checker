@@ -13,6 +13,7 @@ import type {
 const sharedCache = new ReputationCache();
 const customCaches = new Map<string, ReputationCache>();
 const sharedLimiter = new ProviderRateLimiter();
+
 function roundTwo(value: number): number {
   return Math.round(value * 100) / 100;
 }
@@ -70,41 +71,54 @@ export async function fetchReputationSignals(
   const limiter = sharedLimiter;
   const timeoutMs = options.timeoutMs ?? 5000;
   const fetchImpl = options.fetch ?? fetch;
+  const acquireOpts = {
+    signal: options.signal,
+    deadlineMs: options.deadlineMs,
+  };
 
   const [ipinfoReport, ipqsReport, abuseReport] = await Promise.all([
     (async () => {
-      await limiter.acquire("ipinfo");
+      await limiter.acquire("ipinfo", acquireOpts);
       return fetchIpinfo(ip, {
         apiKey: options.apiKeys?.ipinfo,
         endpoint: options.endpoints?.ipinfo,
         timeoutMs,
         fetch: fetchImpl,
+        signal: options.signal,
+        deadlineMs: options.deadlineMs,
+        now: options.now,
       });
     })(),
     (async () => {
-      await limiter.acquire("ipqs");
+      await limiter.acquire("ipqs", acquireOpts);
       return fetchIpqs(ip, {
         apiKey: options.apiKeys?.ipqs,
         endpoint: options.endpoints?.ipqs,
         timeoutMs,
         fetch: fetchImpl,
+        signal: options.signal,
+        deadlineMs: options.deadlineMs,
+        now: options.now,
       });
     })(),
     (async () => {
-      await limiter.acquire("abuseipdb");
+      await limiter.acquire("abuseipdb", acquireOpts);
       return fetchAbuseIpDb(ip, {
         apiKey: options.apiKeys?.abuseipdb,
         endpoint: options.endpoints?.abuseipdb,
         timeoutMs,
         fetch: fetchImpl,
+        signal: options.signal,
+        deadlineMs: options.deadlineMs,
+        now: options.now,
       });
     })(),
   ]);
 
   const rawReports: RawProviderReport[] = [ipinfoReport, ipqsReport, abuseReport];
-  const ipinfoData = ipinfoReport.status === "ok" ? ipinfoReport.data : undefined;
-  const ipqsData = ipqsReport.status === "ok" ? ipqsReport.data : undefined;
-  const abuseData = abuseReport.status === "ok" ? abuseReport.data : undefined;
+  const ipinfoData = ipinfoReport.status === "success" ? ipinfoReport.data : undefined;
+  const ipqsData = ipqsReport.status === "success" ? ipqsReport.data : undefined;
+  const abuseData = abuseReport.status === "success" ? abuseReport.data : undefined;
 
   let networkAsn = ipinfoData?.asn || ipqsData?.asn;
   let networkOrg = ipinfoData?.isp || ipqsData?.isp;
@@ -119,15 +133,38 @@ export async function fetchReputationSignals(
   const network: NetworkResult = {};
   if (networkAsn) network.asn = networkAsn;
   if (networkOrg) network.organization = networkOrg;
-  if (ipinfoData?.hosting) network.isDatacenter = true;
-  if (ipinfoData?.vpn || ipqsData?.vpn) network.isVpn = true;
-  if (ipinfoData?.proxy || ipqsData?.proxy) network.isProxy = true;
-  if (ipinfoData?.tor || ipqsData?.tor) network.isTor = true;
+  if (ipinfoData?.country) network.country = ipinfoData.country;
+  if (ipinfoData?.region) network.region = ipinfoData.region;
+  if (ipinfoData?.city) network.city = ipinfoData.city;
+
+  if (typeof ipinfoData?.hosting === "boolean") network.isDatacenter = ipinfoData.hosting;
+  if (typeof ipinfoData?.vpn === "boolean" || typeof ipqsData?.vpn === "boolean") {
+    network.isVpn = Boolean(ipinfoData?.vpn || ipqsData?.vpn);
+  }
+  if (typeof ipinfoData?.proxy === "boolean" || typeof ipqsData?.proxy === "boolean") {
+    network.isProxy = Boolean(ipinfoData?.proxy || ipqsData?.proxy);
+  }
+  if (typeof ipinfoData?.tor === "boolean" || typeof ipqsData?.tor === "boolean") {
+    network.isTor = Boolean(ipinfoData?.tor || ipqsData?.tor);
+  }
+  if (typeof ipinfoData?.mobile === "boolean") {
+    network.isMobile = ipinfoData.mobile;
+  }
+  if (typeof ipinfoData?.residential === "boolean") {
+    network.isResidential = ipinfoData.residential;
+  }
+
+  const explicitTypes: string[] = [];
+  if (network.isMobile) explicitTypes.push("mobile");
+  if (network.isResidential) explicitTypes.push("residential");
+  if (network.isDatacenter) explicitTypes.push("datacenter");
+  network.type = explicitTypes.length === 1 ? explicitTypes[0] : "unknown";
 
   const privacySignals: string[] = [];
   if (network.isVpn) privacySignals.push("vpn");
   if (network.isProxy) privacySignals.push("proxy");
   if (network.isTor) privacySignals.push("tor");
+  if (ipinfoData?.relay) privacySignals.push("relay");
   if (network.isDatacenter) privacySignals.push("hosting");
 
   const maliciousSignals: string[] = [];
@@ -140,6 +177,10 @@ export async function fetchReputationSignals(
     }
   }
 
+  if (ipqsData?.recentAbuse) maliciousSignals.push("recent_abuse");
+  if (ipqsData?.frequentAbuser) maliciousSignals.push("frequent_abuser");
+  if (ipqsData?.bot) maliciousSignals.push("bot_activity");
+
   if (typeof abuseData?.abuseConfidenceScore === "number") {
     validScores.push(abuseData.abuseConfidenceScore);
     if (abuseData.abuseConfidenceScore >= 25) {
@@ -147,10 +188,18 @@ export async function fetchReputationSignals(
     }
   }
 
+  if (abuseData?.totalReports && abuseData.totalReports >= 5) {
+    maliciousSignals.push(`high_abuse_reports_${abuseData.totalReports}`);
+  }
+
   let finalScore: number | null = null;
   if (validScores.length >= 2) {
     finalScore = roundTwo(validScores.reduce((a, b) => a + b, 0) / validScores.length);
   }
+
+  const blacklists = abuseData?.totalReports !== undefined
+    ? [{ name: "AbuseIPDB", listed: abuseData.totalReports > 0, details: `${abuseData.totalReports} reports` }]
+    : undefined;
 
   const reputation: ReputationResult & {
     privacySignals?: string[];
@@ -159,14 +208,12 @@ export async function fetchReputationSignals(
     score: finalScore,
     fraudScore: ipqsData?.fraudScore,
     spamScore: abuseData?.abuseConfidenceScore,
-    blacklists: abuseData?.totalReports
-      ? [{ name: "AbuseIPDB", listed: abuseData.totalReports > 0, details: `${abuseData.totalReports} reports` }]
-      : undefined,
+    blacklists,
     privacySignals,
     maliciousSignals,
   };
 
-  if (rawReports.every((report) => report.status === "ok")) {
+  if (rawReports.every((report) => report.status === "success")) {
     await cache.set(ip, "reputation", {
       reputation,
       network: {
@@ -174,6 +221,12 @@ export async function fetchReputationSignals(
         isVpn: network.isVpn,
         isProxy: network.isProxy,
         isTor: network.isTor,
+        isMobile: network.isMobile,
+        isResidential: network.isResidential,
+        type: network.type,
+        country: network.country,
+        region: network.region,
+        city: network.city,
         organization: network.organization,
       },
       rawReports,

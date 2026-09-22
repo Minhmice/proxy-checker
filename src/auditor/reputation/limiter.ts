@@ -9,7 +9,12 @@ export interface LimiterOptions {
   capacity?: number;
   refillPerSecond?: number;
   now?: () => number;
-  sleep?: (ms: number) => Promise<void>;
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+}
+
+export interface AcquireOptions {
+  signal?: AbortSignal;
+  deadlineMs?: number;
 }
 
 export class ProviderRateLimiter {
@@ -17,7 +22,7 @@ export class ProviderRateLimiter {
   private capacity: number;
   private refillPerSecond: number;
   private now: () => number;
-  private sleep: (ms: number) => Promise<void>;
+  private sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
 
   constructor(options: LimiterOptions = {}) {
     this.capacity = options.capacity ?? 5;
@@ -25,7 +30,27 @@ export class ProviderRateLimiter {
     this.now = options.now ?? (() => Date.now());
     this.sleep =
       options.sleep ??
-      ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+      ((ms: number, signal?: AbortSignal) => {
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        if (signal?.aborted) {
+          reject(signal.reason ?? new Error("Rate limiter acquire aborted"));
+          return promise;
+        }
+
+        const timer = setTimeout(() => {
+          if (signal) signal.removeEventListener("abort", onAbort);
+          resolve();
+        }, ms);
+
+        const onAbort = () => {
+          clearTimeout(timer);
+          if (signal) signal.removeEventListener("abort", onAbort);
+          reject(signal?.reason ?? new Error("Rate limiter acquire aborted"));
+        };
+
+        if (signal) signal.addEventListener("abort", onAbort, { once: true });
+        return promise;
+      });
   }
 
   private getBucket(provider: ReputationProviderName): BucketState {
@@ -49,17 +74,29 @@ export class ProviderRateLimiter {
     }
   }
 
-  async acquire(provider: ReputationProviderName): Promise<void> {
+  async acquire(provider: ReputationProviderName, options: AcquireOptions = {}): Promise<void> {
     const bucket = this.getBucket(provider);
     while (true) {
+      if (options.signal?.aborted) {
+        throw options.signal.reason ?? new Error("Rate limiter acquire aborted");
+      }
+      if (options.deadlineMs !== undefined && this.now() >= options.deadlineMs) {
+        throw new Error("Rate limiter acquire exceeded deadline");
+      }
+
       this.refill(bucket);
       if (bucket.tokens >= 1) {
         bucket.tokens -= 1;
         return;
       }
+
       const needed = 1 - bucket.tokens;
       const waitMs = Math.max(1, Math.ceil((needed / this.refillPerSecond) * 1000));
-      await this.sleep(waitMs);
+      if (options.deadlineMs !== undefined && this.now() + waitMs > options.deadlineMs) {
+        throw new Error("Rate limiter acquire exceeded deadline");
+      }
+
+      await this.sleep(waitMs, options.signal);
     }
   }
 }
