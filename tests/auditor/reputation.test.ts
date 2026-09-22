@@ -215,3 +215,145 @@ test("one provider score is not treated as consensus", async () => {
   assert.equal(result.reputation.fraudScore, 91);
   assert.equal(result.reputation.score, null);
 });
+
+test("cache hit replays real provider statuses and data instead of synthetic success", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "proxy-auditor-cache-raw-"));
+  const cachePath = path.join(directory, "cache.json");
+  let calls = 0;
+  const options = {
+    cachePath,
+    apiKeys: { ipinfo: "a", ipqs: "b", abuseipdb: "c" },
+    fetch: async (input: string | URL | Request) => {
+      calls += 1;
+      const url = String(input);
+      if (url.includes("ipinfo")) return json({ org: "AS64510 Real ISP" });
+      if (url.includes("ipqualityscore")) return json({ success: true, fraud_score: 40 });
+      return json({ data: { abuseConfidenceScore: 20, totalReports: 2 } });
+    },
+  };
+
+  const first = await fetchReputationSignals("198.51.100.90", options);
+  const second = await fetchReputationSignals("198.51.100.90", options);
+  assert.equal(calls, 3);
+  assert.deepEqual(
+    second.raw.map((report) => JSON.parse(JSON.stringify({ ...report, cached: undefined }))),
+    first.raw.map((report) => JSON.parse(JSON.stringify({ ...report, cached: undefined }))),
+  );
+});
+
+test("partial provider failure retries failed providers after successful provider cache", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "proxy-auditor-cache-partial-"));
+  const cachePath = path.join(directory, "cache.json");
+  let calls = 0;
+  let recovered = false;
+  const options = {
+    cachePath,
+    apiKeys: { ipinfo: "a", ipqs: "b", abuseipdb: "c" },
+    fetch: async (input: string | URL | Request) => {
+      calls += 1;
+      const url = String(input);
+      if (url.includes("ipinfo")) return json({ org: "AS64511 Partial ISP" });
+      if (!recovered) return json({}, url.includes("ipqualityscore") ? 429 : 500);
+      if (url.includes("ipqualityscore")) return json({ success: true, fraud_score: 40 });
+      return json({ data: { abuseConfidenceScore: 20, totalReports: 2 } });
+    },
+  };
+
+  const first = await fetchReputationSignals("198.51.100.93", options);
+  recovered = true;
+  const second = await fetchReputationSignals("198.51.100.93", options);
+  assert.equal(calls, 6);
+  assert.deepEqual(first.raw.map((report) => report.status), ["ok", "unavailable", "error"]);
+  assert.deepEqual(second.raw.map((report) => report.status), ["ok", "ok", "ok"]);
+});
+
+test("custom TTLs apply to in-memory aggregate cache without cache path", async () => {
+  let calls = 0;
+  const options = {
+    cacheTtlAsnMs: 0,
+    cacheTtlReputationMs: 0,
+    apiKeys: { ipinfo: "a", ipqs: "b", abuseipdb: "c" },
+    fetch: async (input: string | URL | Request) => {
+      calls += 1;
+      const url = String(input);
+      if (url.includes("ipinfo")) return json({ org: "AS64512 TTL ISP" });
+      if (url.includes("ipqualityscore")) return json({ success: true, fraud_score: 40 });
+      return json({ data: { abuseConfidenceScore: 20, totalReports: 2 } });
+    },
+  };
+  await fetchReputationSignals("198.51.100.94", options);
+  await fetchReputationSignals("198.51.100.94", options);
+  assert.equal(calls, 6);
+});
+
+test("custom TTL cache is reused until expiry", async () => {
+  let now = 1_000;
+  let calls = 0;
+  const options = {
+    cacheTtlAsnMs: 60_000,
+    cacheTtlReputationMs: 60_000,
+    now: () => now,
+    apiKeys: { ipinfo: "a", ipqs: "b", abuseipdb: "c" },
+    fetch: async (input: string | URL | Request) => {
+      calls += 1;
+      const url = String(input);
+      if (url.includes("ipinfo")) return json({ org: "AS64513 Reused TTL ISP" });
+      if (url.includes("ipqualityscore")) return json({ success: true, fraud_score: 40 });
+      return json({ data: { abuseConfidenceScore: 20, totalReports: 2 } });
+    },
+  };
+
+  await fetchReputationSignals("198.51.100.95", options);
+  await fetchReputationSignals("198.51.100.95", options);
+  assert.equal(calls, 3);
+  now += 60_001;
+  await fetchReputationSignals("198.51.100.95", options);
+  assert.equal(calls, 6);
+});
+
+test("all-provider failure is not cached so next call retries", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "proxy-auditor-cache-retry-"));
+  let calls = 0;
+  const options = {
+    cachePath: path.join(directory, "cache.json"),
+    apiKeys: { ipinfo: "a", ipqs: "b", abuseipdb: "c" },
+    fetch: async () => {
+      calls += 1;
+      return json({}, 500);
+    },
+  };
+
+  await fetchReputationSignals("198.51.100.91", options);
+  await fetchReputationSignals("198.51.100.91", options);
+  assert.equal(calls, 6);
+});
+
+test("custom TTLs survive file persistence without extending in-memory expiry", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "proxy-auditor-cache-ttl-"));
+  const filePath = path.join(directory, "cache.json");
+  let now = 100;
+  const writer = new ReputationCache({ filePath, now: () => now, asnTtlMs: 10, reputationTtlMs: 20 });
+  await writer.set("198.51.100.92", "asn", { asn: "AS64592" });
+  await writer.set("198.51.100.92", "reputation", { score: 5 });
+
+  now = 111;
+  const reader = new ReputationCache({ filePath, now: () => now, asnTtlMs: 10, reputationTtlMs: 20 });
+  assert.equal(await reader.get("198.51.100.92", "asn"), undefined);
+  assert.deepEqual(await reader.get("198.51.100.92", "reputation"), { score: 5 });
+  now = 121;
+  assert.equal(await writer.get("198.51.100.92", "reputation"), undefined);
+});
+
+test("concurrent cache writers preserve entries from both instances", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "proxy-auditor-cache-lock-"));
+  const filePath = path.join(directory, "cache.json");
+  const first = new ReputationCache({ filePath });
+  const second = new ReputationCache({ filePath });
+  await Promise.all([
+    first.set("198.51.100.101", "asn", { asn: "AS65101" }),
+    second.set("198.51.100.102", "asn", { asn: "AS65102" }),
+  ]);
+  const reader = new ReputationCache({ filePath });
+  assert.deepEqual(await reader.get("198.51.100.101", "asn"), { asn: "AS65101" });
+  assert.deepEqual(await reader.get("198.51.100.102", "asn"), { asn: "AS65102" });
+});

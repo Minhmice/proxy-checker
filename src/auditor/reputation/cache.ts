@@ -19,6 +19,7 @@ export interface CacheOptions {
 }
 
 export class ReputationCache {
+  private static readonly fileLocks = new Map<string, Promise<void>>();
   private inMemory: CacheStore = { asn: {}, reputation: {} };
   private filePath?: string;
   private now: () => number;
@@ -69,36 +70,46 @@ export class ReputationCache {
 
   private async persist(): Promise<void> {
     if (!this.filePath) return;
-    const dir = path.dirname(this.filePath);
-    await mkdir(dir, { recursive: true });
-
-    let merged: CacheStore = {
-      asn: { ...this.inMemory.asn },
-      reputation: { ...this.inMemory.reputation },
-    };
-
-    try {
-      const onDiskContent = await readFile(this.filePath, "utf8");
-      const onDisk = this.sanitizeStore(JSON.parse(onDiskContent));
-      merged = {
-        asn: { ...onDisk.asn, ...this.inMemory.asn },
-        reputation: { ...onDisk.reputation, ...this.inMemory.reputation },
+    const previous = ReputationCache.fileLocks.get(this.filePath) ?? Promise.resolve();
+    const current = previous.catch(() => undefined).then(async () => {
+      const dir = path.dirname(this.filePath!);
+      await mkdir(dir, { recursive: true });
+      let merged: CacheStore = {
+        asn: { ...this.inMemory.asn },
+        reputation: { ...this.inMemory.reputation },
       };
-      this.inMemory = merged;
-    } catch {
-      // no readable file yet or corrupt file to overwrite
-    }
 
-    const tempFile = `${this.filePath}.tmp.${Date.now()}.${Math.random().toString(36).slice(2)}`;
-    await writeFile(tempFile, JSON.stringify(merged, null, 2), "utf8");
-    await rename(tempFile, this.filePath);
+      try {
+        const onDiskContent = await readFile(this.filePath!, "utf8");
+        const onDisk = this.sanitizeStore(JSON.parse(onDiskContent));
+        merged = {
+          asn: { ...onDisk.asn, ...this.inMemory.asn },
+          reputation: { ...onDisk.reputation, ...this.inMemory.reputation },
+        };
+      } catch {
+        // no readable file yet or corrupt file to overwrite
+      }
+
+      this.inMemory = merged;
+      const tempFile = `${this.filePath!}.tmp.${Date.now()}.${Math.random().toString(36).slice(2)}`;
+      await writeFile(tempFile, JSON.stringify(merged, null, 2), "utf8");
+      await rename(tempFile, this.filePath!);
+    });
+    ReputationCache.fileLocks.set(this.filePath, current);
+    try {
+      await current;
+    } finally {
+      if (ReputationCache.fileLocks.get(this.filePath) === current) {
+        ReputationCache.fileLocks.delete(this.filePath);
+      }
+    }
   }
 
   async get<T>(ip: string, section: "asn" | "reputation"): Promise<T | undefined> {
     await this.loadFromFile();
     const entry = this.inMemory[section][ip];
     if (!entry || typeof entry.expiresAt !== "number") return undefined;
-    if (this.now() > entry.expiresAt) {
+    if (this.now() >= entry.expiresAt) {
       delete this.inMemory[section][ip];
       return undefined;
     }

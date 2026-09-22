@@ -11,8 +11,8 @@ import type {
 } from "./provider.js";
 
 const sharedCache = new ReputationCache();
+const customCaches = new Map<string, ReputationCache>();
 const sharedLimiter = new ProviderRateLimiter();
-
 function roundTwo(value: number): number {
   return Math.round(value * 100) / 100;
 }
@@ -23,24 +23,38 @@ interface CachedReputationData {
     maliciousSignals?: string[];
   };
   network: Partial<NetworkResult>;
+  rawReports: RawProviderReport[];
 }
 
 export async function fetchReputationSignals(
   ip: string,
   options: ReputationOptions = {}
 ): Promise<AggregatedReputationResult> {
-  const cache = options.cachePath
-    ? new ReputationCache({
-        filePath: options.cachePath,
-        asnTtlMs: options.cacheTtlAsnMs,
-        reputationTtlMs: options.cacheTtlReputationMs,
-      })
-    : sharedCache;
+  const hasCustomTtl = options.cacheTtlAsnMs !== undefined || options.cacheTtlReputationMs !== undefined;
+  const ttlKey = `${options.cacheTtlAsnMs ?? 24 * 60 * 60 * 1_000}:${options.cacheTtlReputationMs ?? 6 * 60 * 60 * 1_000}`;
+  let cache: ReputationCache;
+  if (options.cachePath) {
+    cache = new ReputationCache({
+      filePath: options.cachePath,
+      asnTtlMs: options.cacheTtlAsnMs,
+      reputationTtlMs: options.cacheTtlReputationMs,
+      now: options.now,
+    });
+  } else if (hasCustomTtl) {
+    cache = customCaches.get(ttlKey) ?? new ReputationCache({
+      asnTtlMs: options.cacheTtlAsnMs,
+      reputationTtlMs: options.cacheTtlReputationMs,
+      now: options.now,
+    });
+    customCaches.set(ttlKey, cache);
+  } else {
+    cache = sharedCache;
+  }
 
   const cachedAsn = await cache.get<{ asn?: string; org?: string }>(ip, "asn");
   const cachedReputation = await cache.get<CachedReputationData>(ip, "reputation");
 
-  if (cachedAsn && cachedReputation) {
+  if (cachedAsn && cachedReputation && Array.isArray(cachedReputation.rawReports)) {
     const fullNetwork: NetworkResult = {
       ...(cachedReputation.network ?? {}),
       asn: cachedAsn.asn,
@@ -49,11 +63,7 @@ export async function fetchReputationSignals(
     return {
       network: fullNetwork,
       reputation: cachedReputation.reputation,
-      raw: [
-        { provider: "ipinfo", status: "ok", cached: true },
-        { provider: "ipqs", status: "ok", cached: true },
-        { provider: "abuseipdb", status: "ok", cached: true },
-      ],
+      raw: cachedReputation.rawReports.map((report) => ({ ...report, cached: true })),
     };
   }
 
@@ -156,8 +166,7 @@ export async function fetchReputationSignals(
     maliciousSignals,
   };
 
-  const hasNewReputationData = Boolean(ipinfoData || ipqsData || abuseData);
-  if (hasNewReputationData) {
+  if (rawReports.every((report) => report.status === "ok")) {
     await cache.set(ip, "reputation", {
       reputation,
       network: {
@@ -167,6 +176,7 @@ export async function fetchReputationSignals(
         isTor: network.isTor,
         organization: network.organization,
       },
+      rawReports,
     });
   }
 

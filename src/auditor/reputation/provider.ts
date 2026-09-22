@@ -27,6 +27,7 @@ export interface ReputationOptions {
   cachePath?: string;
   cacheTtlAsnMs?: number;
   cacheTtlReputationMs?: number;
+  now?: () => number;
 }
 
 export interface AggregatedReputationResult {

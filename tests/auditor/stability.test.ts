@@ -76,6 +76,22 @@ test("stability reports failure when no endpoints are configured", async () => {
   assert.equal(result.stability.stable, false);
 });
 
+test("rotation counts repeated observation transitions before deduplicating distinct IPs", async () => {
+  const result = await probeStabilityAndRotation(proxy, 1, {
+    now: clock([0, 1]),
+    sample: async () => ({
+      observations: [
+        { ip: "198.51.100.1" },
+        { ip: "198.51.100.2" },
+        { ip: "198.51.100.1" },
+      ],
+    }),
+  });
+
+  assert.deepEqual(result.rotation.distinctIpsObserved, ["198.51.100.1", "198.51.100.2"]);
+  assert.equal(result.rotation.changesObserved, 2);
+});
+
 test("stability handles every request failing without invalid numeric metrics", async () => {
   const result = await probeStabilityAndRotation(proxy, 2, {
     now: clock([0, 5, 5, 10]),

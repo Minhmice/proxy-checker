@@ -55,7 +55,7 @@ export async function probeStabilityAndRotation(
         throw new Error("No endpoints configured for exit IP probe");
       }
       const validObservations = observation.observations.filter((o) => Boolean(o.ip));
-      if (validObservations.length === 0 && observation.observations.length > 0) {
+      if (validObservations.length === 0) {
         const firstError = observation.observations.find((o) => o.error)?.error;
         throw new Error(firstError || "No successful exit IP observations");
       }
@@ -64,7 +64,7 @@ export async function probeStabilityAndRotation(
 
   let succeeded = 0;
   const latencies: number[] = [];
-  let distinctIps: string[] = [];
+  const observedIps: string[] = [];
   let changesObserved = 0;
   let lastIp: string | undefined;
 
@@ -77,24 +77,15 @@ export async function probeStabilityAndRotation(
       latencies.push(elapsed);
 
       const ipsInSample: string[] = [];
-      if (response?.ip) {
-        ipsInSample.push(response.ip);
-      }
+      if (response?.ip) ipsInSample.push(response.ip);
       if (response?.observations) {
         for (const obs of response.observations) {
-          if (obs.ip && !ipsInSample.includes(obs.ip)) {
-            ipsInSample.push(obs.ip);
-          }
+          if (obs.ip) ipsInSample.push(obs.ip);
         }
       }
-
       for (const ip of ipsInSample) {
-        if (!distinctIps.includes(ip)) {
-          distinctIps.push(ip);
-        }
-        if (lastIp && lastIp !== ip) {
-          changesObserved += 1;
-        }
+        observedIps.push(ip);
+        if (lastIp && lastIp !== ip) changesObserved += 1;
         lastIp = ip;
       }
     } catch {
@@ -124,9 +115,12 @@ export async function probeStabilityAndRotation(
     jitterMs: sorted.length > 0 ? calculateJitter(latencies) : undefined,
   };
 
-  const supported = distinctIps.length > 1;
+  const distinctIps: string[] = [];
+  for (const ip of observedIps) {
+    if (!distinctIps.includes(ip)) distinctIps.push(ip);
+  }
   const rotation: RotationResult = {
-    supported,
+    supported: distinctIps.length > 1,
     exitIpChanged: changesObserved > 0,
     changesObserved,
     distinctIpsObserved: distinctIps,
