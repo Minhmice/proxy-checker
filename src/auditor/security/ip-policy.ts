@@ -39,6 +39,18 @@ function expandIpv6(ip: string): string[] {
     clean = clean.slice(0, zoneIndex);
   }
 
+  // Handle embedded IPv4 dotted-decimal suffix (e.g. ::ffff:192.168.1.1)
+  const lastColon = clean.lastIndexOf(":");
+  if (lastColon !== -1) {
+    const potentialIpv4 = clean.slice(lastColon + 1);
+    if (net.isIPv4(potentialIpv4)) {
+      const octets = potentialIpv4.split(".").map((o) => Number.parseInt(o, 10));
+      const hex1 = ((octets[0] << 8) | octets[1]).toString(16).padStart(4, "0");
+      const hex2 = ((octets[2] << 8) | octets[3]).toString(16).padStart(4, "0");
+      clean = `${clean.slice(0, lastColon)}:${hex1}:${hex2}`;
+    }
+  }
+
   const doubleColonCount = (clean.match(/::/g) || []).length;
   if (doubleColonCount > 1) {
     throw new Error(`Invalid IPv6 address: ${ip}`);
@@ -75,18 +87,24 @@ export function isPrivateIpv6(ip: string): boolean {
     return true;
   }
 
-  if (normalized.startsWith("::ffff:")) {
-    const embeddedIpv4 = normalized.slice(7);
-    if (net.isIPv4(embeddedIpv4)) {
-      return isPrivateIpv4(embeddedIpv4);
-    }
-  }
-
   let words: number[];
   try {
     words = expandIpv6(normalized).map((hex) => Number.parseInt(hex, 16));
   } catch {
     return true;
+  }
+
+  // Check IPv4-mapped IPv6 (::ffff:0:0/96, where first 5 words are 0, 6th word is 0xffff)
+  const isIpv4Mapped =
+    words.slice(0, 5).every((w) => w === 0) && words[5] === 0xffff;
+  if (isIpv4Mapped) {
+    const embeddedIpv4Int = ((words[6] << 16) | words[7]) >>> 0;
+    const octet1 = (embeddedIpv4Int >>> 24) & 0xff;
+    const octet2 = (embeddedIpv4Int >>> 16) & 0xff;
+    const octet3 = (embeddedIpv4Int >>> 8) & 0xff;
+    const octet4 = embeddedIpv4Int & 0xff;
+    const dottedIpv4 = `${octet1}.${octet2}.${octet3}.${octet4}`;
+    return isPrivateIpv4(dottedIpv4);
   }
 
   const firstWord = words[0];

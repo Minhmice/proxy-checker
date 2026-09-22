@@ -25,23 +25,24 @@ test("parses supported proxy URL protocols and credentials", () => {
   assert.ok(!String(redacted).includes("pass"));
 });
 
-test("parses typed proxy object input", () => {
+test("parses typed proxy object input and preserves valid whitespace in credentials", () => {
   const { parsed, redacted } = parseProxyInput({
     protocol: "https",
     host: "proxy.example.com",
     port: 8443,
-    username: "alice",
-    password: "secret",
+    username: " alice with spaces ",
+    password: " secret with spaces ",
   });
   assert.deepEqual(parsed, {
     protocol: "https",
     host: "proxy.example.com",
     port: 8443,
-    username: "alice",
-    password: "secret",
+    username: " alice with spaces ",
+    password: " secret with spaces ",
   });
-  assert.equal(redacted.username, "alice:********");
+  assert.equal(redacted.username, " alice with spaces :********");
   assert.equal(redacted.password, undefined);
+  assert.ok(!JSON.stringify(redacted).includes("secret"));
 });
 
 test("rejects malformed ports, unsupported protocols, and empty hosts", () => {
@@ -54,4 +55,38 @@ test("rejects malformed ports, unsupported protocols, and empty hosts", () => {
   ]) {
     assert.throws(() => parseProxyInput(input));
   }
+});
+
+test("does not leak plaintext password when URL parsing fails", () => {
+  const sensitivePassword = "super-secret-password-1234";
+  const malformedInput = `http://myuser:${sensitivePassword}@1.2.3.4:not-a-port`;
+
+  try {
+    parseProxyInput(malformedInput);
+    assert.fail("Should throw for invalid port in URL");
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    assert.ok(
+      !message.includes(sensitivePassword),
+      `Error message leaked plaintext password: ${message}`
+    );
+    assert.match(message, /malformed|invalid|proxy/i);
+  }
+});
+
+test("rejects prototype pollution attempts as protocols", () => {
+  assert.throws(() =>
+    parseProxyInput({
+      protocol: "constructor",
+      host: "example.com",
+      port: 8080,
+    })
+  );
+  assert.throws(() =>
+    parseProxyInput({
+      protocol: "__proto__",
+      host: "example.com",
+      port: 8080,
+    })
+  );
 });

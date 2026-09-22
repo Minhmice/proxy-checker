@@ -5,25 +5,23 @@ import type {
   RedactedProxyInfo,
 } from "./types.js";
 
-const SUPPORTED_PROTOCOLS: Record<ProxyProtocol, true> = {
-  http: true,
-  https: true,
-  socks4: true,
-  socks5: true,
-};
+const SUPPORTED_PROTOCOLS = new Set<ProxyProtocol>(["http", "https", "socks4", "socks5"]);
 
 function normalizeProtocol(raw: string): ProxyProtocol {
+  if (typeof raw !== "string") {
+    throw new Error("Proxy protocol must be a string");
+  }
   const protocol = raw.toLowerCase().replace(/:$/, "") as ProxyProtocol;
-  if (!SUPPORTED_PROTOCOLS[protocol]) {
-    throw new Error(`Unsupported proxy protocol: ${raw}`);
+  if (!SUPPORTED_PROTOCOLS.has(protocol)) {
+    throw new Error(`Unsupported proxy protocol: ${protocol}`);
   }
   return protocol;
 }
 
 function normalizePort(port: number | string): number {
-  const parsed = typeof port === "number" ? port : Number.parseInt(port, 10);
+  const parsed = typeof port === "number" ? port : Number.parseInt(String(port), 10);
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
-    throw new Error(`Invalid proxy port: ${port}`);
+    throw new Error("Invalid proxy port: must be an integer between 1 and 65535");
   }
   return parsed;
 }
@@ -49,7 +47,7 @@ function createRedactedProxyInfo(
   port: number,
   username?: string
 ): RedactedProxyInfo {
-  const redactedUser = username ? `${username}:********` : undefined;
+  const redactedUser = username !== undefined && username !== "" ? `${username}:********` : undefined;
   const formattedHost = host.includes(":") ? `[${host}]` : host;
   const representation = redactedUser
     ? `${protocol}://${redactedUser}@${formattedHost}:${port}`
@@ -80,42 +78,50 @@ export function parseProxyInput(input: ProxyInput): {
     try {
       url = new URL(input);
     } catch {
-      throw new Error(`Malformed proxy URL: ${input}`);
+      // Do not include raw input to prevent leaking plaintext credentials
+      throw new Error("Malformed proxy URL");
     }
 
-    const protocol = normalizeProtocol(url.protocol);
-    const host = normalizeHost(url.hostname);
-    const port = normalizePort(url.port || (protocol === "https" ? 443 : 80));
-    const username = url.username ? decodeURIComponent(url.username) : undefined;
-    const password = url.password ? decodeURIComponent(url.password) : undefined;
+    try {
+      const protocol = normalizeProtocol(url.protocol);
+      const host = normalizeHost(url.hostname);
+      const port = normalizePort(url.port || (protocol === "https" ? 443 : 80));
+      const username = url.username ? decodeURIComponent(url.username) : undefined;
+      const password = url.password ? decodeURIComponent(url.password) : undefined;
 
-    const parsed: ParsedProxyInput = {
-      protocol,
-      host,
-      port,
-      ...(username ? { username } : {}),
-      ...(password ? { password } : {}),
-    };
+      const parsed: ParsedProxyInput = {
+        protocol,
+        host,
+        port,
+        ...(username !== undefined ? { username } : {}),
+        ...(password !== undefined ? { password } : {}),
+      };
 
-    return {
-      parsed,
-      redacted: createRedactedProxyInfo(protocol, host, port, username),
-    };
+      return {
+        parsed,
+        redacted: createRedactedProxyInfo(protocol, host, port, username),
+      };
+    } catch (err: unknown) {
+      // Rethrow normalized error without exposing any sensitive parameters
+      const message = err instanceof Error ? err.message : "Failed to parse proxy URL";
+      throw new Error(`Invalid proxy URL configuration: ${message}`);
+    }
   }
 
   if (typeof input === "object" && input !== null) {
     const protocol = normalizeProtocol(input.protocol);
     const host = normalizeHost(input.host);
     const port = normalizePort(input.port);
-    const username = input.username?.trim() || undefined;
-    const password = input.password?.trim() || undefined;
+    // Preserve exact credential whitespace
+    const username = input.username !== undefined && input.username !== "" ? input.username : undefined;
+    const password = input.password !== undefined && input.password !== "" ? input.password : undefined;
 
     const parsed: ParsedProxyInput = {
       protocol,
       host,
       port,
-      ...(username ? { username } : {}),
-      ...(password ? { password } : {}),
+      ...(username !== undefined ? { username } : {}),
+      ...(password !== undefined ? { password } : {}),
     };
 
     return {

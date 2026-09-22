@@ -26,14 +26,14 @@ export type ProxyInput =
       password?: string;
     };
 
-export type AuditVerdict = "SAFE" | "SUSPICIOUS" | "UNSAFE";
+export type AuditVerdict = "PASS" | "WARN" | "FAIL" | "UNKNOWN";
 
 export interface SecurityScore {
-  overall: number; // 0-100
-  leakScore: number; // 0-100
-  tlsScore: number; // 0-100
-  relayScore: number; // 0-100
-  abuseScore: number; // 0-100
+  overallSafety: number | null;
+  transportSecurity: number | null;
+  privacy: number | null;
+  reputation: number | null;
+  reliability: number | null;
 }
 
 export interface SecurityRisk {
