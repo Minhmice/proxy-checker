@@ -247,11 +247,10 @@ export async function resolveAndPinTargetAddress(
     }
     return options.resolvedIp;
   }
-
-  const remainingDeadline = () => Math.max(1, (options.timeoutMs ?? 10000));
+  const timeoutMs = options.timeoutMs ?? 10000;
   const validation = await validateTargetHost(target.host, {
     allowPrivateTargets: options.allowPrivateTargets,
-    timeoutMs: remainingDeadline(),
+    timeoutMs,
   });
 
   if (!validation.valid || validation.resolvedIps.length === 0) {

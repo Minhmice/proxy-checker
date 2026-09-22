@@ -17,13 +17,31 @@ export async function openHttpProxyTunnel(
   options: TransportOptions = {}
 ): Promise<{ socket: net.Socket; timings: TimingBreakdown }> {
   const timeoutMs = options.timeoutMs ?? 10000;
-  const deadline = Date.now() + timeoutMs;
   const startTime = Date.now();
+  const deadline = startTime + timeoutMs;
 
-  const pinnedTargetIp = await resolveAndPinTargetAddress(target, options);
+  const remainingDeadline = () => deadline - Date.now();
+  if (remainingDeadline() <= 0) {
+    throw new Error(`Timeout after ${timeoutMs}ms before resolving target host`);
+  }
 
-  const { socket, dnsMs, tcpConnectMs } = await connectSocketToProxy(proxy, timeoutMs, options);
+  const startTargetDns = Date.now();
+  const pinnedTargetIp = await resolveAndPinTargetAddress(target, {
+    ...options,
+    timeoutMs: remainingDeadline(),
+  });
+  const targetDnsMs = Math.max(0, Date.now() - startTargetDns);
 
+  const remainingBeforeConnect = remainingDeadline();
+  if (remainingBeforeConnect <= 0) {
+    throw new Error(`Timeout after ${timeoutMs}ms before connecting to proxy`);
+  }
+
+  const { socket, dnsMs: proxyDnsMs, tcpConnectMs } = await connectSocketToProxy(
+    proxy,
+    remainingBeforeConnect,
+    options
+  );
   const startHandshake = Date.now();
   const reader = new BufferedSocketReader(socket);
 
@@ -72,7 +90,7 @@ export async function openHttpProxyTunnel(
     return {
       socket,
       timings: {
-        dnsMs,
+        dnsMs: proxyDnsMs + targetDnsMs,
         tcpConnectMs,
         proxyHandshakeMs,
         totalMs,
