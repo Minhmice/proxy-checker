@@ -276,12 +276,10 @@ async function handleDiagnostics(request: http.IncomingMessage, response: http.S
     const ids = Array.isArray(body.ids) ? body.ids.map(String).slice(0, 50) : [];
     if (!ids.length) return json(response, { error: "Select at least one successful diagnostic result" }, 400);
     const selected = diagnostics.getJob().results.filter((result) => ids.includes(result.id) && result.status === "SUCCESS");
+    if (!selected.length) return json(response, { error: "No selected successful diagnostic results" }, 400);
     try {
-      const remotePools = await listPools();
-      const remoteByEndpoint = new Map(remotePools.map((pool) => [parseProxy(pool.proxyUrl)?.endpoint, pool]));
-      const matched = selected.map((result) => ({ result, pool: remoteByEndpoint.get(result.endpoint) })).filter((item) => item.pool);
-      const updates = await bulkSetActive(matched.map(({ pool }) => ({ id: pool!.id, isActive: true })));
-      return json(response, { promoted: updates.filter((item) => item.ok).length, skipped: selected.length - matched.length, results: updates });
+      const result = await poolRanker.promoteDiagnostics(selected);
+      return json(response, result);
     } catch (error) {
       return json(response, { error: `Could not reach 9Router: ${(error as Error).message}` }, 502);
     }

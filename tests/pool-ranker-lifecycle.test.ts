@@ -130,3 +130,35 @@ test("delete_failed rename updates upstream first and throws conflict on 404", a
   assert.deepEqual(updates, ["remote-1"]);
   assert.equal(ranker.readState().pools["1"].name, "Pool 1");
 });
+
+test("promoting a verified diagnostic creates and activates missing router pool", async () => {
+  const created: Array<{ name: string; proxyUrl: string; isActive: boolean }> = [];
+  const { ranker } = harness([], {
+    createPool: async (input: { name: string; proxyUrl: string; type: string; isActive: boolean }) => {
+      created.push(input);
+      return { id: "remote-created", ...input };
+    },
+    setPoolActive: async () => ({}),
+  });
+  const result = await ranker.promoteDiagnostics([{
+    id: "diagnostic-1",
+    endpoint: "127.0.0.1:8123",
+    protocol: "http",
+    status: "SUCCESS",
+    statusCode: 200,
+    latencyMs: 120,
+    exitIp: "203.0.113.7",
+    country: "US",
+    isp: "Test ISP",
+    isProxyOrHosting: false,
+    headerLeakage: false,
+    leakedHeaders: [],
+    checkedAt: Date.now(),
+  }]);
+  assert.equal(result.promoted, 1);
+  assert.equal(result.skipped, 0);
+  assert.deepEqual(created, [{ name: "Diagnostic 127.0.0.1:8123", proxyUrl: "http://127.0.0.1:8123", type: "http", isActive: false }]);
+  const pool = ranker.readState().pools["remote-created"];
+  assert.equal(pool.remoteState, "linked");
+  assert.equal(pool.isActiveOnRouter, true);
+});

@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { ParsedProxy, PoolRecord, PoolStats, RemoteState, TestState } from "../lib/types.js";
+import type { DetailedDiagnosticResult, ParsedProxy, PoolRecord, PoolStats, RemoteState, TestState } from "../lib/types.js";
 import { getSettingsSecrets } from "./app-config.js";
 import { getActivitySnapshot, logActivity, resetSyncProgress, setSyncProgress } from "./activity-log.js";
 import { checkMany, checkProxy as defaultCheckProxy } from "./checker.js";
@@ -488,6 +488,26 @@ export function createPoolRanker(
       metrics.recordFromPools(checkedPools, stats);
       lastError = state.lastError;
 
+      // ponytail: sequential rename, batch/parallel endpoint if pool count grows large
+      const rankedUsable = rankUsable(
+        Object.values(readState().pools).filter(
+          (pool) => pool.status === "usable" && pool.remoteState === "linked"
+        )
+      );
+      for (let i = rankedUsable.length - 1; i >= 0; i--) {
+        const targetName = String(i + 1);
+        const pool = rankedUsable[i];
+        if (pool.name === targetName) continue;
+        try {
+          await renamePool(pool.localId, targetName);
+        } catch (error) {
+          logActivity(
+            "warn",
+            `Auto-rename skipped for pool ${pool.localId} to "${targetName}": ${(error as Error).message}`
+          );
+        }
+      }
+
       const elapsed = Math.round((Date.now() - startedAt) / 1000);
       setSyncProgress({ phase: "done", checked: targetsToSync.length, total: targetsToSync.length });
       logActivity("success", `Sync finished in ${elapsed}s — ${stats.active} active, ${stats.reserve} reserve`);
@@ -758,6 +778,63 @@ export function createPoolRanker(
     return { accepted, busy };
   }
 
+  async function promoteDiagnostics(results: DetailedDiagnosticResult[]) {
+    const remotePools = await deps.listPools();
+    const remoteByEndpoint = new Map(remotePools.map((pool) => [parseProxy(pool.proxyUrl)?.endpoint, pool]));
+    const promoted: string[] = [];
+    const skipped: string[] = [];
+    for (const result of results) {
+      const matched = remoteByEndpoint.get(result.endpoint);
+      try {
+        if (matched) {
+          await deps.setPoolActive(matched.id, true);
+          const state = readState();
+          const existing = Object.values(state.pools).find((pool) => pool.remoteId === matched.id || parseProxy(pool.proxyUrl)?.endpoint === result.endpoint);
+          if (existing) {
+            existing.isActiveOnRouter = true;
+            existing.remoteState = "linked";
+            existing.tier = "active";
+            writeState(state);
+          }
+        } else {
+          const remote = await deps.createPool({
+            name: `Diagnostic ${result.endpoint}`,
+            proxyUrl: `${result.protocol}://${result.endpoint}`, 
+            type: result.protocol,
+            isActive: false,
+          });
+          await deps.setPoolActive(remote.id, true);
+          const state = readState();
+          state.pools[remote.id] = {
+            localId: remote.id,
+            remoteId: remote.id,
+            remoteState: "linked",
+            testState: "idle",
+            name: remote.name || `Diagnostic ${result.endpoint}`,
+            proxyUrl: remote.proxyUrl,
+            type: remote.type || result.protocol,
+            status: "usable",
+            tier: "active",
+            healthStatus: "done",
+            latency_ms: result.latencyMs,
+            exit_ip: result.exitIp,
+            checked_at: result.checkedAt,
+            isActiveOnRouter: true,
+            successes: 1,
+            failures: 0,
+          };
+          state.stats = computeStats(Object.values(state.pools));
+          writeState(state);
+        }
+        promoted.push(result.id);
+      } catch (error) {
+        skipped.push(result.id);
+        logActivity("warn", `Diagnostic promotion skipped for ${result.endpoint}: ${(error as Error).message}`);
+      }
+    }
+    return { promoted: promoted.length, skipped: skipped.length, results: promoted, skippedIds: skipped };
+  }
+
   function isSyncing(): boolean {
     return syncing;
   }
@@ -777,6 +854,7 @@ export function createPoolRanker(
     removePool,
     restorePool,
     testPools,
+    promoteDiagnostics,
   };
 }
 
