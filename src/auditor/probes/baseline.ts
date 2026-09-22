@@ -9,11 +9,16 @@ export interface ProbeOptions {
   endpoints?: string[];
   endpoint?: string;
   maxBytes?: number;
-  rejectUnauthorized?: boolean;
   ca?: string | Buffer;
 }
 
-function parseUrl(rawUrl: string): { protocol: string; host: string; port: number; path: string } {
+function parseUrl(rawUrl: string): {
+  protocol: string;
+  hostname: string;
+  host: string;
+  port: number;
+  path: string;
+} {
   const parsed = new URL(rawUrl);
   const protocol = parsed.protocol.replace(/:$/, "").toLowerCase();
   const port = parsed.port
@@ -23,7 +28,8 @@ function parseUrl(rawUrl: string): { protocol: string; host: string; port: numbe
       : 80;
   return {
     protocol,
-    host: parsed.hostname,
+    hostname: parsed.hostname,
+    host: parsed.host,
     port,
     path: parsed.pathname + parsed.search,
   };
@@ -57,18 +63,19 @@ export async function probeDirectBaseline(
   const maxBytes = options.maxBytes ?? 64 * 1024;
   const target = parseUrl(endpoint);
 
-  const ssrf = await validateTargetHost(target.host, {
+  const ssrf = await validateTargetHost(target.hostname, {
     allowPrivateTargets: options.allowPrivateTargets ?? false,
     timeoutMs,
   });
 
-  if (!ssrf.valid) {
+  if (!ssrf.valid || ssrf.resolvedIps.length === 0) {
     return {
       established: false,
       error: ssrf.reason || "Target host blocked by SSRF policy",
     };
   }
 
+  const pinnedIp = ssrf.resolvedIps[0];
   const isHttps = target.protocol === "https";
   const client = isHttps ? https : http;
 
@@ -84,14 +91,18 @@ export async function probeDirectBaseline(
 
   const req = client.request(
     {
-      host: target.host,
+      host: pinnedIp,
       port: target.port,
       path: target.path,
       method: "GET",
       timeout: timeoutMs,
-      headers: { Connection: "close" },
+      headers: {
+        Host: target.host,
+        Connection: "close",
+      },
       ca: options.ca,
-      rejectUnauthorized: options.rejectUnauthorized ?? true,
+      rejectUnauthorized: true,
+      servername: isHttps ? target.hostname : undefined,
     },
     (res) => {
       const chunks: Buffer[] = [];
@@ -101,16 +112,32 @@ export async function probeDirectBaseline(
         totalBytes += chunk.length;
         if (totalBytes > maxBytes) {
           const err = new Error(`Response size exceeded limit of ${maxBytes} bytes`);
-          res.destroy(err);
-          req.destroy(err);
           finish({
             established: false,
             latencyMs: Date.now() - startTime,
             error: err.message,
           });
+          res.destroy(err);
+          req.destroy(err);
           return;
         }
         chunks.push(chunk);
+      });
+
+      res.on("error", (err) => {
+        finish({
+          established: false,
+          latencyMs: Date.now() - startTime,
+          error: err.message,
+        });
+      });
+
+      res.on("aborted", () => {
+        finish({
+          established: false,
+          latencyMs: Date.now() - startTime,
+          error: "Response aborted by peer",
+        });
       });
 
       res.on("end", () => {

@@ -178,22 +178,19 @@ test("TLS probe rejects invalid self-signed certificates", async () => {
   }
 });
 
-test("content integrity verifies deterministic body and SPKI pin", async () => {
-  const body = "controlled-payload";
-  const target = await startHttpFixture((_req, res) => {
-    res.writeHead(200, { "content-type": "text/plain" });
-    res.end(body);
-  });
+test("content integrity rejects plaintext HTTP endpoints", async () => {
+  const target = await startHttpFixture((_req, res) => res.end("controlled-payload"));
   const p = await startMockHttpProxy();
   try {
-    const result = await probeContentIntegrity(withPort(p.port), {
-      endpoint: `http://127.0.0.1:${target.port}/`,
-      expectedBody: body,
-      timeoutMs: 1000,
-      allowPrivateTargets: true,
-    });
-    assert.equal(result.intact, true);
-    assert.deepEqual(result.injectedScripts, []);
+    await assert.rejects(
+      probeContentIntegrity(withPort(p.port), {
+        endpoint: `http://127.0.0.1:${target.port}/`,
+        expectedBody: "controlled-payload",
+        timeoutMs: 1000,
+        allowPrivateTargets: true,
+      }),
+      /HTTPS/i,
+    );
   } finally {
     await Promise.all([target.close(), p.close()]);
   }
@@ -346,4 +343,117 @@ test("HTTP proxy DNS mode is local and leak status stays unknown", async () => {
   assert.equal(result.resolutionMode, "local");
   assert.equal(result.resolved, undefined);
   assert.equal(result.dnsLeakDetected, null);
+});
+
+test("TLS verification cannot be disabled by runtime options", async () => {
+  const server = https.createServer({ key: tlsKey, cert: tlsCert }, (_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ip: "198.51.100.30" }));
+  });
+  const { promise: pListen, resolve: resListen } = Promise.withResolvers<void>();
+  server.listen(0, "127.0.0.1", resListen);
+  await pListen;
+  const p = await startMockHttpProxy();
+  const bypass = { rejectUnauthorized: false } as Record<string, unknown>;
+  try {
+    const address = server.address() as net.AddressInfo;
+    const endpoint = `https://localhost:${address.port}/`;
+
+    const tlsResult = await probeTlsIntegrity(withPort(p.port), {
+      endpoint,
+      timeoutMs: 1000,
+      allowPrivateTargets: true,
+      ...bypass,
+    });
+    assert.equal(tlsResult.certificateValid, false);
+
+    const exitResult = await probeExitIp(withPort(p.port), {
+      endpoints: [endpoint],
+      timeoutMs: 1000,
+      allowPrivateTargets: true,
+      ...bypass,
+    });
+    assert.equal(exitResult.consistent, false);
+    assert.match(exitResult.observations[0]?.error || "", /self-signed certificate/i);
+
+    await assert.rejects(
+      probeContentIntegrity(withPort(p.port), {
+        endpoint,
+        expectedBody: "unused",
+        timeoutMs: 1000,
+        allowPrivateTargets: true,
+        ...bypass,
+      }),
+      /self-signed certificate/i,
+    );
+
+    const baseline = await probeDirectBaseline({
+      endpoint,
+      timeoutMs: 1000,
+      allowPrivateTargets: true,
+      ...bypass,
+    });
+    assert.equal(baseline.established, false);
+    assert.match(baseline.error || "", /self-signed certificate/i);
+  } finally {
+    const { promise: pClose, resolve: resClose } = Promise.withResolvers<void>();
+    server.close(resClose);
+    await Promise.all([p.close(), pClose]);
+  }
+});
+
+test("header leak uses TLS and redacts credential-shaped values", async () => {
+  const server = https.createServer({ key: tlsKey, cert: tlsCert }, (_req, res) => {
+    res.writeHead(200, {
+      "X-Forwarded-For": "203.0.113.7",
+      "X-Authorization": "Authorization: Bearer secret-token",
+      "X-Proxy-Meta": "token=abc123; cookie=session456; key=key789",
+    });
+    res.end("ok");
+  });
+  const { promise: pListen, resolve: resListen } = Promise.withResolvers<void>();
+  server.listen(0, "127.0.0.1", resListen);
+  await pListen;
+  const p = await startMockHttpProxy();
+  try {
+    const address = server.address() as net.AddressInfo;
+    const result = await probeHeaderLeak(withPort(p.port), ["203.0.113.7"], {
+      endpoint: `https://localhost:${address.port}/`,
+      timeoutMs: 1000,
+      allowPrivateTargets: true,
+      ca: tlsCert,
+    });
+    const values = result.headers?.map((header) => header.value).join(" ") || "";
+    assert.equal(result.originIpExposed, true);
+    assert.doesNotMatch(values, /203\.0\.113\.7|secret-token|abc123|session456|key789/);
+    assert.match(values, /\[REDACTED/);
+  } finally {
+    const { promise: pClose, resolve: resClose } = Promise.withResolvers<void>();
+    server.close(resClose);
+    await Promise.all([p.close(), pClose]);
+  }
+});
+
+test("direct baseline preserves host identity and settles aborted responses", async () => {
+  let observedHost = "";
+  let observedRemote = "";
+  const target = await startHttpFixture((req, res) => {
+    observedHost = req.headers.host || "";
+    observedRemote = req.socket.remoteAddress || "";
+    res.write("partial");
+    res.destroy();
+  });
+  try {
+    const result = await probeDirectBaseline({
+      endpoint: `http://localhost:${target.port}/`,
+      timeoutMs: 1000,
+      allowPrivateTargets: true,
+    });
+    assert.equal(result.established, false);
+    assert.match(result.error || "", /aborted|reset|socket/i);
+    assert.equal(observedHost, `localhost:${target.port}`);
+    assert.match(observedRemote, /127\.0\.0\.1|::ffff:127\.0\.0\.1/);
+  } finally {
+    await target.close();
+  }
 });

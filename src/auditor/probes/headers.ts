@@ -1,3 +1,5 @@
+import type net from "node:net";
+import tls from "node:tls";
 import type { HeaderLeakResult, ParsedProxyInput } from "../types.js";
 import { openProxyTunnel, requestThroughProxy } from "../transport/index.js";
 import type { ProbeOptions } from "./baseline.js";
@@ -24,6 +26,11 @@ function redactValue(val: string, baselineIps: string[]): string {
   redacted = redacted.replace(/\b[0-9a-fA-F:]{3,39}\b/g, (match) =>
     match.includes(":") ? "[REDACTED_IP]" : match
   );
+
+  redacted = redacted.replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [REDACTED]");
+  redacted = redacted.replace(/Authorization:\s*[^;\r\n]+/gi, "Authorization: [REDACTED]");
+  redacted = redacted.replace(/\b(token|key|cookie)=([^;\s,]+)/gi, "$1=[REDACTED]");
+
   return redacted;
 }
 
@@ -53,7 +60,7 @@ export async function probeHeaderLeak(
     path: parsed.pathname + parsed.search,
   };
 
-  const { socket } = await openProxyTunnel(
+  const { socket: rawSocket } = await openProxyTunnel(
     proxy,
     { host: target.host, port: target.port },
     {
@@ -63,8 +70,36 @@ export async function probeHeaderLeak(
     }
   );
 
+  const isHttps = protocol === "https" || port === 443;
+  let appSocket: net.Socket = rawSocket;
+
   try {
-    const res = await requestThroughProxy(socket, {
+    if (isHttps) {
+      const { promise: pTls, resolve: resTls, reject: rejTls } = Promise.withResolvers<tls.TLSSocket>();
+      const tlsSocket = tls.connect({
+        socket: rawSocket,
+        servername: target.host,
+        rejectUnauthorized: true,
+        ca: options.ca,
+        timeout: timeoutMs,
+      });
+
+      tlsSocket.once("secureConnect", () => resTls(tlsSocket));
+      tlsSocket.once("timeout", () => {
+        tlsSocket.destroy();
+        rawSocket.destroy();
+        rejTls(new Error(`Timeout after ${timeoutMs}ms waiting for TLS handshake`));
+      });
+      tlsSocket.once("error", (err) => {
+        tlsSocket.destroy();
+        rawSocket.destroy();
+        rejTls(err);
+      });
+
+      appSocket = await pTls;
+    }
+
+    const res = await requestThroughProxy(appSocket, {
       host: target.host,
       path: target.path,
       method: "GET",
@@ -115,6 +150,7 @@ export async function probeHeaderLeak(
       headers: leakHeaders,
     };
   } finally {
-    socket.destroy();
+    appSocket.destroy();
+    rawSocket.destroy();
   }
 }

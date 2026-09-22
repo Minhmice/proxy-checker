@@ -7,7 +7,6 @@ export interface TlsProbeOptions {
   endpoint: string;
   timeoutMs?: number;
   allowPrivateTargets?: boolean;
-  rejectUnauthorized?: boolean;
   expectedSpkiSha256?: string;
   directCertFingerprint256?: string;
   ca?: string | Buffer;
@@ -52,7 +51,7 @@ export async function probeTlsIntegrity(
   const tlsSocket = tls.connect({
     socket: plainSocket,
     servername: host,
-    rejectUnauthorized: options.rejectUnauthorized ?? true,
+    rejectUnauthorized: true,
     ca: options.ca,
     timeout: timeoutMs,
   });
