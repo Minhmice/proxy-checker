@@ -1,3 +1,5 @@
+import net from "node:net";
+import tls from "node:tls";
 import type {
   ExitIpResult,
   ParsedProxyInput,
@@ -48,7 +50,7 @@ function extractIp(body: string): string | undefined {
 export async function probeExitIp(
   proxy: ParsedProxyInput,
   options: ProbeOptions = {}
-): Promise<ExitIpResult & { observations: ExitIpObservation[]; consistent: boolean }> {
+): Promise<ExitIpResult & { observations: ExitIpObservation[]; consistent: boolean; ipv4?: string[]; ipv6?: string[] }> {
   const endpoints = options.endpoints || (options.endpoint ? [options.endpoint] : []);
   if (endpoints.length === 0) {
     return {
@@ -64,7 +66,9 @@ export async function probeExitIp(
   for (const endpoint of endpoints) {
     try {
       const target = parseUrl(endpoint);
-      const { socket } = await openProxyTunnel(
+      const isHttps = target.protocol === "https";
+
+      const { socket: rawSocket } = await openProxyTunnel(
         proxy,
         { host: target.host, port: target.port },
         {
@@ -73,8 +77,36 @@ export async function probeExitIp(
           targetDomain: target.host,
         }
       );
+
+      let appSocket: net.Socket = rawSocket;
+
+      if (isHttps) {
+        const { promise: pTls, resolve: resTls, reject: rejTls } = Promise.withResolvers<tls.TLSSocket>();
+        const tlsSocket = tls.connect({
+          socket: rawSocket,
+          servername: target.host,
+          rejectUnauthorized: options.rejectUnauthorized ?? true,
+          ca: options.ca,
+          timeout: timeoutMs,
+        });
+
+        tlsSocket.once("secureConnect", () => resTls(tlsSocket));
+        tlsSocket.once("timeout", () => {
+          tlsSocket.destroy();
+          rawSocket.destroy();
+          rejTls(new Error(`Timeout after ${timeoutMs}ms waiting for TLS handshake`));
+        });
+        tlsSocket.once("error", (err) => {
+          tlsSocket.destroy();
+          rawSocket.destroy();
+          rejTls(err);
+        });
+
+        appSocket = await pTls;
+      }
+
       try {
-        const res = await requestThroughProxy(socket, {
+        const res = await requestThroughProxy(appSocket, {
           host: target.host,
           path: target.path,
           method: "GET",
@@ -83,7 +115,8 @@ export async function probeExitIp(
         const ip = extractIp(res.body);
         observations.push({ endpoint, ip });
       } finally {
-        socket.destroy();
+        appSocket.destroy();
+        rawSocket.destroy();
       }
     } catch (err) {
       observations.push({
@@ -100,10 +133,15 @@ export async function probeExitIp(
   }
   const uniqueIps = Object.keys(seenIps);
   const consistent = uniqueIps.length === 1 && validIps.length === endpoints.length;
-  const primaryIp = uniqueIps[0];
+  const primaryIp = consistent ? uniqueIps[0] : undefined;
+
+  const ipv4 = uniqueIps.filter((ip) => net.isIPv4(ip));
+  const ipv6 = uniqueIps.filter((ip) => net.isIPv6(ip));
 
   return {
     ip: primaryIp,
+    ipv4: ipv4.length > 0 ? ipv4 : undefined,
+    ipv6: ipv6.length > 0 ? ipv6 : undefined,
     observations,
     consistent,
   };

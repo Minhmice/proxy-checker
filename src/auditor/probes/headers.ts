@@ -2,6 +2,31 @@ import type { HeaderLeakResult, ParsedProxyInput } from "../types.js";
 import { openProxyTunnel, requestThroughProxy } from "../transport/index.js";
 import type { ProbeOptions } from "./baseline.js";
 
+const TARGET_LEAK_HEADERS: Record<string, true> = {
+  forwarded: true,
+  "x-forwarded-for": true,
+  "x-real-ip": true,
+  via: true,
+  "client-ip": true,
+  "true-client-ip": true,
+  "cf-connecting-ip": true,
+  "proxy-connection": true,
+};
+
+function redactValue(val: string, baselineIps: string[]): string {
+  let redacted = val;
+  for (const ip of baselineIps) {
+    if (!ip) continue;
+    const regex = new RegExp(ip.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+    redacted = redacted.replace(regex, "[REDACTED_IP]");
+  }
+  redacted = redacted.replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, "[REDACTED_IP]");
+  redacted = redacted.replace(/\b[0-9a-fA-F:]{3,39}\b/g, (match) =>
+    match.includes(":") ? "[REDACTED_IP]" : match
+  );
+  return redacted;
+}
+
 export async function probeHeaderLeak(
   proxy: ParsedProxyInput,
   baselineIps: string[],
@@ -60,10 +85,10 @@ export async function probeHeaderLeak(
       if (lower === "via") viaPresent = true;
       if (lower === "x-forwarded-for") xForwardedForPresent = true;
 
+      const matchedTargetHeader = TARGET_LEAK_HEADERS[lower] === true;
       const suspicious =
+        matchedTargetHeader ||
         lower.startsWith("x-") ||
-        lower === "via" ||
-        lower === "forwarded" ||
         lower.includes("proxy");
 
       if (suspicious) {
@@ -74,7 +99,7 @@ export async function probeHeaderLeak(
         }
         leakHeaders.push({
           name: k,
-          value: v,
+          value: redactValue(v, normalizedBaseline),
           revealsRealIp,
         });
       }

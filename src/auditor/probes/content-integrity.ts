@@ -1,7 +1,9 @@
 import crypto from "node:crypto";
+import type net from "node:net";
+import tls from "node:tls";
 import type { ContentIntegrityResult, ParsedProxyInput } from "../types.js";
 import { openProxyTunnel, requestThroughProxy } from "../transport/index.js";
-import { probeTlsIntegrity } from "./tls.js";
+import { computeSpkiSha256 } from "./tls.js";
 
 export interface IntegrityOptions {
   endpoint: string;
@@ -10,6 +12,8 @@ export interface IntegrityOptions {
   expectedSpkiSha256?: string;
   timeoutMs?: number;
   allowPrivateTargets?: boolean;
+  rejectUnauthorized?: boolean;
+  ca?: string | Buffer;
 }
 
 export async function probeContentIntegrity(
@@ -22,29 +26,7 @@ export async function probeContentIntegrity(
   const isHttps = parsed.protocol === "https:";
   const port = parsed.port ? Number(parsed.port) : isHttps ? 443 : 80;
 
-  let spkiValid: boolean | undefined = undefined;
-
-  if (isHttps && options.expectedSpkiSha256) {
-    const tlsResult = await probeTlsIntegrity(proxy, {
-      endpoint: options.endpoint,
-      timeoutMs,
-      allowPrivateTargets: options.allowPrivateTargets,
-      expectedSpkiSha256: options.expectedSpkiSha256,
-    });
-    spkiValid = tlsResult.spkiSha256?.toLowerCase() === options.expectedSpkiSha256.toLowerCase();
-    if (!spkiValid) {
-      return {
-        intact: false,
-        injectedScripts: [],
-        modifiedHeaders: [],
-        tlsStripping: false,
-        spkiValid: false,
-        error: "SPKI hash mismatch",
-      };
-    }
-  }
-
-  const { socket } = await openProxyTunnel(
+  const { socket: rawSocket } = await openProxyTunnel(
     proxy,
     { host, port },
     {
@@ -54,8 +36,56 @@ export async function probeContentIntegrity(
     }
   );
 
+  let appSocket: net.Socket = rawSocket;
+  let spkiValid: boolean | undefined = undefined;
+
   try {
-    const res = await requestThroughProxy(socket, {
+    if (isHttps) {
+      const { promise: pTls, resolve: resTls, reject: rejTls } = Promise.withResolvers<tls.TLSSocket>();
+      const tlsSocket = tls.connect({
+        socket: rawSocket,
+        servername: host,
+        rejectUnauthorized: options.rejectUnauthorized ?? true,
+        ca: options.ca,
+        timeout: timeoutMs,
+      });
+
+      tlsSocket.once("secureConnect", () => resTls(tlsSocket));
+      tlsSocket.once("timeout", () => {
+        tlsSocket.destroy();
+        rawSocket.destroy();
+        rejTls(new Error(`Timeout after ${timeoutMs}ms waiting for TLS handshake`));
+      });
+      tlsSocket.once("error", (err) => {
+        tlsSocket.destroy();
+        rawSocket.destroy();
+        rejTls(err);
+      });
+
+      const secureSocket = await pTls;
+      appSocket = secureSocket;
+
+      if (options.expectedSpkiSha256) {
+        const cert = secureSocket.getPeerCertificate(true);
+        let actualSpki: string | undefined = undefined;
+        if (cert && typeof cert === "object" && "raw" in cert && Buffer.isBuffer(cert.raw)) {
+          actualSpki = computeSpkiSha256(cert.raw);
+        }
+        spkiValid = actualSpki?.toLowerCase() === options.expectedSpkiSha256.toLowerCase();
+        if (!spkiValid) {
+          return {
+            intact: false,
+            injectedScripts: [],
+            modifiedHeaders: [],
+            tlsStripping: false,
+            spkiValid: false,
+            error: "SPKI hash mismatch",
+          };
+        }
+      }
+    }
+
+    const res = await requestThroughProxy(appSocket, {
       host,
       path: parsed.pathname + parsed.search,
       method: "GET",
@@ -96,6 +126,7 @@ export async function probeContentIntegrity(
       spkiValid,
     };
   } finally {
-    socket.destroy();
+    appSocket.destroy();
+    rawSocket.destroy();
   }
 }

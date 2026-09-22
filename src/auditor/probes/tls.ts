@@ -10,6 +10,7 @@ export interface TlsProbeOptions {
   rejectUnauthorized?: boolean;
   expectedSpkiSha256?: string;
   directCertFingerprint256?: string;
+  ca?: string | Buffer;
 }
 
 export function computeSpkiSha256(rawCert: Buffer): string {
@@ -41,35 +42,35 @@ export async function probeTlsIntegrity(
     TlsResult & { possibleMitm: boolean; spkiSha256?: string }
   >();
 
-  let certificateValid = false;
-  let possibleMitm = false;
-  let spkiSha256: string | undefined;
+  let settled = false;
+  const finish = (result: TlsResult & { possibleMitm: boolean; spkiSha256?: string }) => {
+    if (settled) return;
+    settled = true;
+    resolve(result);
+  };
 
   const tlsSocket = tls.connect({
     socket: plainSocket,
     servername: host,
-    rejectUnauthorized: false,
+    rejectUnauthorized: options.rejectUnauthorized ?? true,
+    ca: options.ca,
     timeout: timeoutMs,
   });
 
   tlsSocket.once("secureConnect", () => {
     try {
-      const authError = tlsSocket.ssl?.verifyError?.();
-      certificateValid = !authError && tlsSocket.authorized;
-
-      if (options.rejectUnauthorized && authError) {
-        certificateValid = false;
-      }
-
       const cert = tlsSocket.getPeerCertificate(true);
-      const rawCert = cert && (cert as unknown as { raw?: Buffer }).raw;
-      if (rawCert) {
-        spkiSha256 = computeSpkiSha256(rawCert);
+      let spkiSha256: string | undefined = undefined;
+      if (cert && typeof cert === "object" && "raw" in cert && Buffer.isBuffer(cert.raw)) {
+        spkiSha256 = computeSpkiSha256(cert.raw);
       }
 
       const cipher = tlsSocket.getCipher()?.name;
       const protocol = tlsSocket.getProtocol() || undefined;
       const alpn = tlsSocket.alpnProtocol || undefined;
+
+      let possibleMitm = false;
+      let certificateValid = true;
 
       if (options.expectedSpkiSha256 && spkiSha256) {
         if (spkiSha256.toLowerCase() !== options.expectedSpkiSha256.toLowerCase()) {
@@ -78,7 +79,7 @@ export async function probeTlsIntegrity(
         }
       }
 
-      if (options.directCertFingerprint256 && cert.fingerprint256) {
+      if (options.directCertFingerprint256 && cert && "fingerprint256" in cert && typeof cert.fingerprint256 === "string") {
         if (
           cert.fingerprint256.replace(/:/g, "").toLowerCase() !==
           options.directCertFingerprint256.replace(/:/g, "").toLowerCase()
@@ -87,7 +88,7 @@ export async function probeTlsIntegrity(
         }
       }
 
-      resolve({
+      finish({
         secure: true,
         protocol,
         cipher,
@@ -97,7 +98,7 @@ export async function probeTlsIntegrity(
         spkiSha256,
       });
     } catch (err) {
-      resolve({
+      finish({
         secure: false,
         certificateValid: false,
         possibleMitm: true,
@@ -110,13 +111,20 @@ export async function probeTlsIntegrity(
   });
 
   tlsSocket.once("timeout", () => {
-    tlsSocket.destroy(new Error(`Timeout after ${timeoutMs}ms during TLS handshake`));
-  });
-
-  tlsSocket.once("error", (err) => {
     tlsSocket.destroy();
     plainSocket.destroy();
-    resolve({
+    finish({
+      secure: false,
+      certificateValid: false,
+      possibleMitm: false,
+      error: `Timeout after ${timeoutMs}ms during TLS handshake`,
+    });
+  });
+
+  tlsSocket.once("error", (err: Error & { code?: string }) => {
+    tlsSocket.destroy();
+    plainSocket.destroy();
+    finish({
       secure: false,
       certificateValid: false,
       possibleMitm: false,

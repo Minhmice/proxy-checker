@@ -14,14 +14,11 @@ export async function probeDnsBehavior(
 
   if (proxy.protocol === "socks5") {
     resolutionMode = options.resolveDnsLocally ? "local" : "remote";
-  } else if (proxy.protocol === "http" || proxy.protocol === "https") {
-    resolutionMode = "remote";
   } else {
     resolutionMode = "local";
   }
 
   return {
-    resolved: true,
     dnsLeakDetected: null,
     resolutionMode,
   };

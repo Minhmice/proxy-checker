@@ -1,12 +1,16 @@
 import http from "node:http";
 import https from "node:https";
 import type { BaselineResult } from "../types.js";
+import { validateTargetHost } from "../security/ssrf.js";
 
 export interface ProbeOptions {
   timeoutMs?: number;
   allowPrivateTargets?: boolean;
   endpoints?: string[];
   endpoint?: string;
+  maxBytes?: number;
+  rejectUnauthorized?: boolean;
+  ca?: string | Buffer;
 }
 
 function parseUrl(rawUrl: string): { protocol: string; host: string; port: number; path: string } {
@@ -50,12 +54,33 @@ export async function probeDirectBaseline(
   }
 
   const timeoutMs = options.timeoutMs ?? 5000;
+  const maxBytes = options.maxBytes ?? 64 * 1024;
   const target = parseUrl(endpoint);
+
+  const ssrf = await validateTargetHost(target.host, {
+    allowPrivateTargets: options.allowPrivateTargets ?? false,
+    timeoutMs,
+  });
+
+  if (!ssrf.valid) {
+    return {
+      established: false,
+      error: ssrf.reason || "Target host blocked by SSRF policy",
+    };
+  }
+
   const isHttps = target.protocol === "https";
   const client = isHttps ? https : http;
 
   const { promise, resolve } = Promise.withResolvers<BaselineResult & { ip?: string }>();
   const startTime = Date.now();
+  let settled = false;
+
+  const finish = (result: BaselineResult & { ip?: string }) => {
+    if (settled) return;
+    settled = true;
+    resolve(result);
+  };
 
   const req = client.request(
     {
@@ -65,14 +90,33 @@ export async function probeDirectBaseline(
       method: "GET",
       timeout: timeoutMs,
       headers: { Connection: "close" },
+      ca: options.ca,
+      rejectUnauthorized: options.rejectUnauthorized ?? true,
     },
     (res) => {
       const chunks: Buffer[] = [];
-      res.on("data", (chunk: Buffer) => chunks.push(chunk));
+      let totalBytes = 0;
+
+      res.on("data", (chunk: Buffer) => {
+        totalBytes += chunk.length;
+        if (totalBytes > maxBytes) {
+          const err = new Error(`Response size exceeded limit of ${maxBytes} bytes`);
+          res.destroy(err);
+          req.destroy(err);
+          finish({
+            established: false,
+            latencyMs: Date.now() - startTime,
+            error: err.message,
+          });
+          return;
+        }
+        chunks.push(chunk);
+      });
+
       res.on("end", () => {
         const body = Buffer.concat(chunks).toString("utf8");
         const ip = extractIp(body);
-        resolve({
+        finish({
           established: Boolean(res.statusCode && res.statusCode >= 200 && res.statusCode < 400),
           statusCode: res.statusCode,
           latencyMs: Date.now() - startTime,
@@ -87,7 +131,7 @@ export async function probeDirectBaseline(
   });
 
   req.on("error", (err) => {
-    resolve({
+    finish({
       established: false,
       latencyMs: Date.now() - startTime,
       error: err.message,
