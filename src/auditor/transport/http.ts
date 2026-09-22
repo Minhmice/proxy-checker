@@ -142,10 +142,12 @@ export async function requestThroughProxy(
     }
 
     let rawBody: Buffer;
-    const transferEncoding = (resHeaders["transfer-encoding"] || "").toLowerCase();
-    const isChunked = transferEncoding.includes("chunked");
-    const contentLengthHeader = resHeaders["content-length"];
-
+    if (method.toUpperCase() === "HEAD") {
+      rawBody = Buffer.alloc(0);
+    } else {
+      const transferEncoding = (resHeaders["transfer-encoding"] || "").toLowerCase();
+      const isChunked = transferEncoding.includes("chunked");
+      const contentLengthHeader = resHeaders["content-length"];
     if (isChunked) {
       const chunks: Buffer[] = [];
       let totalChunkBytes = 0;
@@ -201,6 +203,7 @@ export async function requestThroughProxy(
       remaining = deadline - Date.now();
       if (remaining <= 0) throw new Error(`Timeout after ${timeoutMs}ms while reading body to EOF`);
       rawBody = await reader.readAll(remaining);
+    }
     }
 
     const leftover = reader.release();

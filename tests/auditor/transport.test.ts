@@ -651,3 +651,32 @@ test("regression 11: requestThroughProxy rejects content-length exceeding MAX_BO
     await server.close();
   }
 });
+
+test("regression 12: requestThroughProxy returns empty body on HEAD requests even if content-length is present", async () => {
+  const server = await startScriptedRawHttpServer((socket) => {
+    socket.write("HTTP/1.1 200 OK\r\nContent-Length: 5000\r\n\r\n");
+  });
+  const proxy = await startMockHttpProxy();
+
+  try {
+    const { parsed } = parseProxyInput(`http://127.0.0.1:${proxy.port}`);
+    const tunnel = await openProxyTunnel(
+      parsed,
+      { host: "127.0.0.1", port: server.port },
+      { timeoutMs: 3000, allowPrivateTargets: true }
+    );
+
+    const res = await requestThroughProxy(tunnel.socket, {
+      method: "HEAD",
+      path: "/",
+      host: `127.0.0.1:${server.port}`,
+      timeoutMs: 1000,
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body, "");
+    assert.equal(res.rawBody.length, 0);
+  } finally {
+    await proxy.close();
+    await server.close();
+  }
+});
