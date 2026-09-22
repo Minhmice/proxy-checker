@@ -12,6 +12,8 @@ import { clearNineRouterSession, nineRouterConfigured, testNineRouterConnection 
 import { bulkSetActive, listPools } from "./nine-router-client.js";
 import { parseProxy, proxyUrl } from "./proxy-core.js";
 import { createDiagnosticRunner } from "./detailed-checker.js";
+import { createAuditorJobManager, AuditorJobError } from "./auditor-jobs.js";
+import type { AuditorJobOptions } from "../lib/types.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "../..");
@@ -27,6 +29,7 @@ const inputChecker = createInputChecker({
 });
 const poolRanker = createPoolRanker({ dataDir });
 const diagnostics = createDiagnosticRunner({ inputDir, dataDir });
+const auditorJobs = createAuditorJobManager({ dataDir });
 
 function auth(request: http.IncomingMessage): boolean {
   const header = request.headers.authorization;
@@ -43,10 +46,21 @@ function json(response: http.ServerResponse, payload: unknown, status = 200) {
   response.end(body);
 }
 
-function readBody(request: http.IncomingMessage): Promise<Record<string, unknown>> {
+function readBody(request: http.IncomingMessage, maxBytes = 1_000_000): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    let received = 0;
+    request.on("data", (chunk: Buffer) => {
+      received += chunk.length;
+      if (received > maxBytes) {
+        request.destroy();
+        const err = new Error("Request payload too large") as Error & { status?: number };
+        err.status = 413;
+        reject(err);
+        return;
+      }
+      chunks.push(chunk);
+    });
     request.on("end", () => {
       const raw = Buffer.concat(chunks).toString("utf8").trim();
       if (!raw) return resolve({});
@@ -287,6 +301,83 @@ async function handleDiagnostics(request: http.IncomingMessage, response: http.S
   return json(response, { error: "not found" }, 404);
 }
 
+async function handleAuditor(request: http.IncomingMessage, response: http.ServerResponse, pathname: string) {
+  try {
+    if (request.method === "POST" && pathname === "/api/auditor/jobs") {
+      const body = await readBody(request, 5_100_000);
+      const mode = body.mode as "single" | "bulk";
+      const options = (body.options && typeof body.options === "object" ? body.options : {}) as unknown as AuditorJobOptions;
+
+      if (mode === "single") {
+        const proxy = typeof body.proxy === "string" ? body.proxy : "";
+        const job = await auditorJobs.createSingle({ proxy, options });
+        return json(response, { job }, 202);
+      }
+      if (mode === "bulk") {
+        const name = typeof body.name === "string" ? body.name : "";
+        const content = typeof body.content === "string" ? body.content : "";
+        const job = await auditorJobs.createBulk({ name, content, options });
+        return json(response, { job }, 202);
+      }
+      return json(response, { error: "Invalid audit mode: expected 'single' or 'bulk'" }, 400);
+    }
+
+    const jobActionMatch = pathname.match(/^\/api\/auditor\/jobs\/([^/]+)(?:\/(cancel|export))?$/);
+    if (jobActionMatch) {
+      const id = decodeURIComponent(jobActionMatch[1]!);
+      const action = jobActionMatch[2];
+
+      if (request.method === "GET" && !action) {
+        const job = auditorJobs.getJob(id);
+        if (!job) return json(response, { error: `Job not found: ${id}` }, 404);
+        return json(response, { job });
+      }
+
+      if (request.method === "POST" && action === "cancel") {
+        const job = await auditorJobs.cancelJob(id);
+        return json(response, { job });
+      }
+
+      if (request.method === "GET" && action === "export") {
+        const url = new URL(request.url ?? "/", "http://localhost");
+        const format = (url.searchParams.get("format") || "json").toLowerCase() as "json" | "csv";
+        const exported = await auditorJobs.exportJob(id, format);
+        response.writeHead(200, {
+          "Content-Type": exported.contentType,
+          "Content-Disposition": `attachment; filename="${exported.filename}"`,
+          "Content-Length": exported.body.length,
+        });
+        response.end(exported.body);
+        return;
+      }
+    }
+
+    if (request.method === "GET" && pathname === "/api/auditor/history") {
+      const url = new URL(request.url ?? "/", "http://localhost");
+      const rawLimit = Number(url.searchParams.get("limit") || 50);
+      const limit = Number.isFinite(rawLimit) ? rawLimit : 50;
+      const jobs = auditorJobs.listHistory(limit);
+      return json(response, { jobs });
+    }
+
+    const historyActionMatch = pathname.match(/^\/api\/auditor\/history\/([^/]+)$/);
+    if (historyActionMatch && request.method === "DELETE") {
+      const id = decodeURIComponent(historyActionMatch[1]!);
+      const deleted = await auditorJobs.deleteHistory(id);
+      if (!deleted) return json(response, { error: `Job not found: ${id}` }, 404);
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+
+    return json(response, { error: "not found" }, 404);
+  } catch (error) {
+    const err = error as Error & { status?: number };
+    const status = err.status || (error instanceof AuditorJobError ? error.status : 400);
+    return json(response, { error: err.message || "Auditor operation failed" }, status);
+  }
+}
+
 async function handleSettings(request: http.IncomingMessage, response: http.ServerResponse, pathname: string) {
   if (request.method === "GET" && pathname === "/api/settings") {
     return json(response, getSettingsPublic());
@@ -374,6 +465,7 @@ async function main() {
 
     if (pathname.startsWith("/api/ninerouter/")) return handleNineRouter(request, response, pathname);
     if (pathname.startsWith("/api/diagnostics/")) return handleDiagnostics(request, response, pathname);
+    if (pathname.startsWith("/api/auditor/")) return handleAuditor(request, response, pathname);
     if (pathname.startsWith("/api/settings")) return handleSettings(request, response, pathname);
 
     if (request.method === "GET" && pathname === "/api/best") {
