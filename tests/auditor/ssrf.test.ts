@@ -88,8 +88,8 @@ test("validateTargetHost handles mock multi-IP DNS resolution (A/AAAA) and block
   });
 
   // Mock domain returning 1 public IPv4 and 1 private IPv4
-  dns.resolve4 = (async () => ["93.184.216.34", "10.0.0.5"]) as typeof dns.resolve4;
-  dns.resolve6 = (async () => ["2606:2800:220:1:248:1893:25c8:1946"]) as typeof dns.resolve6;
+  dns.resolve4 = (async () => ["93.184.216.34", "10.0.0.5"]) as unknown as typeof dns.resolve4;
+  dns.resolve6 = (async () => ["2606:2800:220:1:248:1893:25c8:1946"]) as unknown as typeof dns.resolve6;
 
   const mixedResult = await validateTargetHost("multi-ip.mock-domain.internal");
   assert.equal(mixedResult.valid, false);
@@ -97,8 +97,8 @@ test("validateTargetHost handles mock multi-IP DNS resolution (A/AAAA) and block
   assert.match(mixedResult.reason ?? "", /restricted IP/i);
 
   // Mock domain returning purely public A and AAAA records
-  dns.resolve4 = (async () => ["93.184.216.34", "93.184.216.35"]) as typeof dns.resolve4;
-  dns.resolve6 = (async () => ["2606:2800:220:1:248:1893:25c8:1946"]) as typeof dns.resolve6;
+  dns.resolve4 = (async () => ["93.184.216.34", "93.184.216.35"]) as unknown as typeof dns.resolve4;
+  dns.resolve6 = (async () => ["2606:2800:220:1:248:1893:25c8:1946"]) as unknown as typeof dns.resolve6;
 
   const publicResult = await validateTargetHost("all-public.mock-domain.internal");
   assert.equal(publicResult.valid, true);

@@ -36,27 +36,169 @@ export interface SecurityScore {
   reliability: number | null;
 }
 
-export interface SecurityRisk {
+export interface RiskFactor {
   id: string;
-  level: "low" | "medium" | "high" | "critical";
+  severity: "low" | "medium" | "high" | "critical";
   title: string;
-  detail: string;
+  description: string;
+  category?: string;
 }
 
-export interface ProbeResult<T = unknown> {
-  name: string;
-  status: "pass" | "warn" | "fail" | "skip";
-  latencyMs: number;
-  data?: T;
+export interface SecurityAuditResult {
+  inputValidation: {
+    valid: boolean;
+    reason?: string;
+  };
+  ssrfProtection: {
+    passed: boolean;
+    resolvedIps: string[];
+    reason?: string;
+    allowPrivateTargets?: boolean;
+  };
+}
+
+export interface ConnectivityResult {
+  reachable: boolean;
+  latencyMs?: number;
   error?: string;
+  [key: string]: unknown;
+}
+
+export interface BaselineResult {
+  established: boolean;
+  statusCode?: number;
+  latencyMs?: number;
+  error?: string;
+  [key: string]: unknown;
+}
+
+export interface ExitIpResult {
+  ip?: string;
+  country?: string;
+  region?: string;
+  city?: string;
+  timezone?: string;
+  matchesDeclared?: boolean;
+  [key: string]: unknown;
+}
+
+export interface NetworkResult {
+  asn?: string;
+  organization?: string;
+  isDatacenter?: boolean;
+  isResidential?: boolean;
+  isMobile?: boolean;
+  isTor?: boolean;
+  isVpn?: boolean;
+  isProxy?: boolean;
+  [key: string]: unknown;
+}
+
+export interface TlsResult {
+  secure?: boolean;
+  protocol?: string;
+  cipher?: string;
+  certificateValid?: boolean;
+  alpn?: string;
+  error?: string;
+  [key: string]: unknown;
+}
+
+export interface DnsResult {
+  resolved?: boolean;
+  addresses?: string[];
+  dnsLeakDetected?: boolean;
+  resolverAsn?: string;
+  error?: string;
+  [key: string]: unknown;
+}
+
+export interface HeaderLeakResult {
+  detected?: boolean;
+  headers?: Array<{
+    name: string;
+    value: string;
+    revealsRealIp?: boolean;
+  }>;
+  viaPresent?: boolean;
+  xForwardedForPresent?: boolean;
+  [key: string]: unknown;
+}
+
+export interface ContentIntegrityResult {
+  intact?: boolean;
+  injectedScripts?: string[];
+  modifiedHeaders?: string[];
+  tlsStripping?: boolean;
+  error?: string;
+  [key: string]: unknown;
+}
+
+export interface ReputationResult {
+  score?: number | null;
+  blacklists?: Array<{
+    name: string;
+    listed: boolean;
+    details?: string;
+  }>;
+  spamScore?: number;
+  fraudScore?: number;
+  [key: string]: unknown;
+}
+
+export interface StabilityResult {
+  stable?: boolean;
+  samplesAttempted?: number;
+  samplesSucceeded?: number;
+  jitterMs?: number;
+  packetLossPercent?: number;
+  [key: string]: unknown;
+}
+
+export interface RotationResult {
+  supported?: boolean;
+  exitIpChanged?: boolean;
+  distinctIpsObserved?: string[];
+  rotationIntervalSeconds?: number;
+  [key: string]: unknown;
+}
+
+export interface BrowserAuditResult {
+  supported?: boolean;
+  navigationSucceeded?: boolean;
+  webrtcLeakDetected?: boolean;
+  timezoneMismatch?: boolean;
+  canvasFingerprintConsistent?: boolean;
+  error?: string;
+  [key: string]: unknown;
+}
+
+export interface AuditMetadata {
+  startedAt: string;
+  completedAt: string;
+  durationMs: number;
+  version: string;
+  schemaVersion: string;
 }
 
 export interface ProxyAuditResult {
-  id: string;
-  target: RedactedProxyInfo;
+  proxy: RedactedProxyInfo;
   verdict: AuditVerdict;
   scores: SecurityScore;
-  risks: SecurityRisk[];
-  probes: ProbeResult[];
-  checkedAt: number;
+  security: SecurityAuditResult;
+  connectivity?: ConnectivityResult;
+  baseline?: BaselineResult;
+  exitIp?: ExitIpResult;
+  network?: NetworkResult;
+  tls?: TlsResult;
+  dns?: DnsResult;
+  headerLeak?: HeaderLeakResult;
+  contentIntegrity?: ContentIntegrityResult;
+  reputation?: ReputationResult;
+  stability?: StabilityResult;
+  rotation?: RotationResult;
+  browserAudit?: BrowserAuditResult;
+  riskFactors: RiskFactor[];
+  recommendations: string[];
+  metadata: AuditMetadata;
 }
