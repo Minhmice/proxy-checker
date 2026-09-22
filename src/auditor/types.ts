@@ -39,7 +39,7 @@ export interface SecurityScore {
 export interface RiskFactor {
   id: string;
   code?: string;
-  severity: "low" | "medium" | "high" | "critical";
+  severity: "info" | "low" | "medium" | "high" | "critical";
   title: string;
   description: string;
   message?: string;
@@ -110,7 +110,7 @@ export interface TlsResult {
 export interface DnsResult {
   resolved?: boolean;
   addresses?: string[];
-  dnsLeakDetected?: boolean;
+  dnsLeakDetected?: boolean | null;
   resolverAsn?: string;
   error?: string;
   [key: string]: unknown;

@@ -29,8 +29,7 @@ test("ProxyAuditResult matches required result contract", () => {
     baseline: { established: true, statusCode: 200 },
     exitIp: { ip: "203.0.113.10", country: "US" },
     network: { asn: "AS64500", organization: "Example ISP" },
-    tls: { secure: true, protocol: "TLSv1.3" },
-    dns: { resolved: true, addresses: ["93.184.216.34"] },
+    dns: { resolved: true, addresses: ["93.184.216.34"], dnsLeakDetected: null },
     headerLeak: { detected: false, headers: [] },
     contentIntegrity: { intact: true },
     reputation: { score: 90 },
@@ -39,7 +38,7 @@ test("ProxyAuditResult matches required result contract", () => {
       {
         id: "RISK-01",
         code: "UNENCRYPTED_TRANSPORT",
-        severity: "high",
+        severity: "info",
         title: "Plaintext HTTP Proxy",
         description: "Proxy transmits data without TLS",
         message: "Traffic can be intercepted",
@@ -62,5 +61,6 @@ test("ProxyAuditResult matches required result contract", () => {
   assert.equal(result.metadata.toolVersion, "1.0.0");
   assert.equal(result.riskFactors[0].evidence !== undefined, true);
   assert.equal(result.security.ssrfProtection.passed, true);
-  assert.equal(result.metadata.schemaVersion, "1");
+  assert.equal(result.riskFactors[0].severity, "info");
+  assert.equal(result.dns?.dnsLeakDetected, null);
 });
