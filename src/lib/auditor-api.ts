@@ -1,5 +1,5 @@
-import { authHeaders } from "./api.js";
-import type { AuditorJob, AuditorJobOptions } from "./types.js";
+import { authHeaders } from "./api";
+import type { AuditorJob, AuditorJobOptions } from "./types";
 
 export type CreateAuditorJobPayload =
   | {

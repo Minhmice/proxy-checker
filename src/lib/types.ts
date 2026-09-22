@@ -1,5 +1,5 @@
-import type { ProxyAuditResult, ProxyInput } from "../auditor/types.js";
-export type { ProxyAuditResult, ProxyInput };
+import type { AuditVerdict, ProxyAuditResult, ProxyInput } from "../auditor/types.js";
+export type { AuditVerdict, ProxyAuditResult, ProxyInput };
 
 export type ProxyProtocol = "http" | "socks5";
 

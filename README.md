@@ -10,6 +10,15 @@ The independent `src/auditor/` API and `proxy-audit` CLI evaluate proxy transpor
 npm run proxy-audit -- check "http://proxy.example.com:8080" --json
 ```
 
+## Dashboard Safety Auditor
+
+Open **Safety Auditor** (`/auditor`) in the sidebar for full visual proxy safety auditing:
+- **Single & Bulk Audits:** Paste a single connection string or drop a `.txt` proxy file.
+- **Background Execution & History:** Jobs execute in the background with real-time polling, cancellation, and server-side history retention (up to 50 jobs).
+- **Evidence Inspection:** Click any audit result to inspect full TLS, DNS, header origin-leak, connectivity timings, and reputation provider breakdowns in an interactive slide-over drawer.
+- **Sanitized Exports:** Download full JSON or formula-injection-safe CSV results without leaking proxy credentials.
+- Audits never mutate 9Router pools automatically.
+
 ## Settings (recommended)
 
 After the first run, open **Settings** in the dashboard to change 9Router credentials, sync interval, health-check concurrency, control password, and more. Values are stored in `data/settings.json` and apply immediately. Server always listens on port `1300`.
