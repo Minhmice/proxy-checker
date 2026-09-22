@@ -169,7 +169,7 @@ export default function DiagnosticsPage() {
     setError("");
     try {
       const result = await promoteDiagnostics(password, selected);
-      setNotice(`${result.promoted} result(s) activated in 9Router. ${result.skipped} unmatched result(s) skipped.`);
+      setNotice(`${result.promoted} result(s) added to Proxies and activated in 9Router${result.skipped ? `; ${result.skipped} skipped` : ""}.`);
       setSelected([]);
     } catch (reason) {
       setError((reason as Error).message);

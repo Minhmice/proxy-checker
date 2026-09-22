@@ -154,7 +154,7 @@ export async function promoteDiagnostics(password: string, ids: string[]) {
   const response = await fetch("/api/diagnostics/promote", { method: "POST", headers: authHeaders(password), body: JSON.stringify({ ids }) });
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || "Could not promote diagnostics");
-  return body as { promoted: number; skipped: number; results: Array<{ id: string; ok: boolean; error?: string }> };
+  return body as { promoted: number; skipped: number; results: string[]; skippedIds: string[] };
 }
 
 export function formatTime(value: number | null): string {
