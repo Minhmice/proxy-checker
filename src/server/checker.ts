@@ -4,7 +4,9 @@ import path from "node:path";
 import tls from "node:tls";
 import type { CheckResult, ParsedProxy } from "../lib/types.js";
 import { getSettingsSecrets } from "./app-config.js";
+import { testProxyDetailed } from "./detailed-checker.js";
 import { parseProxy } from "./proxy-core.js";
+
 
 function checkTimeoutMs() {
   return getSettingsSecrets().checkTimeoutMs;
@@ -127,66 +129,18 @@ async function exitIp(socket: net.Socket, reader: Reader, host: string, timeout:
 }
 
 export async function checkProxy(proxy: ParsedProxy, timeout = checkTimeoutMs()): Promise<CheckResult> {
-  const started = Date.now();
-  const host = "api.ipify.org";
-  let socket: net.Socket | null = null;
-  try {
-    socket = await connect(proxy.host, proxy.port, timeout);
-    const reader = new Reader(socket);
-    if (proxy.protocol === "http") {
-      const auth =
-        proxy.username === null
-          ? ""
-          : `Proxy-Authorization: Basic ${Buffer.from(`${proxy.username}:${proxy.password ?? ""}`).toString("base64")}\r\n`;
-      socket.write(`CONNECT ${host}:443 HTTP/1.1\r\nHost: ${host}:443\r\n${auth}\r\n`);
-      const header = (await reader.until(Buffer.from("\r\n\r\n"), 65536, timeout)).toString("latin1");
-      if (!/^HTTP\/\d\.\d 200\b/.test(header)) throw new Error(header.split("\r\n")[0]);
-    } else {
-      socket.write(Buffer.from([5, proxy.username === null ? 1 : 2, 0, ...(proxy.username === null ? [] : [2])]));
-      const hello = await reader.read(2, timeout);
-      if (hello[0] !== 5 || hello[1] === 255) throw new Error("SOCKS5 authentication failed");
-      if (hello[1] === 2) {
-        if (proxy.username === null) throw new Error("SOCKS5 authentication required");
-        const user = Buffer.from(proxy.username);
-        const pass = Buffer.from(proxy.password ?? "");
-        socket.write(Buffer.concat([Buffer.from([1, user.length]), user, Buffer.from([pass.length]), pass]));
-        const auth = await reader.read(2, timeout);
-        if (auth[1] !== 0) throw new Error("SOCKS5 credentials rejected");
-      }
-      const domain = Buffer.from(host);
-      socket.write(Buffer.concat([Buffer.from([5, 1, 0, 3, domain.length]), domain, Buffer.from([1, 187])]));
-      const reply = await reader.read(4, timeout);
-      if (reply[0] !== 5 || reply[1] !== 0) throw new Error(`SOCKS5 connect reply ${reply[1]}`);
-      const length = reply[3] === 1 ? 6 : reply[3] === 4 ? 18 : (await reader.read(1, timeout))[0] + 2;
-      await reader.read(length, timeout);
-    }
-    const ip = await exitIp(socket, reader, host, timeout);
-    return {
-      endpoint: proxy.endpoint,
-      protocol: proxy.protocol,
-      status: "usable",
-      exit_ip: ip,
-      latency_ms: Date.now() - started,
-      checked_at: Date.now(),
-      successes: 1,
-      failures: 0,
-      last_error: "",
-    };
-  } catch (error) {
-    return {
-      endpoint: proxy.endpoint,
-      protocol: proxy.protocol,
-      status: "dead",
-      exit_ip: null,
-      latency_ms: Date.now() - started,
-      checked_at: Date.now(),
-      successes: 0,
-      failures: 1,
-      last_error: (error as Error).message,
-    };
-  } finally {
-    socket?.destroy();
-  }
+  const result = await testProxyDetailed(proxy, timeout);
+  return {
+    endpoint: result.endpoint,
+    protocol: result.protocol,
+    status: result.status === "SUCCESS" ? "usable" : "dead",
+    exit_ip: result.exitIp,
+    latency_ms: result.latencyMs,
+    checked_at: result.checkedAt,
+    successes: result.status === "SUCCESS" ? 1 : 0,
+    failures: result.status === "FAILED" ? 1 : 0,
+    last_error: result.error ?? "",
+  };
 }
 
 export async function checkMany(
