@@ -52,10 +52,42 @@ export function startMockTargetEcho(): Promise<MockTargetEcho> {
   return promise;
 }
 
+export function startScriptedRawHttpServer(
+  handler: (socket: net.Socket) => void
+): Promise<MockServerHandle> {
+  const { promise, resolve, reject } = Promise.withResolvers<MockServerHandle>();
+  const activeSockets = new Set<net.Socket>();
+
+  const server = net.createServer((socket) => {
+    activeSockets.add(socket);
+    socket.once("close", () => activeSockets.delete(socket));
+    handler(socket);
+  });
+
+  server.once("error", reject);
+  server.listen(0, "127.0.0.1", () => {
+    const address = server.address() as net.AddressInfo;
+    resolve({
+      port: address.port,
+      close: () => {
+        const { promise: pClose, resolve: resClose } = Promise.withResolvers<void>();
+        for (const socket of activeSockets) {
+          socket.destroy();
+        }
+        server.close(() => resClose());
+        return pClose;
+      },
+    });
+  });
+
+  return promise;
+}
+
 export function startMockHttpProxy(options?: {
   username?: string;
   password?: string;
   delayConnectMs?: number;
+  rejectedStatusLine?: string;
 }): Promise<MockServerHandle> {
   const { promise, resolve, reject } = Promise.withResolvers<MockServerHandle>();
   const activeSockets = new Set<net.Socket>();
@@ -101,6 +133,11 @@ export function startMockHttpProxy(options?: {
   server.on("connect", (req, clientSocket, head) => {
     activeSockets.add(clientSocket);
     clientSocket.once("close", () => activeSockets.delete(clientSocket));
+
+    if (options?.rejectedStatusLine) {
+      clientSocket.end(`${options.rejectedStatusLine}\r\n\r\n`);
+      return;
+    }
 
     if (options?.username || options?.password) {
       const auth = req.headers["proxy-authorization"];
@@ -233,6 +270,8 @@ export function startMockSocks5Proxy(options?: {
   username?: string;
   password?: string;
   delayHandshakeMs?: number;
+  delayMethodMs?: number;
+  delayAuthMs?: number;
 }): Promise<MockServerHandle & { lastTarget?: { type: "ipv4" | "domain"; host: string; port: number } }> {
   const { promise, resolve, reject } = Promise.withResolvers<
     MockServerHandle & { lastTarget?: { type: "ipv4" | "domain"; host: string; port: number } }
@@ -268,7 +307,12 @@ export function startMockSocks5Proxy(options?: {
           return;
         }
 
-        socket.write(Buffer.from([0x05, expectedMethod]));
+        const sendMethod = () => socket.write(Buffer.from([0x05, expectedMethod]));
+        if (options?.delayMethodMs) {
+          setTimeout(sendMethod, options.delayMethodMs);
+        } else {
+          sendMethod();
+        }
         stage = requiresAuth ? "auth" : "request";
       }
 
@@ -291,7 +335,12 @@ export function startMockSocks5Proxy(options?: {
           return;
         }
 
-        socket.write(Buffer.from([0x01, 0x00]));
+        const sendAuth = () => socket.write(Buffer.from([0x01, 0x00]));
+        if (options?.delayAuthMs) {
+          setTimeout(sendAuth, options.delayAuthMs);
+        } else {
+          sendAuth();
+        }
         stage = "request";
       }
 

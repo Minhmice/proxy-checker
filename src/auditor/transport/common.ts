@@ -1,6 +1,8 @@
 import dns from "node:dns/promises";
 import net from "node:net";
 import tls from "node:tls";
+import { isPrivateIp } from "../security/ip-policy.js";
+import { validateTargetHost } from "../security/ssrf.js";
 import type { ParsedProxyInput } from "../types.js";
 
 export interface TimingBreakdown {
@@ -14,6 +16,8 @@ export interface TransportOptions {
   timeoutMs?: number;
   resolveDnsLocally?: boolean;
   targetDomain?: string;
+  allowPrivateTargets?: boolean;
+  resolvedIp?: string;
 }
 
 export interface HttpRequestOptions {
@@ -38,28 +42,38 @@ export class BufferedSocketReader {
   private closed = false;
   private error: Error | null = null;
   private waitingResolvers: Array<() => void> = [];
+  private onData: (chunk: Buffer) => void;
+  private onEnd: () => void;
+  private onClose: () => void;
+  private onError: (err: Error) => void;
+  private isReleased = false;
 
   constructor(private socket: net.Socket) {
-    this.socket.on("data", (chunk: Buffer) => {
+    this.onData = (chunk: Buffer) => {
       this.buffer = Buffer.concat([this.buffer, chunk]);
       this.flushWaiters();
-    });
+    };
 
-    this.socket.once("end", () => {
+    this.onEnd = () => {
       this.closed = true;
       this.flushWaiters();
-    });
+    };
 
-    this.socket.once("close", () => {
+    this.onClose = () => {
       this.closed = true;
       this.flushWaiters();
-    });
+    };
 
-    this.socket.once("error", (err: Error) => {
+    this.onError = (err: Error) => {
       this.error = err;
       this.closed = true;
       this.flushWaiters();
-    });
+    };
+
+    this.socket.on("data", this.onData);
+    this.socket.once("end", this.onEnd);
+    this.socket.once("close", this.onClose);
+    this.socket.once("error", this.onError);
   }
 
   private flushWaiters(): void {
@@ -172,10 +186,43 @@ export class BufferedSocketReader {
   }
 
   release(): Buffer {
+    if (!this.isReleased) {
+      this.isReleased = true;
+      this.socket.removeListener("data", this.onData);
+      this.socket.removeListener("end", this.onEnd);
+      this.socket.removeListener("close", this.onClose);
+      this.socket.removeListener("error", this.onError);
+      this.flushWaiters();
+    }
     const leftover = this.buffer;
     this.buffer = Buffer.alloc(0);
     return leftover;
   }
+}
+
+export async function resolveAndPinTargetAddress(
+  target: { host: string; port: number },
+  options: TransportOptions = {}
+): Promise<string> {
+  if (options.resolvedIp) {
+    if (!net.isIP(options.resolvedIp)) {
+      throw new Error(`Invalid resolvedIp provided: ${options.resolvedIp}`);
+    }
+    if (!options.allowPrivateTargets && isPrivateIp(options.resolvedIp)) {
+      throw new Error(`Target IP ${options.resolvedIp} is restricted by SSRF policy`);
+    }
+    return options.resolvedIp;
+  }
+
+  const validation = await validateTargetHost(target.host, {
+    allowPrivateTargets: options.allowPrivateTargets,
+  });
+
+  if (!validation.valid || validation.resolvedIps.length === 0) {
+    throw new Error(`SSRF validation rejected target ${target.host}: ${validation.reason || "restricted"}`);
+  }
+
+  return validation.resolvedIps[0];
 }
 
 export async function connectSocketToProxy(
@@ -198,7 +245,10 @@ export async function connectSocketToProxy(
   }
 
   const startTcp = Date.now();
-  const remainingTimeout = Math.max(100, timeoutMs - dnsMs);
+  const remainingTimeout = timeoutMs - dnsMs;
+  if (remainingTimeout <= 0) {
+    throw new Error(`Timeout after ${timeoutMs}ms before TCP connect to proxy ${proxy.host}`);
+  }
 
   const { promise, resolve, reject } = Promise.withResolvers<net.Socket>();
   let timer: NodeJS.Timeout | null = null;
@@ -213,7 +263,7 @@ export async function connectSocketToProxy(
   const socket: net.Socket =
     proxy.protocol === "https"
       ? tls.connect({
-          host: proxy.host,
+          host: targetIp,
           port: proxy.port,
           servername: proxy.host,
           // Security policy: Never disable TLS verification on HTTPS proxies

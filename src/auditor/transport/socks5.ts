@@ -5,6 +5,7 @@ import {
   type TimingBreakdown,
   type TransportOptions,
   connectSocketToProxy,
+  resolveAndPinTargetAddress,
 } from "./common.js";
 
 export async function openSocks5ProxyTunnel(
@@ -13,7 +14,17 @@ export async function openSocks5ProxyTunnel(
   options: TransportOptions = {}
 ): Promise<{ socket: net.Socket; timings: TimingBreakdown }> {
   const timeoutMs = options.timeoutMs ?? 10000;
+  const deadline = Date.now() + timeoutMs;
   const startTime = Date.now();
+
+  const useRemoteDnsDomain =
+    !options.resolveDnsLocally && Boolean(options.targetDomain);
+  const targetDomainName = options.targetDomain || "";
+
+  let pinnedTargetIp = "";
+  if (!useRemoteDnsDomain) {
+    pinnedTargetIp = await resolveAndPinTargetAddress(target, options);
+  }
 
   const { socket, dnsMs, tcpConnectMs } = await connectSocketToProxy(proxy, timeoutMs);
 
@@ -27,7 +38,8 @@ export async function openSocks5ProxyTunnel(
     const greeting = Buffer.from([0x05, methods.length, ...methods]);
     socket.write(greeting);
 
-    let remainingTimeout = Math.max(100, timeoutMs - (Date.now() - startTime));
+    let remainingTimeout = deadline - Date.now();
+    if (remainingTimeout <= 0) throw new Error(`Timeout after ${timeoutMs}ms before SOCKS5 method negotiation`);
     const methodResp = await reader.readBytes(2, remainingTimeout);
 
     if (methodResp[0] !== 0x05) {
@@ -56,7 +68,8 @@ export async function openSocks5ProxyTunnel(
 
       socket.write(authReq);
 
-      remainingTimeout = Math.max(100, timeoutMs - (Date.now() - startTime));
+      remainingTimeout = deadline - Date.now();
+      if (remainingTimeout <= 0) throw new Error(`Timeout after ${timeoutMs}ms before SOCKS5 auth response`);
       const authResp = await reader.readBytes(2, remainingTimeout);
 
       if (authResp[0] !== 0x01 || authResp[1] !== 0x00) {
@@ -65,10 +78,6 @@ export async function openSocks5ProxyTunnel(
     } else if (selectedMethod !== 0x00) {
       throw new Error(`Unsupported SOCKS5 auth method returned by proxy: ${selectedMethod}`);
     }
-
-    const useRemoteDnsDomain =
-      !options.resolveDnsLocally && Boolean(options.targetDomain);
-    const targetDomainName = options.targetDomain || "";
 
     let connectReq: Buffer;
 
@@ -86,12 +95,12 @@ export async function openSocks5ProxyTunnel(
       dBytes.copy(connectReq, 5);
       connectReq.writeUInt16BE(target.port, 5 + dBytes.length);
     } else {
-      if (!net.isIPv4(target.host)) {
+      if (!net.isIPv4(pinnedTargetIp)) {
         throw new Error(
-          `SOCKS5 IPv4 target expected a valid IPv4 address, got: ${target.host}. Provide targetDomain and resolveDnsLocally=false for remote DNS.`
+          `SOCKS5 IPv4 target expected a valid IPv4 address, got: ${pinnedTargetIp}. Provide targetDomain and resolveDnsLocally=false for remote DNS.`
         );
       }
-      const octets = target.host.split(".").map(Number);
+      const octets = pinnedTargetIp.split(".").map(Number);
       connectReq = Buffer.alloc(10);
       connectReq[0] = 0x05; // VER
       connectReq[1] = 0x01; // CMD: CONNECT
@@ -106,7 +115,8 @@ export async function openSocks5ProxyTunnel(
 
     socket.write(connectReq);
 
-    remainingTimeout = Math.max(100, timeoutMs - (Date.now() - startTime));
+    remainingTimeout = deadline - Date.now();
+    if (remainingTimeout <= 0) throw new Error(`Timeout after ${timeoutMs}ms waiting for SOCKS5 CONNECT response`);
     const head = await reader.readBytes(4, remainingTimeout);
 
     const ver = head[0];
@@ -138,12 +148,16 @@ export async function openSocks5ProxyTunnel(
     } else if (atyp === 0x04) {
       bndAddrLen = 16;
     } else if (atyp === 0x03) {
+      remainingTimeout = deadline - Date.now();
+      if (remainingTimeout <= 0) throw new Error(`Timeout after ${timeoutMs}ms reading SOCKS5 domain length`);
       const dlenBuf = await reader.readBytes(1, remainingTimeout);
       bndAddrLen = dlenBuf[0];
     } else {
       throw new Error(`Unknown ATYP in SOCKS5 reply: ${atyp}`);
     }
 
+    remainingTimeout = deadline - Date.now();
+    if (remainingTimeout <= 0) throw new Error(`Timeout after ${timeoutMs}ms reading SOCKS5 bound address and port`);
     await reader.readBytes(bndAddrLen + 2, remainingTimeout);
 
     const leftover = reader.release();
@@ -164,6 +178,7 @@ export async function openSocks5ProxyTunnel(
       },
     };
   } catch (err) {
+    reader.release();
     socket.destroy();
     throw err;
   }

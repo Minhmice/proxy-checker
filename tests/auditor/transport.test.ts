@@ -12,6 +12,7 @@ import {
   startMockSocks4Proxy,
   startMockSocks5Proxy,
   startMockTargetEcho,
+  startScriptedRawHttpServer,
 } from "./fixtures/mock-proxies.js";
 
 function assertTimings(timings: TimingBreakdown): void {
@@ -34,7 +35,7 @@ test("HTTP proxy tunnel establishes connection without auth and forwards request
     const tunnel = await openProxyTunnel(
       parsed,
       { host: "127.0.0.1", port: target.port },
-      { timeoutMs: 3000 }
+      { timeoutMs: 3000, allowPrivateTargets: true }
     );
 
     assertTimings(tunnel.timings);
@@ -69,7 +70,7 @@ test("HTTP proxy tunnel supports Basic auth credentials and rejects invalid cred
     const tunnel = await openProxyTunnel(
       validParsed,
       { host: "127.0.0.1", port: target.port },
-      { timeoutMs: 3000 }
+      { timeoutMs: 3000, allowPrivateTargets: true }
     );
 
     assertTimings(tunnel.timings);
@@ -90,7 +91,7 @@ test("HTTP proxy tunnel supports Basic auth credentials and rejects invalid cred
       openProxyTunnel(
         invalidParsed,
         { host: "127.0.0.1", port: target.port },
-        { timeoutMs: 3000 }
+        { timeoutMs: 3000, allowPrivateTargets: true }
       ),
       /proxy.*auth|407/i
     );
@@ -109,7 +110,7 @@ test("SOCKS4 proxy establishes tunnel to IPv4 target and rejects domain target w
     const tunnel = await openProxyTunnel(
       parsed,
       { host: "127.0.0.1", port: target.port },
-      { timeoutMs: 3000 }
+      { timeoutMs: 3000, allowPrivateTargets: true }
     );
 
     assertTimings(tunnel.timings);
@@ -128,7 +129,7 @@ test("SOCKS4 proxy establishes tunnel to IPv4 target and rejects domain target w
         { host: "example.invalid", port: 80 },
         { timeoutMs: 3000 }
       ),
-      /socks4.*ipv4|domain/i
+      /socks4.*ipv4|domain|ssrf/i
     );
   } finally {
     await proxy.close();
@@ -146,7 +147,7 @@ test("SOCKS5 proxy handles no-auth and username/password authentication", async 
     const noAuthTunnel = await openProxyTunnel(
       noAuthParsed,
       { host: "127.0.0.1", port: target.port },
-      { timeoutMs: 3000 }
+      { timeoutMs: 3000, allowPrivateTargets: true }
     );
     assertTimings(noAuthTunnel.timings);
     const noAuthRes = await requestThroughProxy(noAuthTunnel.socket, {
@@ -163,7 +164,7 @@ test("SOCKS5 proxy handles no-auth and username/password authentication", async 
     const authTunnel = await openProxyTunnel(
       authParsed,
       { host: "127.0.0.1", port: target.port },
-      { timeoutMs: 3000 }
+      { timeoutMs: 3000, allowPrivateTargets: true }
     );
     assertTimings(authTunnel.timings);
     const authRes = await requestThroughProxy(authTunnel.socket, {
@@ -181,7 +182,7 @@ test("SOCKS5 proxy handles no-auth and username/password authentication", async 
       openProxyTunnel(
         badAuthParsed,
         { host: "127.0.0.1", port: target.port },
-        { timeoutMs: 3000 }
+        { timeoutMs: 3000, allowPrivateTargets: true }
       ),
       /auth|denied|failed/i
     );
@@ -202,7 +203,7 @@ test("SOCKS5 respects remote DNS domain packing versus local IPv4 target", async
     const ipv4Tunnel = await openProxyTunnel(
       parsed,
       { host: "127.0.0.1", port: target.port },
-      { timeoutMs: 3000, resolveDnsLocally: true }
+      { timeoutMs: 3000, resolveDnsLocally: true, allowPrivateTargets: true }
     );
     assert.equal(proxy.lastTarget?.type, "ipv4");
     assert.equal(proxy.lastTarget?.host, "127.0.0.1");
@@ -211,7 +212,7 @@ test("SOCKS5 respects remote DNS domain packing versus local IPv4 target", async
     const domainTunnel = await openProxyTunnel(
       parsed,
       { host: "127.0.0.1", port: target.port },
-      { timeoutMs: 3000, resolveDnsLocally: false, targetDomain: "localhost" }
+      { timeoutMs: 3000, resolveDnsLocally: false, targetDomain: "localhost", allowPrivateTargets: true }
     );
     assert.equal(proxy.lastTarget?.type, "domain");
     assert.equal(proxy.lastTarget?.host, "localhost");
@@ -231,7 +232,7 @@ test("transport enforces timeout on delayed proxy handshake and handles connecti
       openProxyTunnel(
         slowParsed,
         { host: "127.0.0.1", port: 80 },
-        { timeoutMs: 80 }
+        { timeoutMs: 80, allowPrivateTargets: true }
       ),
       /timeout|timed out/i
     );
@@ -241,11 +242,239 @@ test("transport enforces timeout on delayed proxy handshake and handles connecti
       openProxyTunnel(
         deadProxy,
         { host: "127.0.0.1", port: 80 },
-        { timeoutMs: 500 }
+        { timeoutMs: 500, allowPrivateTargets: true }
       ),
       /ECONNREFUSED|connection refused/i
     );
   } finally {
     await slowProxy.close();
+  }
+});
+
+test("regression 1: BufferedSocketReader releases listeners cleanly without trapping tunnel data", async () => {
+  const target = await startMockTargetEcho();
+  const proxy = await startMockHttpProxy();
+
+  try {
+    const { parsed } = parseProxyInput(`http://127.0.0.1:${proxy.port}`);
+    const tunnel = await openProxyTunnel(
+      parsed,
+      { host: "127.0.0.1", port: target.port },
+      { timeoutMs: 3000, allowPrivateTargets: true }
+    );
+
+    assert.equal(tunnel.socket.listenerCount("data"), 0, "socket data listeners should be released after handshake");
+
+    const receivedChunks: Buffer[] = [];
+    tunnel.socket.on("data", (chunk: Buffer) => receivedChunks.push(chunk));
+
+    const wireReq = `GET /fast-pipe HTTP/1.1\r\nHost: 127.0.0.1:${target.port}\r\nConnection: close\r\n\r\n`;
+    tunnel.socket.write(wireReq);
+
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const timer = setTimeout(() => reject(new Error("Timeout waiting for fast-pipe response on released socket")), 2000);
+    tunnel.socket.once("end", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+
+    await promise;
+    const body = Buffer.concat(receivedChunks).toString("utf8");
+    assert.ok(body.includes("200 OK"));
+    assert.ok(body.includes("/fast-pipe"));
+  } finally {
+    await proxy.close();
+    await target.close();
+  }
+});
+
+test("regression 2: requestThroughProxy handles chunked transfer-encoding and content-length strictly", async () => {
+  const server = await startScriptedRawHttpServer((socket) => {
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      const headerEnd = buffer.indexOf("\r\n\r\n");
+      if (headerEnd === -1) return;
+      const head = buffer.subarray(0, headerEnd).toString("utf8");
+
+      if (head.includes("/chunked-premature-eof")) {
+        socket.write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nwi");
+        socket.destroy();
+        return;
+      }
+
+      if (head.includes("/chunked")) {
+        socket.write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: text/plain\r\n\r\n");
+        socket.write("4\r\nwiki\r\n");
+        socket.write("5\r\npedia\r\n");
+        socket.write("f\r\n in \r\n\r\nchunks.\r\n");
+        socket.write("0\r\n\r\n");
+        return;
+      }
+
+      if (head.includes("/content-length")) {
+        socket.write("HTTP/1.1 200 OK\r\nContent-Length: 11\r\nContent-Type: text/plain\r\n\r\nhello ");
+        setTimeout(() => {
+          socket.write("world");
+        }, 30);
+        return;
+      }
+
+      if (head.includes("/premature-eof")) {
+        socket.write("HTTP/1.1 200 OK\r\nContent-Length: 20\r\n\r\npartial");
+        setTimeout(() => socket.destroy(), 30);
+        return;
+      }
+
+    });
+  });
+
+  const proxy = await startMockHttpProxy();
+
+  try {
+    const { parsed } = parseProxyInput(`http://127.0.0.1:${proxy.port}`);
+
+    const tunnel1 = await openProxyTunnel(
+      parsed,
+      { host: "127.0.0.1", port: server.port },
+      { timeoutMs: 3000, allowPrivateTargets: true }
+    );
+    const chunkedRes = await requestThroughProxy(tunnel1.socket, {
+      method: "GET",
+      path: "/chunked",
+      host: `127.0.0.1:${server.port}`,
+      timeoutMs: 3000,
+    });
+    assert.equal(chunkedRes.statusCode, 200);
+    assert.equal(chunkedRes.body, "wikipedia in \r\n\r\nchunks.");
+
+    const tunnel2 = await openProxyTunnel(
+      parsed,
+      { host: "127.0.0.1", port: server.port },
+      { timeoutMs: 3000, allowPrivateTargets: true }
+    );
+    const clRes = await requestThroughProxy(tunnel2.socket, {
+      method: "GET",
+      path: "/content-length",
+      host: `127.0.0.1:${server.port}`,
+      timeoutMs: 3000,
+    });
+    assert.equal(clRes.statusCode, 200);
+    assert.equal(clRes.body, "hello world");
+
+    const tunnel3 = await openProxyTunnel(
+      parsed,
+      { host: "127.0.0.1", port: server.port },
+      { timeoutMs: 3000, allowPrivateTargets: true }
+    );
+    await assert.rejects(
+      requestThroughProxy(tunnel3.socket, {
+        method: "GET",
+        path: "/premature-eof",
+        host: `127.0.0.1:${server.port}`,
+        timeoutMs: 1000,
+      }),
+      /socket closed|incomplete body|unexpected eof/i
+    );
+    assert.ok(tunnel3.socket.destroyed, "socket should be destroyed on premature EOF");
+
+    const tunnel4 = await openProxyTunnel(
+      parsed,
+      { host: "127.0.0.1", port: server.port },
+      { timeoutMs: 3000, allowPrivateTargets: true }
+    );
+    await assert.rejects(
+      requestThroughProxy(tunnel4.socket, {
+        method: "GET",
+        path: "/chunked-premature-eof",
+        host: `127.0.0.1:${server.port}`,
+        timeoutMs: 1000,
+      }),
+      /socket closed|incomplete chunk|chunk/i
+    );
+    assert.ok(tunnel4.socket.destroyed, "socket should be destroyed on chunked premature EOF");
+  } finally {
+    await proxy.close();
+    await server.close();
+  }
+});
+
+test("regression 3: SOCKS5 handshake enforces global deadline across multi-step negotiation", async () => {
+  const proxy = await startMockSocks5Proxy({
+    username: "u",
+    password: "p",
+    delayMethodMs: 70,
+    delayAuthMs: 70,
+  });
+
+  try {
+    const { parsed } = parseProxyInput(`socks5://u:p@127.0.0.1:${proxy.port}`);
+    const start = Date.now();
+    await assert.rejects(
+      openProxyTunnel(
+        parsed,
+        { host: "127.0.0.1", port: 80 },
+        { timeoutMs: 100, allowPrivateTargets: true }
+      ),
+      /timeout|timed out/i
+    );
+    const duration = Date.now() - start;
+    assert.ok(duration < 220, `Handshake timeout should enforce global deadline (~100ms), took ${duration}ms`);
+  } finally {
+    await proxy.close();
+  }
+});
+
+test("regression 4: SSRF address pinning connects directly to pinned IP and blocks private targets by default", async () => {
+  const target = await startMockTargetEcho();
+  const proxy = await startMockHttpProxy();
+
+  try {
+    const { parsed } = parseProxyInput(`http://127.0.0.1:${proxy.port}`);
+
+    await assert.rejects(
+      openProxyTunnel(
+        parsed,
+        { host: "127.0.0.1", port: target.port },
+        { timeoutMs: 2000 }
+      ),
+      /restricted|ssrf|private/i
+    );
+
+    const tunnel = await openProxyTunnel(
+      parsed,
+      { host: "localhost", port: target.port },
+      { timeoutMs: 3000, allowPrivateTargets: true, resolvedIp: "127.0.0.1" }
+    );
+    assert.ok(tunnel.socket);
+    tunnel.socket.destroy();
+  } finally {
+    await proxy.close();
+    await target.close();
+  }
+});
+
+test("regression 5: HTTP CONNECT errors sanitize raw proxy error text and credentials", async () => {
+  const proxy = await startMockHttpProxy({
+    rejectedStatusLine: "HTTP/1.1 502 Bad Gateway with secret-token-12345",
+  });
+
+  try {
+    const { parsed } = parseProxyInput(`http://127.0.0.1:${proxy.port}`);
+    let capturedMessage = "";
+    try {
+      await openProxyTunnel(
+        parsed,
+        { host: "127.0.0.1", port: 80 },
+        { timeoutMs: 2000, allowPrivateTargets: true }
+      );
+    } catch (err: unknown) {
+      capturedMessage = err instanceof Error ? err.message : String(err);
+    }
+
+    assert.match(capturedMessage, /502/);
+    assert.ok(!capturedMessage.includes("secret-token-12345"), `Error should not contain raw server text: ${capturedMessage}`);
+  } finally {
+    await proxy.close();
   }
 });

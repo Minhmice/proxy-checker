@@ -5,6 +5,7 @@ import {
   type TimingBreakdown,
   type TransportOptions,
   connectSocketToProxy,
+  resolveAndPinTargetAddress,
 } from "./common.js";
 
 export async function openSocks4ProxyTunnel(
@@ -13,10 +14,12 @@ export async function openSocks4ProxyTunnel(
   options: TransportOptions = {}
 ): Promise<{ socket: net.Socket; timings: TimingBreakdown }> {
   const timeoutMs = options.timeoutMs ?? 10000;
+  const deadline = Date.now() + timeoutMs;
   const startTime = Date.now();
 
-  if (!net.isIPv4(target.host)) {
-    throw new Error(`SOCKS4 protocol requires an IPv4 destination host, got: ${target.host}`);
+  const pinnedTargetIp = await resolveAndPinTargetAddress(target, options);
+  if (!net.isIPv4(pinnedTargetIp)) {
+    throw new Error(`SOCKS4 protocol requires an IPv4 destination host, got: ${pinnedTargetIp}`);
   }
 
   const { socket, dnsMs, tcpConnectMs } = await connectSocketToProxy(proxy, timeoutMs);
@@ -25,7 +28,7 @@ export async function openSocks4ProxyTunnel(
   const reader = new BufferedSocketReader(socket);
 
   try {
-    const ipOctets = target.host.split(".").map(Number);
+    const ipOctets = pinnedTargetIp.split(".").map(Number);
     const userId = proxy.username ? Buffer.from(proxy.username, "utf8") : Buffer.alloc(0);
 
     const reqBuf = Buffer.alloc(8 + userId.length + 1);
@@ -43,7 +46,11 @@ export async function openSocks4ProxyTunnel(
 
     socket.write(reqBuf);
 
-    const remainingTimeout = Math.max(100, timeoutMs - (Date.now() - startTime));
+    const remainingTimeout = deadline - Date.now();
+    if (remainingTimeout <= 0) {
+      throw new Error(`Timeout after ${timeoutMs}ms waiting for SOCKS4 reply`);
+    }
+
     const response = await reader.readBytes(8, remainingTimeout);
 
     const vn = response[0];
@@ -77,6 +84,7 @@ export async function openSocks4ProxyTunnel(
       },
     };
   } catch (err) {
+    reader.release();
     socket.destroy();
     throw err;
   }
