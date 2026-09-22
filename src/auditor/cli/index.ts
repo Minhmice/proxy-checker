@@ -1,35 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
+import { checkProxy, type ProxyAuditOptions } from "../index.js";
 import type { ProxyAuditResult } from "../types.js";
 import { formatCsvRecords, formatHumanResult, sanitizeCredentials, sanitizeResult } from "./formatters.js";
 import { normalizeConcurrency, processProxyLines, writeFileAtomic } from "./bulk.js";
 
-export interface ProxyAuditCliOptions {
-  timeoutMs?: number;
-  attempts?: number;
-  baseline?: boolean;
-  reputation?: boolean;
-  browser?: boolean;
-  allowPrivateTargets?: boolean;
-  signal?: AbortSignal;
-  endpoints?: string[];
-  headerEndpoint?: string;
-  tlsEndpoint?: string;
-  controlEndpoint?: string;
-  controlSpkiSha256?: string;
-  controlExpectedBody?: string;
-  controlHmacKey?: string;
-  ca?: string | Buffer;
-  providerKeys?: {
-    ipinfo?: string;
-    ipqs?: string;
-    abuseipdb?: string;
-  };
-  cachePath?: string;
-  concurrency?: number;
-}
-
-export type AuditProxyRunner = (proxy: unknown, options?: ProxyAuditCliOptions) => Promise<ProxyAuditResult>;
+export type AuditProxyRunner = (proxy: unknown, options?: ProxyAuditOptions) => Promise<ProxyAuditResult>;
 
 const USAGE = `Usage:
   proxy-audit check <proxy> [--json] [--pretty] [--timeout <ms>] [--attempts <n>] [--no-reputation] [--browser]
@@ -49,28 +25,6 @@ Options:
   -h, --help         Show this help message
 `;
 
-async function loadCheckProxy(): Promise<AuditProxyRunner> {
-  try {
-    const mod = await import("../index.js");
-    if (typeof mod.checkProxy === "function") {
-      return mod.checkProxy;
-    }
-  } catch {
-    // Try direct API module
-  }
-
-  try {
-    const mod = await import("../api.js");
-    if (typeof mod.checkProxy === "function") {
-      return mod.checkProxy;
-    }
-  } catch {
-    // API not yet ready
-  }
-
-  throw new Error("Audit engine not available");
-}
-
 function parsePositiveInteger(value: string | undefined, flagName: string): number | undefined {
   if (value === undefined) {
     return undefined;
@@ -80,6 +34,16 @@ function parsePositiveInteger(value: string | undefined, flagName: string): numb
     throw new Error(`Option --${flagName} must be a positive integer`);
   }
   return parsed;
+}
+
+function resolveExitCode(verdict?: ProxyAuditResult["verdict"]): number {
+  if (verdict === "PASS" || verdict === "WARN") {
+    return 0;
+  }
+  if (verdict === "UNKNOWN") {
+    return 3;
+  }
+  return 1;
 }
 
 export interface CliExecutionResult {
@@ -148,28 +112,17 @@ export async function runCli(argv: string[], engineRunner?: AuditProxyRunner): P
     };
   }
 
-  const baseOptions: ProxyAuditCliOptions = {
+  const baseOptions: ProxyAuditOptions = {
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     ...(attempts !== undefined ? { attempts } : {}),
     ...(parsed.values["no-reputation"] ? { reputation: false } : {}),
     ...(parsed.values.browser ? { browser: true } : {}),
   };
 
-  if (command === "check" || command === "browser-check") {
-    let checkFn = engineRunner;
-    if (!checkFn) {
-      try {
-        checkFn = await loadCheckProxy();
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : "Engine failed";
-        return {
-          exitCode: 1,
-          stderr: sanitizeCredentials(message),
-        };
-      }
-    }
+  const checkFn: AuditProxyRunner = engineRunner ?? checkProxy;
 
-    const singleOptions: ProxyAuditCliOptions = {
+  if (command === "check" || command === "browser-check") {
+    const singleOptions: ProxyAuditOptions = {
       ...baseOptions,
       ...(command === "browser-check" ? { browser: true } : {}),
     };
@@ -185,19 +138,21 @@ export async function runCli(argv: string[], engineRunner?: AuditProxyRunner): P
       };
     }
 
+    const exitCode = resolveExitCode(result.verdict);
+
     if (parsed.values.json) {
       const sanitized = sanitizeResult(result);
       const output = parsed.values.pretty
         ? JSON.stringify(sanitized, null, 2)
         : JSON.stringify(sanitized);
       return {
-        exitCode: result.verdict === "FAIL" ? 1 : 0,
+        exitCode,
         stdout: output,
       };
     }
 
     return {
-      exitCode: result.verdict === "FAIL" ? 1 : 0,
+      exitCode,
       stdout: formatHumanResult(result),
     };
   }
@@ -220,11 +175,7 @@ export async function runCli(argv: string[], engineRunner?: AuditProxyRunner): P
       return true;
     });
 
-    let checkFn = engineRunner;
     const records = await processProxyLines(lines, { concurrency }, async (proxyLine) => {
-      if (!checkFn) {
-        checkFn = await loadCheckProxy();
-      }
       return await checkFn(proxyLine, baseOptions);
     });
 
@@ -250,8 +201,11 @@ export async function runCli(argv: string[], engineRunner?: AuditProxyRunner): P
     }
 
     const hasErrors = records.some((record) => record.status === "error" || record.result?.verdict === "FAIL");
+    const hasUnknowns = records.some((record) => record.status === "ok" && record.result.verdict === "UNKNOWN");
+    const exitCode = hasErrors ? 1 : hasUnknowns ? 3 : 0;
+
     return {
-      exitCode: hasErrors ? 1 : 0,
+      exitCode,
       stdout: `Audited ${records.length} proxies. Results saved to ${jsonDestination}${parsed.values.csv ? ` and ${parsed.values.csv}` : ""}.`,
     };
   }

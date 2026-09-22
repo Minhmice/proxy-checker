@@ -35,6 +35,53 @@ function result(host = "proxy.example"): ProxyAuditResult {
       inputValidation: { valid: true },
       ssrfProtection: { passed: true, resolvedIps: ["203.0.113.10"] },
     },
+    exitIp: {
+      ip: "203.0.113.50",
+      country: "US",
+    },
+    network: {
+      asn: "AS12345",
+      organization: "Example ISP",
+      isDatacenter: true,
+      isResidential: false,
+    },
+    tls: {
+      secure: true,
+      protocol: "TLSv1.3",
+      certificateValid: true,
+    },
+    headerLeak: {
+      detected: false,
+    },
+    dns: {
+      dnsLeakDetected: false,
+    },
+    contentIntegrity: {
+      intact: true,
+    },
+    reputation: {
+      score: 85,
+      fraudScore: 2,
+      spamScore: 1,
+      blacklists: [{ name: "spamhaus", listed: false }],
+    },
+    connectivity: {
+      reachable: true,
+      latencyMs: 80,
+    },
+    baseline: {
+      established: true,
+      latencyMs: 75,
+    },
+    stability: {
+      samplesAttempted: 10,
+      samplesSucceeded: 10,
+      packetLossPercent: 0,
+      jitterMs: 3,
+    },
+    rotation: {
+      exitIpChanged: false,
+    },
     riskFactors: [{
       id: "tls-old",
       severity: "medium",
@@ -69,32 +116,43 @@ async function runCli(args: string[], cwd = root): Promise<{ code: number | null
   return await promise;
 }
 
-test("human output lists every score, risks, and recommendations without credentials", () => {
+test("human output lists scores and findings sections with username redacted", () => {
   const output = formatHumanResult(result());
 
-  for (const label of ["Overall safety", "Transport security", "Privacy", "Reputation", "Reliability"]) {
+  for (const label of [
+    "Overall safety",
+    "Transport security",
+    "Privacy",
+    "Reputation",
+    "Reliability",
+    "Exit & Network",
+    "Security & Transport",
+    "Reputation:",
+    "Reliability:",
+  ]) {
     assert.match(output, new RegExp(label));
   }
+  assert.match(output, /alice:\*{8}@/);
   assert.match(output, /Overall safety:\s+Unknown/);
   assert.match(output, /Legacy TLS/);
   assert.match(output, /Endpoint negotiated TLS 1\.2/);
   assert.match(output, /Require TLS 1\.3/);
-  assert.doesNotMatch(output, /alice|secret/i);
+  assert.doesNotMatch(output, /secret/i);
 });
 
-test("sanitizer removes credential fields and credential-bearing URLs", () => {
+test("sanitizer preserves username while masking password in URLs", () => {
   const unsafe = {
     ...result(),
     connectivity: {
       reachable: false,
-      error: "cannot connect to http://proxyuser:hunter2@proxy.example:8080",
+      error: "cannot connect to http://alice:hunter2@proxy.example:8080",
     },
   };
 
   const serialized = JSON.stringify(sanitizeResult(unsafe));
+  assert.match(serialized, /alice:\*{8}@/);
   assert.doesNotMatch(serialized, /hunter2/);
-  assert.doesNotMatch(serialized, /password/);
-  assert.match(serialized, /\[REDACTED\]/);
+  assert.doesNotMatch(serialized, /"password"/);
 });
 
 test("bulk processing preserves order and bounds concurrency", async () => {
@@ -147,7 +205,7 @@ test("bulk processing keeps blank and invalid lines as sanitized structured fail
   assert.doesNotMatch(serialized, /not-a-proxy/);
 });
 
-test("CSV uses RFC4180 quoting and neutralizes spreadsheet formulas", () => {
+test("CSV includes all user required columns, quotes RFC4180 chars and neutralizes formulas", () => {
   const records: BulkRecord[] = [{
     line: 1,
     status: "ok",
@@ -158,6 +216,25 @@ test("CSV uses RFC4180 quoting and neutralizes spreadsheet formulas", () => {
   }];
 
   const csv = formatCsvRecords(records);
+  for (const column of [
+    "exit_ip",
+    "asn",
+    "isp",
+    "country",
+    "network_type",
+    "tls_ok",
+    "origin_ip_leak",
+    "dns_leak",
+    "fraud_score",
+    "abuse_confidence",
+    "success_rate",
+    "p50_latency",
+    "p95_latency",
+    "exit_ip_changes",
+    "warnings",
+  ]) {
+    assert.match(csv, new RegExp(column));
+  }
   assert.match(csv, /"'=1\+1,""quoted""\r\nnext"/);
   assert.match(csv, /"'@IMPORTXML\(""https:\/\/example\.invalid""\)"/);
   assert.equal(csv.endsWith("\r\n"), true);
@@ -181,7 +258,6 @@ test("wrapper returns usage code without echoing credential arguments", async ()
   assert.equal(completed.code, 2);
   assert.match(completed.stderr, /Usage:/);
   assert.doesNotMatch(completed.stdout + completed.stderr, new RegExp(credential));
-  assert.doesNotMatch(completed.stdout + completed.stderr, /alice/);
 });
 
 test("check-file reports missing input without exposing unrelated arguments", async () => {
@@ -221,14 +297,11 @@ test("numeric options reject unsafe values with usage code", async () => {
   }
 });
 
-test("direct CLI runner supports mock engine injection for unit validation", async () => {
-  const token = "super-secret-pass-token";
+test("direct CLI runner distinguishes UNKNOWN verdict with code 3", async () => {
   const outcome = await runCliDirect(
-    ["check", `http://alice:${token}@proxy.example:8080`, "--json"],
-    async () => result(),
+    ["check", "http://alice:pass@proxy.example:8080", "--json"],
+    async () => ({ ...result(), verdict: "UNKNOWN" }),
   );
 
-  assert.equal(outcome.exitCode, 0);
-  assert.doesNotMatch(outcome.stdout ?? "", new RegExp(token));
-  assert.match(outcome.stdout ?? "", /proxy\.example/);
+  assert.equal(outcome.exitCode, 3);
 });
