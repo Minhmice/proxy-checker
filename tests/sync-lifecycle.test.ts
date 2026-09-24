@@ -4,9 +4,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import type { CheckResult, PoolRecord } from "../src/lib/types.js";
+import type { PoolRecord } from "../src/lib/types.js";
 import { initAppConfig } from "../src/server/app-config.js";
-import { createPoolRanker } from "../src/server/pool-ranker.js";
+import { createPoolRanker, type PoolRankerDeps } from "../src/server/pool-ranker.js";
 
 initAppConfig();
 
@@ -25,13 +25,13 @@ function record(localId: string, proxyPort: number): PoolRecord {
     latency_ms: 10,
     exit_ip: "203.0.113.1",
     checked_at: Date.now(),
-    isActiveOnRouter: false,
+    isActiveOnRouter: true,
     successes: 1,
     failures: 0,
   };
 }
 
-test("sync executes one-retry and remote delete on confirmed dead pool", async () => {
+test("sync uses 9Router testPool, deactivates then deletes on explicit failure, and ignores checkProxy", async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "sync-lifecycle-"));
   const poolA = record("local-a", 8001);
   fs.writeFileSync(
@@ -39,44 +39,87 @@ test("sync executes one-retry and remote delete on confirmed dead pool", async (
     JSON.stringify({
       pools: { [poolA.localId]: poolA },
       lastSyncAt: null,
-      stats: { total: 1, active: 0, reserve: 1, dead: 0 },
+      stats: { total: 1, active: 1, reserve: 0, dead: 0 },
       lastError: "",
     })
   );
 
-  let checkCalls = 0;
+  const testCalls: string[] = [];
+  const deactivated: string[] = [];
   const deletedRemotes: string[] = [];
+
   const ranker = createPoolRanker(
     { dataDir },
     {
-      listPools: async () => [{ id: "remote-local-a", name: poolA.name, proxyUrl: poolA.proxyUrl, type: "http" }],
-      deletePool: async (id) => {
+      listPools: async () => [
+        { id: "remote-local-a", name: poolA.name, proxyUrl: poolA.proxyUrl, type: "http", isActive: true },
+      ],
+      testPool: async (id: string) => {
+        testCalls.push(id);
+        return { ok: false, error: "Proxy test timed out", elapsedMs: 6000 };
+      },
+      setPoolActive: async (id: string, isActive: boolean) => {
+        if (!isActive) deactivated.push(id);
+        return {};
+      },
+      deletePool: async (id: string) => {
         deletedRemotes.push(id);
       },
       bulkSetActive: async () => [],
       checkProxy: async () => {
-        checkCalls++;
-        return {
-          endpoint: "127.0.0.1:8001",
-          protocol: "http",
-          status: "dead",
-          exit_ip: null,
-          latency_ms: 5,
-          checked_at: Date.now(),
-          successes: 0,
-          failures: 1,
-          last_error: `failure-${checkCalls}`,
-        };
+        throw new Error("local checker must not be called during sync");
       },
-    }
+    } as unknown as Partial<PoolRankerDeps>
   );
 
-  await ranker.syncPools();
+  await ranker.syncPools({ force: true });
   const state = ranker.readState();
-  assert.equal(checkCalls, 2);
+  assert.deepEqual(testCalls, ["remote-local-a"]);
+  assert.deepEqual(deactivated, ["remote-local-a"]);
   assert.deepEqual(deletedRemotes, ["remote-local-a"]);
   assert.equal(state.pools["local-a"].remoteState, "removed");
   assert.equal(state.pools["local-a"].remoteId, null);
-  assert.ok(state.pools["local-a"].checked_at > 0, "checked_at must be populated on failure");
-  assert.equal(state.pools["local-a"].latency_ms, 5);
+  assert.equal(state.pools["local-a"].tier, "removed");
+  assert.equal(state.pools["local-a"].isActiveOnRouter, false);
+});
+
+test("sync renames usable pools by ascending latency and keeps going after one rename fails", async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "sync-auto-rank-"));
+  const remotePools = [
+    { id: "remote-b", name: "Imported B", proxyUrl: "http://127.0.0.1:8002", type: "http", isActive: true },
+    { id: "remote-a", name: "Imported A", proxyUrl: "http://127.0.0.1:8001", type: "http", isActive: true },
+    { id: "remote-c", name: "Imported C", proxyUrl: "http://127.0.0.1:8003", type: "http", isActive: true },
+  ];
+  const updates: Array<{ id: string; name: string }> = [];
+  const ranker = createPoolRanker(
+    { dataDir },
+    {
+      listPools: async () => remotePools,
+      testPool: async (id: string) => {
+        const elapsedMs = id === "remote-c" ? 539 : id === "remote-b" ? 489 : 470;
+        return { ok: true, elapsedMs };
+      },
+      bulkSetActive: async (items: Array<{ id: string; isActive: boolean }>) => items.map((item) => ({ ...item, ok: true })),
+      updatePool: async (id: string, patch: { name?: string; isActive?: boolean }) => {
+        updates.push({ id, name: patch.name ?? "" });
+        if (id === "remote-b") throw new Error("rename unavailable");
+        return {};
+      },
+      checkProxy: async () => {
+        throw new Error("local checker must not be called");
+      },
+    } as unknown as Partial<PoolRankerDeps>
+  );
+
+  await ranker.syncPools({ force: true });
+
+  const state = ranker.readState();
+  assert.deepEqual(updates, [
+    { id: "remote-c", name: "3" },
+    { id: "remote-b", name: "2" },
+    { id: "remote-a", name: "1" },
+  ]);
+  assert.equal(state.pools["remote-a"].name, "1");
+  assert.equal(state.pools["remote-b"].name, "Imported B");
+  assert.equal(state.pools["remote-c"].name, "3");
 });
