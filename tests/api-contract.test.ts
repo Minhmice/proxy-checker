@@ -3,11 +3,10 @@ import assert from "node:assert/strict";
 import {
   removePool,
   renamePool,
-  restorePool,
   runDiagnostics,
-  testPools,
-} from "../src/lib/api";
-import type { PoolRecord } from "../src/lib/types";
+  syncPools,
+} from "../src/lib/api.js";
+import type { PoolRecord } from "../src/lib/types.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -48,26 +47,21 @@ const pool: PoolRecord = {
 
 const poolResponse = { pool };
 
-test("testPools sends local ids to the lifecycle endpoint", async () => {
-  const request = recordFetch({ accepted: ["local-1"], busy: [] }, 202);
-  const result = await testPools("secret", ["local-1"]);
-  assert.equal(request.url, "/api/ninerouter/test");
+test("syncPools sends POST with authentication headers and returns 202", async () => {
+  const request = recordFetch({ started: true }, 202);
+  const result = await syncPools("secret");
+  assert.equal(request.url, "/api/ninerouter/sync");
   assert.equal(request.init.method, "POST");
-  assert.deepEqual(JSON.parse(String(request.init.body)), { ids: ["local-1"] });
-  assert.deepEqual(result, { accepted: ["local-1"], busy: [] });
+  assert.equal((request.init.headers as Record<string, string>)["Authorization"], `Basic ${btoa("admin:secret")}`);
+  assert.deepEqual(result, { started: true });
 });
 
-test("rename and restore target the encoded local identity", async () => {
+test("rename targets the encoded local identity", async () => {
   const rename = recordFetch(poolResponse);
   await renamePool("secret", "local/a", "  Edge Paris  ");
   assert.equal(rename.url, "/api/ninerouter/pools/local%2Fa");
   assert.equal(rename.init.method, "PATCH");
   assert.deepEqual(JSON.parse(String(rename.init.body)), { name: "Edge Paris" });
-
-  const restore = recordFetch(poolResponse);
-  await restorePool("secret", "local/a");
-  assert.equal(restore.url, "/api/ninerouter/pools/local%2Fa/restore");
-  assert.equal(restore.init.method, "POST");
 });
 
 test("removePool uses DELETE with the encoded local identity", async () => {
@@ -81,9 +75,4 @@ test("diagnostics sends exactly the selected scope", async () => {
   const request = recordFetch({ started: true }, 202);
   await runDiagnostics("secret", { file: "sample.txt", sampleCount: 25 });
   assert.deepEqual(JSON.parse(String(request.init.body)), { file: "sample.txt", sampleCount: 25 });
-});
-
-test("lifecycle helpers propagate the server error text", async () => {
-  recordFetch({ error: "Remote pool is busy" }, 409);
-  await assert.rejects(testPools("secret", ["local-1"]), /Remote pool is busy/);
 });

@@ -16,6 +16,7 @@ import { createAuditorJobManager, AuditorJobError } from "./auditor-jobs.js";
 import type { AuditorJobOptions } from "../lib/types.js";
 import { openProxyIntelligenceDb } from "./proxy-intelligence-db.js";
 import { createProxyIntelligenceRepository } from "./proxy-intelligence-repository.js";
+import { createProxyIntelligenceJobManager } from "./proxy-intelligence-jobs.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "../..");
@@ -25,6 +26,10 @@ const dataDir = path.join(root, "data");
 const runtimeFile = path.join(root, "runtime", "9router-proxy.env");
 const proxyIntelligenceDb = openProxyIntelligenceDb(dataDir);
 const proxyIntelligenceRepo = createProxyIntelligenceRepository({ db: proxyIntelligenceDb });
+const proxyIntelligenceJobs = createProxyIntelligenceJobManager({
+  db: proxyIntelligenceDb,
+  repo: proxyIntelligenceRepo,
+});
 
 const inputChecker = createInputChecker({
   inputDir,
@@ -91,6 +96,7 @@ async function handleNineRouter(request: http.IncomingMessage, response: http.Se
   }
 
   if (request.method === "GET" && pathname === "/api/ninerouter/pools") {
+    await poolRanker.startSyncIfStale().catch(() => {});
     const tier = new URL(request.url ?? "/", "http://localhost").searchParams.get("tier");
     const pools = poolRanker.listByTier(tier).sort((a, b) => {
       if (a.tier === "active" && b.tier !== "active") return -1;
@@ -125,39 +131,13 @@ async function handleNineRouter(request: http.IncomingMessage, response: http.Se
 
   if (request.method === "POST" && pathname === "/api/ninerouter/sync") {
     if (poolRanker.isSyncing()) return json(response, { started: false, running: true }, 202);
-    poolRanker.syncPools().catch((error) => {
+    poolRanker.syncPools({ force: true }).catch((error) => {
       const message = (error as Error).message;
       logActivity("error", `Sync failed: ${message}`);
       console.error("9Router sync failed:", message);
     });
     return json(response, { started: true }, 202);
   }
-
-  if (request.method === "POST" && pathname === "/api/ninerouter/test") {
-    const body = await readBody(request);
-    if (!Array.isArray(body.ids) || body.ids.length === 0) {
-      return json(response, { error: "ids must be a non-empty array of strings" }, 400);
-    }
-    for (const item of body.ids) {
-      if (typeof item !== "string" || !item.trim()) {
-        return json(response, { error: "Each id must be a non-empty string" }, 400);
-      }
-    }
-    const rawIds = body.ids as string[];
-    const uniqueIds = Array.from(new Set(rawIds));
-    if (uniqueIds.length !== rawIds.length) {
-      return json(response, { error: "Duplicate pool ids are not allowed in test batch" }, 400);
-    }
-    const state = poolRanker.readState();
-    for (const id of rawIds) {
-      if (!state.pools[id]) {
-        return json(response, { error: `Pool not found: ${id}` }, 404);
-      }
-    }
-    const result = await poolRanker.testPools(rawIds);
-    return json(response, result, 202);
-  }
-
   if (request.method === "POST" && pathname === "/api/ninerouter/activate") {
     const body = await readBody(request);
     const targetId = body.localId ?? body.id;
@@ -212,18 +192,6 @@ async function handleNineRouter(request: http.IncomingMessage, response: http.Se
       }
     }
 
-    if (request.method === "POST" && action === "restore") {
-      try {
-        const pool = await poolRanker.restorePool(localId);
-        return json(response, { pool });
-      } catch (error) {
-        const err = error as Error & { status?: number };
-        const message = err.message || "Failed to restore pool";
-        if (message.includes("not found")) return json(response, { error: message }, 404);
-        if (message.includes("Cannot restore")) return json(response, { error: message }, 409);
-        return json(response, { error: message }, 502);
-      }
-    }
   }
 
   return json(response, { error: "not found" }, 404);
@@ -418,6 +386,24 @@ async function handleSettings(request: http.IncomingMessage, response: http.Serv
     const result = await testNineRouterConnection(overrides);
     return json(response, result, result.ok ? 200 : 502);
   }
+  if (request.method === "GET" && pathname === "/api/settings/proxy-export") {
+    const parsedUrl = new URL(request.url ?? "/", "http://localhost");
+    const format = parsedUrl.searchParams.get("format") === "csv" ? "csv" : "txt";
+    const includeCredentials = parsedUrl.searchParams.get("includeCredentials") === "true";
+
+    const exportData = await proxyIntelligenceRepo.exportWorkingProxies({
+      format,
+      includeCredentials,
+    });
+
+    response.writeHead(200, {
+      "Content-Type": exportData.contentType,
+      "Content-Disposition": `attachment; filename="${exportData.filename}"`,
+      "Cache-Control": "no-store",
+    });
+    response.end(exportData.body);
+    return;
+  }
 
   return json(response, { error: "not found" }, 404);
 }
@@ -428,7 +414,7 @@ const port = 1300;
 let syncIntervalId: NodeJS.Timeout | null = null;
 
 function runScheduledSync() {
-  poolRanker.syncPools().catch((error) => {
+  poolRanker.startSyncIfStale().catch((error) => {
     const message = (error as Error).message;
     logActivity("error", `Scheduled sync failed: ${message}`);
     console.error("Scheduled 9Router sync failed:", message);
@@ -442,7 +428,7 @@ function scheduleNineRouterSync() {
   }
   if (!nineRouterConfigured()) return;
 
-  const intervalMs = getSettingsSecrets().nineRouterSyncMinutes * 60_000;
+  const intervalMs = Math.max(360, getSettingsSecrets().nineRouterSyncMinutes) * 60_000;
   const lastSyncAt = poolRanker.readState().lastSyncAt;
   const isRecent = typeof lastSyncAt === "number" && Date.now() - lastSyncAt < intervalMs;
 
@@ -500,6 +486,35 @@ async function handleIntelligence(request: http.IncomingMessage, response: http.
     const summary = await proxyIntelligenceRepo.importProxies({ source, content });
     return json(response, summary);
   }
+  if (request.method === "POST" && pathname === "/api/intelligence/jobs") {
+    const body = await readBody(request, 1_000_000);
+    const proxyKeys = Array.isArray(body.proxyKeys) ? (body.proxyKeys as string[]) : undefined;
+    const filter = typeof body.filter === "object" && body.filter !== null ? (body.filter as any) : undefined;
+    const options = typeof body.options === "object" && body.options !== null ? (body.options as any) : undefined;
+
+    try {
+      const job = await proxyIntelligenceJobs.createJob({ proxyKeys, filter, options });
+      return json(response, { job }, 202);
+    } catch (err) {
+      return json(response, { error: (err as Error).message }, 400);
+    }
+  }
+
+  if (request.method === "GET" && pathname.startsWith("/api/intelligence/jobs/")) {
+    const id = pathname.slice("/api/intelligence/jobs/".length);
+    const job = proxyIntelligenceJobs.getJob(id);
+    if (!job) return json(response, { error: "Job not found" }, 404);
+    return json(response, { job });
+  }
+
+  if (request.method === "POST" && pathname.startsWith("/api/intelligence/jobs/") && pathname.endsWith("/cancel")) {
+    const parts = pathname.split("/");
+    const id = parts[parts.length - 2];
+    const job = await proxyIntelligenceJobs.cancelJob(id);
+    if (!job) return json(response, { error: "Job not found" }, 404);
+    return json(response, { job });
+  }
+
 
   return json(response, { error: "not found" }, 404);
 }
@@ -562,6 +577,9 @@ async function main() {
     console.log(`minhmiceProxy listening on http://localhost:${port}`);
     inputChecker.runChecks();
     setInterval(() => inputChecker.runChecks(), 30_000);
+    setInterval(() => {
+      void poolRanker.refreshRemoteTracking();
+    }, 60_000);
     scheduleNineRouterSync();
   });
 }
