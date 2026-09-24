@@ -14,6 +14,8 @@ import { parseProxy, proxyUrl } from "./proxy-core.js";
 import { createDiagnosticRunner } from "./detailed-checker.js";
 import { createAuditorJobManager, AuditorJobError } from "./auditor-jobs.js";
 import type { AuditorJobOptions } from "../lib/types.js";
+import { openProxyIntelligenceDb } from "./proxy-intelligence-db.js";
+import { createProxyIntelligenceRepository } from "./proxy-intelligence-repository.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "../..");
@@ -21,6 +23,8 @@ const root = path.resolve(here, "../..");
 const inputDir = path.join(root, "input");
 const dataDir = path.join(root, "data");
 const runtimeFile = path.join(root, "runtime", "9router-proxy.env");
+const proxyIntelligenceDb = openProxyIntelligenceDb(dataDir);
+const proxyIntelligenceRepo = createProxyIntelligenceRepository({ db: proxyIntelligenceDb });
 
 const inputChecker = createInputChecker({
   inputDir,
@@ -437,9 +441,23 @@ function scheduleNineRouterSync() {
     syncIntervalId = null;
   }
   if (!nineRouterConfigured()) return;
-  runScheduledSync();
+
   const intervalMs = getSettingsSecrets().nineRouterSyncMinutes * 60_000;
-  syncIntervalId = setInterval(runScheduledSync, intervalMs);
+  const lastSyncAt = poolRanker.readState().lastSyncAt;
+  const isRecent = typeof lastSyncAt === "number" && Date.now() - lastSyncAt < intervalMs;
+
+  if (isRecent) {
+    const remainingMs = Math.max(10_000, intervalMs - (Date.now() - (lastSyncAt as number)));
+    const remainingMins = Math.round(remainingMs / 60_000);
+    logActivity("info", `Skipping startup sync: last sync was recent (${remainingMins}m remaining). Next sync scheduled.`);
+    syncIntervalId = setTimeout(() => {
+      runScheduledSync();
+      syncIntervalId = setInterval(runScheduledSync, intervalMs);
+    }, remainingMs);
+  } else {
+    runScheduledSync();
+    syncIntervalId = setInterval(runScheduledSync, intervalMs);
+  }
 }
 
 onSettingsChange((_settings, changed) => {
@@ -450,6 +468,42 @@ onSettingsChange((_settings, changed) => {
     scheduleNineRouterSync();
   }
 });
+async function handleIntelligence(request: http.IncomingMessage, response: http.ServerResponse, pathname: string) {
+  const parsedUrl = new URL(request.url ?? "/", "http://localhost");
+
+  if (request.method === "GET" && pathname === "/api/intelligence/proxies") {
+    const filter = {
+      search: parsedUrl.searchParams.get("search") || undefined,
+      source: parsedUrl.searchParams.get("source") || undefined,
+      protocol: parsedUrl.searchParams.get("protocol") || undefined,
+      lifecycle: (parsedUrl.searchParams.get("lifecycle") as any) || undefined,
+      verdict: parsedUrl.searchParams.get("verdict") || undefined,
+      page: Number(parsedUrl.searchParams.get("page") || "1"),
+      pageSize: Number(parsedUrl.searchParams.get("pageSize") || "20"),
+    };
+    const page = await proxyIntelligenceRepo.listProxies(filter);
+    return json(response, page);
+  }
+
+  if (request.method === "GET" && pathname.startsWith("/api/intelligence/proxies/")) {
+    const proxyKey = decodeURIComponent(pathname.slice("/api/intelligence/proxies/".length));
+    const detail = await proxyIntelligenceRepo.getProxy(proxyKey);
+    if (!detail) return json(response, { error: "Proxy not found" }, 404);
+    return json(response, { proxy: detail });
+  }
+
+  if (request.method === "POST" && pathname === "/api/intelligence/import") {
+    const body = await readBody(request, 5_000_000);
+    const source = typeof body.source === "string" ? body.source.trim() : "import.txt";
+    const content = typeof body.content === "string" ? body.content : "";
+    if (!content.trim()) return json(response, { error: "content cannot be empty" }, 400);
+    const summary = await proxyIntelligenceRepo.importProxies({ source, content });
+    return json(response, summary);
+  }
+
+  return json(response, { error: "not found" }, 404);
+}
+
 
 async function main() {
   const app = next({ dev, dir: root });
@@ -467,6 +521,7 @@ async function main() {
     if (pathname.startsWith("/api/diagnostics/")) return handleDiagnostics(request, response, pathname);
     if (pathname.startsWith("/api/auditor/")) return handleAuditor(request, response, pathname);
     if (pathname.startsWith("/api/settings")) return handleSettings(request, response, pathname);
+    if (pathname.startsWith("/api/intelligence/")) return handleIntelligence(request, response, pathname);
 
     if (request.method === "GET" && pathname === "/api/best") {
       return json(response, { proxies: inputChecker.best().slice(0, 20), running: inputChecker.isRunning() });
@@ -511,6 +566,29 @@ async function main() {
   });
 }
 
+process.on("unhandledRejection", (reason) => {
+  const detail = reason instanceof Error ? `${reason.message}\n${reason.stack}` : String(reason);
+  console.error(`[process] unhandledRejection\n${detail}`);
+});
+process.on("uncaughtException", (error) => {
+  console.error(`[process] uncaughtException\n${error.stack ?? error}`);
+});
+function shutdown() {
+  try {
+    proxyIntelligenceDb.close();
+  } catch {
+    // ignore error on shutdown
+  }
+}
+
+process.on("SIGINT", () => {
+  shutdown();
+  process.exit(0);
+});
+process.on("SIGTERM", () => {
+  shutdown();
+  process.exit(0);
+});
 main().catch((error) => {
   console.error(error);
   process.exit(1);
