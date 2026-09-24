@@ -68,8 +68,8 @@ function defaultsFromEnv(): AppSettings {
     nineRouterUrl: envString("NINEROUTER_URL", "https://9router.minhmice.com").replace(/\/$/, ""),
     nineRouterPassword: envString("NINEROUTER_PASSWORD") || envString("9ROUTER_PASSWORD"),
     nineRouterApiKey: envString("NINEROUTER_API_KEY") || envString("9ROUTER_API_KEY"),
-    activePoolLimit: envNumber("ACTIVE_POOL_LIMIT", 50),
-    nineRouterSyncMinutes: envNumber("NINEROUTER_SYNC_MINUTES", 60),
+    activePoolLimit: envNumber("ACTIVE_POOL_LIMIT", 20),
+    nineRouterSyncMinutes: envNumber("NINEROUTER_SYNC_MINUTES", 360),
     checkConcurrency: envNumber("CHECK_CONCURRENCY", 10),
     checkTimeoutMs: envNumber("CHECK_TIMEOUT_MS", 6000),
     proxyTtlMinutes: envNumber("PROXY_TTL_MINUTES", 15),
@@ -96,7 +96,7 @@ function normalize(settingsValue: AppSettings): AppSettings {
     nineRouterPassword: settingsValue.nineRouterPassword,
     nineRouterApiKey: settingsValue.nineRouterApiKey,
     activePoolLimit: clamp(Math.round(settingsValue.activePoolLimit), 1, 200),
-    nineRouterSyncMinutes: clamp(Math.round(settingsValue.nineRouterSyncMinutes), 1, 1440),
+    nineRouterSyncMinutes: clamp(Math.round(settingsValue.nineRouterSyncMinutes), 360, 1440),
     checkConcurrency: clamp(Math.round(settingsValue.checkConcurrency), 1, 50),
     checkTimeoutMs: clamp(Math.round(settingsValue.checkTimeoutMs), 2000, 30000),
     proxyTtlMinutes: clamp(Math.round(settingsValue.proxyTtlMinutes), 1, 1440),
@@ -218,7 +218,7 @@ export function updateSettings(patch: SettingsUpdatePatch) {
   }
 
   if (patch.nineRouterSyncMinutes !== undefined) {
-    next.nineRouterSyncMinutes = patch.nineRouterSyncMinutes;
+    next.nineRouterSyncMinutes = clamp(Math.round(patch.nineRouterSyncMinutes), 360, 1440);
     changed.push("nineRouterSyncMinutes");
   }
 

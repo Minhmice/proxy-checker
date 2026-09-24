@@ -1,5 +1,14 @@
 import type { AuditVerdict, ProxyAuditResult, ProxyInput } from "../auditor/types.js";
 export type { AuditVerdict, ProxyAuditResult, ProxyInput };
+export type {
+  ProxyLifecycleState,
+  ProxyInventoryItem,
+  ProxyInventoryDetail,
+  ProxyInventoryFilter,
+  ProxyInventoryPage,
+  ProxyImportInput,
+  ProxyImportSummary,
+} from "../server/proxy-intelligence-repository.js";
 
 export type ProxyProtocol = "http" | "socks5";
 
@@ -47,6 +56,9 @@ export interface PoolRecord {
   exit_ip: string | null;
   checked_at: number;
   isActiveOnRouter: boolean;
+  remoteTestStatus?: string | null;
+  remoteLastError?: string | null;
+  remoteLastTestedAt?: number | null;
   successes: number;
   failures: number;
   firstFailure?: string;
@@ -192,6 +204,8 @@ export interface AuditorJobResult {
   index: number;
   result?: ProxyAuditResult;
   error?: string;
+  /** True when the source line failed to parse — never attempted, not a real FAIL. */
+  malformed?: boolean;
 }
 
 export interface AuditorJob {
@@ -202,13 +216,15 @@ export interface AuditorJob {
   createdAt: number;
   startedAt: number | null;
   finishedAt: number | null;
+  /** Lines that failed to parse — isolated from failCount so FAIL stays honest. */
+  invalidCount: number;
+  duplicateCount: number;
   total: number;
   checked: number;
   passCount: number;
   warnCount: number;
   failCount: number;
   unknownCount: number;
-  duplicateCount: number;
   browserAudit: boolean;
   attempts: number;
   timeoutMs: number;

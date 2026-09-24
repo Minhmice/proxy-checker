@@ -66,7 +66,8 @@ async function request<T>(
   options: RequestInit = {},
   retry = true,
   overrides?: { url?: string; password?: string; apiKey?: string },
-  cookieRef: { value: string | null } = { value: authCookie }
+  cookieRef: { value: string | null } = { value: authCookie },
+  clientOptions?: { acceptStructuredError?: boolean }
 ): Promise<T> {
   const config = readConfig(overrides);
   const response = await fetch(`${config.url}${path}`, {
@@ -86,6 +87,9 @@ async function request<T>(
     return request<T>(path, options, false, overrides, cookieRef);
   }
   if (!response.ok) {
+    if (clientOptions?.acceptStructuredError && typeof body.ok === "boolean") {
+      return body as T;
+    }
     const message = (body.error as string) || (body.message as string) || `9Router API ${response.status}`;
     const error = new Error(message) as Error & { status?: number };
     error.status = response.status;
@@ -122,11 +126,44 @@ export async function testNineRouterConnection(overrides?: { url?: string; passw
   }
 }
 
-export async function listPools(): Promise<Array<{ id: string; name: string; proxyUrl: string; type?: string }>> {
-  const body = await request<{ proxyPools?: Array<{ id: string; name: string; proxyUrl: string; type?: string }> }>(
+export interface NineRouterPool {
+  id: string;
+  name: string;
+  proxyUrl: string;
+  type?: string;
+  isActive?: boolean;
+  testStatus?: string | null;
+  lastError?: string | null;
+  lastTestedAt?: string | null;
+}
+
+export async function listPools(): Promise<NineRouterPool[]> {
+  const body = await request<{ proxyPools?: NineRouterPool[] }>(
     "/api/proxy-pools?includeUsage=true"
   );
   return body.proxyPools ?? [];
+}
+export interface NineRouterTestResult {
+  ok: boolean;
+  status?: number;
+  statusText?: string | null;
+  error?: string | null;
+  elapsedMs?: number;
+  testedAt?: string;
+}
+
+export async function testPool(id: string): Promise<NineRouterTestResult> {
+  const body = await request<NineRouterTestResult>(
+    `/api/proxy-pools/${encodeURIComponent(id)}/test`,
+    {
+      method: "POST",
+    },
+    true,
+    undefined,
+    undefined,
+    { acceptStructuredError: true }
+  );
+  return body;
 }
 
 export async function setPoolActive(id: string, isActive: boolean) {
