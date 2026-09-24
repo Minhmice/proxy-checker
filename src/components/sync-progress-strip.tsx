@@ -13,7 +13,7 @@ export function SyncProgressStrip({ status }: { status: PoolStatus | null }) {
   let label = "Syncing…";
   if (phase === "login") label = "Connecting to 9Router…";
   else if (phase === "fetch") label = "Loading proxy list…";
-  else if (phase === "check" && total > 0) label = `Health check ${done}/${total}`;
+  else if (phase === "check" && total > 0) label = `9Router health check ${done}/${total}`;
   else if (phase === "rank") label = "Ranking by latency…";
   else if (phase === "activate") label = "Updating 9Router…";
 

@@ -2,6 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  createColumnHelper,
+  useTable,
+  type ColumnFiltersState,
+  type ColumnVisibilityState,
+  type PaginationState,
+  type SortingState,
+} from "@tanstack/react-table";
+import {
   ArrowUpDown,
   ArrowDown,
   ArrowUp,
@@ -12,6 +20,12 @@ import {
   RotateCcw,
   Trash2,
   AlertTriangle,
+  Search,
+  SlidersHorizontal,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/components/auth-provider";
@@ -23,9 +37,7 @@ import {
   formatTime,
   removePool,
   renamePool,
-  restorePool,
   syncPools,
-  testPools,
   togglePool,
 } from "@/lib/api";
 import type { PoolRecord, PoolStatus } from "@/lib/types";
@@ -39,11 +51,21 @@ import {
 } from "@/components/ui/table";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import {
   Dialog,
   DialogContent,
@@ -54,6 +76,8 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { tableConfigFeatures, type ProxiesTableFeatures } from "./data-table-features";
 
 type ProxiesTab = "active" | "reserve" | "removed";
 
@@ -73,6 +97,8 @@ function countCodePoints(str: string): number {
   return Array.from(str).length;
 }
 
+const columnHelper = createColumnHelper<ProxiesTableFeatures, PoolRecord>();
+
 export default function ProxiesPage() {
   const { password } = useAuth();
   const [tab, setTab] = useState<ProxiesTab>("active");
@@ -81,31 +107,33 @@ export default function ProxiesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [sort, setSort] = useState<{ key: "latency" | "status" | "checked"; direction: "asc" | "desc" }>({
-    key: "latency",
-    direction: "asc",
+
+  // TanStack table state
+  const [sorting, setSorting] = useState<SortingState>([
+    { id: "latency_ms", desc: false },
+  ]);
+  const [globalFilter, setGlobalFilter] = useState("");
+  const [columnVisibility, setColumnVisibility] = useState<ColumnVisibilityState>({});
+  const [pagination, setPagination] = useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: 20,
   });
 
   // Track previous pools to surface automatic server-side deletion toast
   const prevPoolsRef = useRef<Map<string, PoolRecord>>(new Map());
   const hasLoadedInitialRef = useRef(false);
+
   // Action dialog states
   const [renameTarget, setRenameTarget] = useState<PoolRecord | null>(null);
   const [renameInput, setRenameInput] = useState("");
   const [renameError, setRenameError] = useState("");
   const [renameSubmitting, setRenameSubmitting] = useState(false);
 
-  const [restoreTarget, setRestoreTarget] = useState<PoolRecord | null>(null);
-  const [restoreSubmitting, setRestoreSubmitting] = useState(false);
 
   const [removeTarget, setRemoveTarget] = useState<PoolRecord | null>(null);
   const [removeSubmitting, setRemoveSubmitting] = useState(false);
 
   const syncing = status?.running ?? false;
-  const anyItemTesting = useMemo(
-    () => pools.some((p) => p.testState === "queued" || p.testState === "checking" || p.testState === "retrying"),
-    [pools]
-  );
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -115,10 +143,8 @@ export default function ProxiesPage() {
       }
       try {
         const statusData = await fetchStatus(password, signal);
-        // Fetch complete registry snapshot so transitions across tabs are always observable
         const allPoolsData = await fetchPools(password, "all", signal);
 
-        // Detect automatic transition to removed after initial registry load
         const prevMap = prevPoolsRef.current;
         if (hasLoadedInitialRef.current) {
           for (const current of allPoolsData) {
@@ -144,56 +170,32 @@ export default function ProxiesPage() {
         setLoading(false);
       }
     },
-    [password, tab]
+    [password]
   );
 
   useEffect(() => {
     const controller = new AbortController();
     load(controller.signal);
     if (!password) return;
-    const intervalMs = syncing || anyItemTesting ? 1200 : 15000;
+    const intervalMs = syncing ? 1200 : 15000;
     const timer = setInterval(() => load(controller.signal), intervalMs);
     return () => {
       controller.abort();
       clearInterval(timer);
     };
-  }, [password, load, syncing, anyItemTesting]);
+  }, [password, load, syncing]);
 
   async function handleSync() {
     if (!password) return;
     try {
       await syncPools(password);
-      toast.message("Sync started — proxies appear first, then health checks run");
+      toast.message("Sync started — 9Router health check in progress");
       setTimeout(load, 400);
     } catch (err) {
       toast.error((err as Error).message);
     }
   }
 
-  async function handleTestSingle(pool: PoolRecord) {
-    if (!password) return;
-    try {
-      await testPools(password, [pool.localId]);
-      toast.success(`Queued check for ${pool.name}`);
-      await load();
-    } catch (err) {
-      toast.error((err as Error).message);
-    }
-  }
-
-  async function handleTestBatch() {
-    if (!password || !selectedIds.length) return;
-    try {
-      const res = await testPools(password, selectedIds);
-      toast.success(`Queued checks for ${res.accepted.length} proxy pool(s)`);
-      if (res.busy.length > 0) {
-        toast.message(`${res.busy.length} proxy pool(s) already in progress`);
-      }
-      await load();
-    } catch (err) {
-      toast.error((err as Error).message);
-    }
-  }
 
   async function handleToggle(pool: PoolRecord) {
     if (!password || pool.testState === "checking" || pool.testState === "retrying") return;
@@ -206,7 +208,6 @@ export default function ProxiesPage() {
     }
   }
 
-  // Rename modal logic
   function openRename(pool: PoolRecord) {
     setRenameTarget(pool);
     setRenameInput(pool.name);
@@ -238,27 +239,7 @@ export default function ProxiesPage() {
     }
   }
 
-  // Restore modal logic
-  function openRestore(pool: PoolRecord) {
-    setRestoreTarget(pool);
-  }
 
-  async function submitRestore() {
-    if (!password || !restoreTarget) return;
-    setRestoreSubmitting(true);
-    try {
-      await restorePool(password, restoreTarget.localId);
-      toast.success("Proxy pool restored to Reserve (inactive)");
-      setRestoreTarget(null);
-      await load();
-    } catch (err) {
-      toast.error((err as Error).message);
-    } finally {
-      setRestoreSubmitting(false);
-    }
-  }
-
-  // Remove modal logic
   function openRemove(pool: PoolRecord) {
     setRemoveTarget(pool);
   }
@@ -288,65 +269,314 @@ export default function ProxiesPage() {
     return pools.filter((p) => p.tier === tab);
   }, [pools, syncing, tab]);
 
-  const sortedPools = useMemo(() => {
-    return [...visiblePools].sort((a, b) => {
-      let result = 0;
-      if (sort.key === "latency") {
-        const left = a.latency_ms ?? Number.MAX_SAFE_INTEGER;
-        const right = b.latency_ms ?? Number.MAX_SAFE_INTEGER;
-        result = left - right;
-      } else if (sort.key === "status") {
-        result = a.status.localeCompare(b.status);
-      } else if (sort.key === "checked") {
-        result = (a.checked_at || 0) - (b.checked_at || 0);
-      }
-      return sort.direction === "asc" ? result : -result;
-    });
-  }, [visiblePools, sort]);
-
-  function changeSort(key: typeof sort.key) {
-    setSort((current) =>
-      current.key === key
-        ? { key, direction: current.direction === "asc" ? "desc" : "asc" }
-        : { key, direction: "asc" }
-    );
-  }
-
-  function SortButton({ label, sortKey }: { label: string; sortKey: typeof sort.key }) {
-    const active = sort.key === sortKey;
-    const Icon = active ? (sort.direction === "asc" ? ArrowUp : ArrowDown) : ArrowUpDown;
-    return (
-      <button
-        type="button"
-        className={`pool-sort ${active ? "pool-sort--active" : ""}`}
-        onClick={() => changeSort(sortKey)}
-      >
-        {label}
-        <Icon size={13} aria-hidden />
-      </button>
-    );
-  }
-
-  const selectablePools = visiblePools.filter(
-    (pool) => pool.testState !== "checking" && pool.testState !== "retrying"
+  // Selection rule: "Toàn bộ tab" (All available in current tab scope)
+  const selectablePools = useMemo(
+    () => visiblePools.filter((pool) => pool.testState !== "checking" && pool.testState !== "retrying"),
+    [visiblePools]
   );
-  const allSelected =
-    selectablePools.length > 0 &&
-    selectablePools.every((pool) => selectedIds.includes(pool.localId));
 
-  function toggleSelected(localId: string) {
-    setSelectedIds((current) =>
-      current.includes(localId) ? current.filter((id) => id !== localId) : [...current, localId]
+  const allSelectedInTab =
+    selectablePools.length > 0 && selectablePools.every((p) => selectedIds.includes(p.localId));
+  const someSelectedInTab =
+    selectablePools.some((p) => selectedIds.includes(p.localId)) && !allSelectedInTab;
+
+  function toggleAllInTab() {
+    if (allSelectedInTab) {
+      const selectableIdSet = new Set(selectablePools.map((p) => p.localId));
+      setSelectedIds((curr) => curr.filter((id) => !selectableIdSet.has(id)));
+    } else {
+      const combined = new Set([...selectedIds, ...selectablePools.map((p) => p.localId)]);
+      setSelectedIds(Array.from(combined));
+    }
+  }
+
+  function toggleOne(localId: string) {
+    setSelectedIds((curr) =>
+      curr.includes(localId) ? curr.filter((id) => id !== localId) : [...curr, localId]
     );
   }
 
-  function toggleAll() {
-    setSelectedIds(allSelected ? [] : selectablePools.map((pool) => pool.localId));
-  }
+  // Column definitions with TanStack Table
+  const columns = useMemo(() => {
+    return columnHelper.columns([
+      columnHelper.display({
+        id: "select",
+        header: () => (
+          <div className="flex items-center justify-center">
+            <Checkbox
+              checked={allSelectedInTab ? true : someSelectedInTab ? "indeterminate" : false}
+              onCheckedChange={toggleAllInTab}
+              disabled={!selectablePools.length}
+              aria-label="Select all proxies in tab"
+            />
+          </div>
+        ),
+        cell: ({ row }) => {
+          const pool = row.original;
+          const isTesting = pool.testState === "checking" || pool.testState === "retrying";
+          const isSelected = selectedIds.includes(pool.localId);
+          return (
+            <div className="flex items-center justify-center">
+              <Checkbox
+                checked={isSelected}
+                onCheckedChange={() => toggleOne(pool.localId)}
+                disabled={isTesting}
+                aria-label={`Select ${pool.name}`}
+              />
+            </div>
+          );
+        },
+        enableSorting: false,
+        enableHiding: false,
+      }),
+
+      columnHelper.accessor("name", {
+        id: "proxy",
+        header: ({ column }) => {
+          const isSorted = column.getIsSorted();
+          const Icon = isSorted === "asc" ? ArrowUp : isSorted === "desc" ? ArrowDown : ArrowUpDown;
+          return (
+            <button
+              type="button"
+              className={`pool-sort ${isSorted ? "pool-sort--active" : ""}`}
+              onClick={() => column.toggleSorting(isSorted === "asc")}
+            >
+              Proxy
+              <Icon size={13} aria-hidden />
+            </button>
+          );
+        },
+        cell: ({ row }) => {
+          const pool = row.original;
+          return (
+            <div className="proxy-identity">
+              <strong className="proxy-identity__name">{pool.name}</strong>
+              <span className="mono proxy-identity__endpoint">{pool.proxyUrl}</span>
+            </div>
+          );
+        },
+      }),
+
+      columnHelper.accessor((row) => row.latency_ms ?? Number.MAX_SAFE_INTEGER, {
+        id: "latency_ms",
+        header: ({ column }) => {
+          const isSorted = column.getIsSorted();
+          const Icon = isSorted === "asc" ? ArrowUp : isSorted === "desc" ? ArrowDown : ArrowUpDown;
+          return (
+            <button
+              type="button"
+              className={`pool-sort ${isSorted ? "pool-sort--active" : ""}`}
+              onClick={() => column.toggleSorting(isSorted === "asc")}
+            >
+              Latency
+              <Icon size={13} aria-hidden />
+            </button>
+          );
+        },
+        cell: ({ row }) => {
+          const pool = row.original;
+          const isTesting = pool.testState === "checking" || pool.testState === "retrying";
+          if (isTesting) {
+            return (
+              <span className="latency-live">
+                <span className="metric-value-loader" aria-hidden />
+                <span className="sr-only">Measuring latency</span>
+              </span>
+            );
+          }
+          return pool.latency_ms != null ? (
+            <span key={`latency-${pool.localId}-${pool.latency_ms}`} className="metric-number--changed">
+              {pool.latency_ms} ms
+            </span>
+          ) : (
+            "—"
+          );
+        },
+      }),
+
+      columnHelper.accessor((row) => {
+        const total = row.successes + row.failures;
+        return total > 0 ? row.successes / total : -1;
+      }, {
+        id: "uptime",
+        header: ({ column }) => {
+          const isSorted = column.getIsSorted();
+          const Icon = isSorted === "asc" ? ArrowUp : isSorted === "desc" ? ArrowDown : ArrowUpDown;
+          return (
+            <button
+              type="button"
+              className={`pool-sort ${isSorted ? "pool-sort--active" : ""}`}
+              onClick={() => column.toggleSorting(isSorted === "asc")}
+            >
+              Uptime
+              <Icon size={13} aria-hidden />
+            </button>
+          );
+        },
+        cell: ({ row }) => {
+          const pool = row.original;
+          const isTesting = pool.testState === "checking" || pool.testState === "retrying";
+          if (isTesting) {
+            return <span className="metric-value-loader" aria-label="Measuring uptime" />;
+          }
+          const total = pool.successes + pool.failures;
+          return (
+            <span key={`uptime-${pool.localId}-${total}`} className="metric-number--changed">
+              {total > 0 ? `${Math.round((pool.successes / total) * 100)}%` : "—"}
+            </span>
+          );
+        },
+      }),
+
+      columnHelper.accessor((row) => row.checked_at || 0, {
+        id: "checked_at",
+        header: ({ column }) => {
+          const isSorted = column.getIsSorted();
+          const Icon = isSorted === "asc" ? ArrowUp : isSorted === "desc" ? ArrowDown : ArrowUpDown;
+          return (
+            <button
+              type="button"
+              className={`pool-sort ${isSorted ? "pool-sort--active" : ""}`}
+              onClick={() => column.toggleSorting(isSorted === "asc")}
+            >
+              Last checked
+              <Icon size={13} aria-hidden />
+            </button>
+          );
+        },
+        cell: ({ row }) => {
+          const pool = row.original;
+          return pool.checked_at ? formatTime(pool.checked_at) : "Never";
+        },
+      }),
+
+      columnHelper.accessor("status", {
+        id: "health",
+        header: ({ column }) => {
+          const isSorted = column.getIsSorted();
+          const Icon = isSorted === "asc" ? ArrowUp : isSorted === "desc" ? ArrowDown : ArrowUpDown;
+          return (
+            <button
+              type="button"
+              className={`pool-sort ${isSorted ? "pool-sort--active" : ""}`}
+              onClick={() => column.toggleSorting(isSorted === "asc")}
+            >
+              Health
+              <Icon size={13} aria-hidden />
+            </button>
+          );
+        },
+        cell: ({ row }) => <ProxyHealthBadge pool={row.original} />,
+      }),
+
+      columnHelper.display({
+        id: "actions",
+        header: () => <div className="text-right pr-2">Action</div>,
+        cell: ({ row }) => {
+          const pool = row.original;
+          const isTesting = pool.testState === "checking" || pool.testState === "retrying";
+          const isQueued = pool.testState === "queued" || pool.healthStatus === "pending";
+
+          return (
+            <div className="flex justify-end">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className="btn-icon"
+                    aria-label={`Actions for ${pool.name}`}
+                    disabled={isTesting}
+                  >
+                    <MoreVertical size={16} aria-hidden />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="pool-menu-content w-48">
+                  <DropdownMenuItem onClick={() => openRename(pool)} disabled={isTesting}>
+                    <Pencil size={14} aria-hidden />
+                    <span>Rename</span>
+                  </DropdownMenuItem>
+
+                  {pool.remoteState === "linked" && (
+                    <DropdownMenuItem
+                      onClick={() => handleToggle(pool)}
+                      disabled={isTesting || isQueued}
+                    >
+                      <Power size={14} aria-hidden />
+                      <span>{pool.isActiveOnRouter ? "Deactivate" : "Activate"}</span>
+                    </DropdownMenuItem>
+                  )}
+
+
+                  {pool.remoteState === "delete_failed" && (
+                    <DropdownMenuItem
+                      onClick={() => handleRetryRemoval(pool)}
+                      disabled={isTesting}
+                      className="text-error"
+                    >
+                      <RotateCcw size={14} aria-hidden />
+                      <span>Retry removal</span>
+                    </DropdownMenuItem>
+                  )}
+
+                  {pool.remoteState === "linked" && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onClick={() => openRemove(pool)}
+                        disabled={isTesting}
+                        className="text-error"
+                      >
+                        <Trash2 size={14} aria-hidden />
+                        <span>Remove</span>
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          );
+        },
+        enableSorting: false,
+        enableHiding: false,
+      }),
+    ]);
+  }, [allSelectedInTab, someSelectedInTab, selectablePools, selectedIds]);
+
+  // Global search filtering across name, proxyUrl and status
+  const tableData = useMemo(() => {
+    if (!globalFilter.trim()) return visiblePools;
+    const q = globalFilter.trim().toLowerCase();
+    return visiblePools.filter((p) => {
+      return (
+        p.name.toLowerCase().includes(q) ||
+        p.proxyUrl.toLowerCase().includes(q) ||
+        p.status.toLowerCase().includes(q)
+      );
+    });
+  }, [visiblePools, globalFilter]);
+
+  const table = useTable({
+    features: tableConfigFeatures,
+    data: tableData,
+    columns,
+    state: {
+      sorting,
+      columnVisibility,
+      pagination,
+    },
+    onSortingChange: setSorting,
+    onColumnVisibilityChange: setColumnVisibility,
+    onPaginationChange: setPagination,
+  });
+
+  const pageRows = table.getRowModel().rows;
+  const totalCount = visiblePools.length;
+  const filteredCount = tableData.length;
+  const selectedCount = selectedIds.length;
 
   const subtitle = syncing
     ? `${pools.length} proxies loaded · health check in progress`
-    : `${visiblePools.length} ${tab} pools shown${selectedIds.length ? ` · ${selectedIds.length} selected` : ""}`;
+    : `${totalCount} ${tab} pools shown${selectedCount ? ` · ${selectedCount} selected` : ""}`;
 
   return (
     <>
@@ -388,6 +618,7 @@ export default function ProxiesPage() {
             onClick={() => {
               setTab("active");
               setSelectedIds([]);
+              setPagination((prev) => ({ ...prev, pageIndex: 0 }));
             }}
           >
             Active
@@ -400,6 +631,7 @@ export default function ProxiesPage() {
             onClick={() => {
               setTab("reserve");
               setSelectedIds([]);
+              setPagination((prev) => ({ ...prev, pageIndex: 0 }));
             }}
           >
             Reserve
@@ -412,6 +644,7 @@ export default function ProxiesPage() {
             onClick={() => {
               setTab("removed");
               setSelectedIds([]);
+              setPagination((prev) => ({ ...prev, pageIndex: 0 }));
             }}
           >
             Removed
@@ -425,31 +658,60 @@ export default function ProxiesPage() {
         </p>
       )}
 
-      {selectedIds.length > 0 && (
-        <div className="pool-selection-bar" role="status">
-          <strong>{selectedIds.length} selected</strong>
-          <span>Run diagnostics on selected proxies.</span>
-          <div className="pool-selection-actions">
-            <button
-              type="button"
-              className="btn btn--secondary"
-              onClick={handleTestBatch}
-              disabled={syncing}
-            >
-              <Play size={13} aria-hidden />
-              Test selected
-            </button>
-            <button
-              type="button"
-              className="btn btn--ghost"
-              onClick={() => setSelectedIds([])}
-            >
-              Clear
-            </button>
-          </div>
+      {/* Control bar: Search, Columns toggle, Selection summary */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 mb-4">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none" />
+          <Input
+            placeholder="Search proxy name, URL or IP..."
+            value={globalFilter}
+            onChange={(e) => {
+              setGlobalFilter(e.target.value);
+              setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+            }}
+            className="pl-9 bg-card/40 border-border/80 text-xs sm:text-sm h-9"
+          />
         </div>
-      )}
 
+        <div className="flex items-center gap-2 self-end sm:self-auto">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-9 gap-1.5 text-xs">
+                <SlidersHorizontal className="size-3.5" />
+                <span>Columns</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-44">
+              <DropdownMenuLabel className="text-xs">Toggle columns</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {table
+                .getAllColumns()
+                .filter((column) => column.getCanHide())
+                .map((column) => {
+                  const headerTitle =
+                    column.id === "latency_ms"
+                      ? "Latency"
+                      : column.id === "checked_at"
+                      ? "Last checked"
+                      : column.id.charAt(0).toUpperCase() + column.id.slice(1);
+                  return (
+                    <DropdownMenuCheckboxItem
+                      key={column.id}
+                      className="capitalize text-xs"
+                      checked={column.getIsVisible()}
+                      onCheckedChange={(value) => column.toggleVisibility(!!value)}
+                    >
+                      {headerTitle}
+                    </DropdownMenuCheckboxItem>
+                  );
+                })}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+
+
+      {/* Main Table Wrap */}
       <div className="pool-table-wrap">
         {loading && pools.length === 0 ? (
           <div className="table-empty">
@@ -462,191 +724,230 @@ export default function ProxiesPage() {
               ? "No removed proxies found. Dead proxies removed from 9Router are retained here."
               : `No ${tab} proxies yet. Add authorized proxy endpoints, then run a sync.`}
           </p>
+        ) : filteredCount === 0 ? (
+          <p className="table-empty">
+            No proxies match &quot;{globalFilter}&quot;. Try adjusting your search query.
+          </p>
         ) : (
           <Table className="pool-table">
             <TableHeader>
-              <TableRow>
-                <TableHead className="pool-check-cell">
-                  <input
-                    type="checkbox"
-                    checked={allSelected}
-                    onChange={toggleAll}
-                    disabled={!selectablePools.length}
-                    aria-label="Select all available proxies"
-                  />
-                </TableHead>
-                <TableHead>
-                  <SortButton label="Proxy" sortKey="status" />
-                </TableHead>
-                <TableHead>
-                  <SortButton label="Latency" sortKey="latency" />
-                </TableHead>
-                <TableHead>Uptime</TableHead>
-                <TableHead>
-                  <SortButton label="Last checked" sortKey="checked" />
-                </TableHead>
-                <TableHead>
-                  <SortButton label="Health" sortKey="status" />
-                </TableHead>
-                <TableHead>Action</TableHead>
-              </TableRow>
+              {table.getHeaderGroups().map((headerGroup) => (
+                <TableRow key={headerGroup.id}>
+                  {headerGroup.headers.map((header) => {
+                    const isSelect = header.id === "select";
+                    const isAction = header.id === "actions";
+                    return (
+                      <TableHead
+                        key={header.id}
+                        className={isSelect ? "pool-check-cell" : isAction ? "pool-action-cell" : ""}
+                      >
+                        {header.isPlaceholder ? null : <table.FlexRender header={header} />}
+                      </TableHead>
+                    );
+                  })}
+                </TableRow>
+              ))}
             </TableHeader>
             <TableBody>
-              {sortedPools.map((pool, index) => {
-                const isTesting =
-                  pool.testState === "checking" || pool.testState === "retrying";
-                const isQueued =
-                  pool.testState === "queued" || pool.healthStatus === "pending";
+              {pageRows.map((row, index) => {
+                const pool = row.original;
                 const isSelected = selectedIds.includes(pool.localId);
+                const isTesting = pool.testState === "checking" || pool.testState === "retrying";
+                const isQueued = pool.testState === "queued" || pool.healthStatus === "pending";
 
                 return (
-                  <TableRow
-                    key={pool.localId}
-                    data-state={isSelected ? "selected" : undefined}
-                    className={rowClass(pool)}
-                    style={{ "--i": index } as React.CSSProperties}
-                  >
-                    <TableCell data-label="Select" className="pool-check-cell">
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => toggleSelected(pool.localId)}
-                        disabled={isTesting}
-                        aria-label={`Select ${pool.name}`}
-                      />
-                    </TableCell>
+                  <ContextMenu key={pool.localId}>
+                    <ContextMenuTrigger asChild>
+                      <TableRow
+                        data-state={isSelected ? "selected" : undefined}
+                        className={rowClass(pool)}
+                        style={{ "--i": index } as React.CSSProperties}
+                      >
+                        {row.getVisibleCells().map((cell) => {
+                          const isSelect = cell.column.id === "select";
+                          const isAction = cell.column.id === "actions";
+                          const isLatency = cell.column.id === "latency_ms";
+                          const isUptime = cell.column.id === "uptime";
+                          const isChecked = cell.column.id === "checked_at";
 
-                    <TableCell data-label="Proxy" className="proxy-endpoint-cell">
-                      <div className="proxy-identity">
-                        <strong className="proxy-identity__name">{pool.name}</strong>
-                        <span className="mono proxy-identity__endpoint">{pool.proxyUrl}</span>
-                      </div>
-                    </TableCell>
+                          return (
+                            <TableCell
+                              key={cell.id}
+                              data-label={
+                                isSelect
+                                  ? "Select"
+                                  : isAction
+                                  ? "Action"
+                                  : isLatency
+                                  ? "Latency"
+                                  : isUptime
+                                  ? "Uptime"
+                                  : isChecked
+                                  ? "Last checked"
+                                  : cell.column.id === "proxy"
+                                  ? "Proxy"
+                                  : cell.column.id === "health"
+                                  ? "Health"
+                                  : cell.column.id
+                              }
+                              className={
+                                isSelect
+                                  ? "pool-check-cell"
+                                  : isAction
+                                  ? "pool-action-cell"
+                                  : isLatency && isTesting
+                                  ? "latency-cell latency-cell--live"
+                                  : isUptime && isTesting
+                                  ? "metric-cell--live"
+                                  : isChecked
+                                  ? "pool-last-checked-cell"
+                                  : ""
+                              }
+                            >
+                              <table.FlexRender cell={cell} />
+                            </TableCell>
+                          );
+                        })}
+                      </TableRow>
+                    </ContextMenuTrigger>
 
-                    <TableCell
-                      data-label="Latency"
-                      className={isTesting ? "latency-cell latency-cell--live" : ""}
-                    >
-                      {isTesting ? (
-                        <span className="latency-live">
-                          <span className="metric-value-loader" aria-hidden />
-                          <span className="sr-only">Measuring latency</span>
+                    {/* Right-click Context Menu */}
+                    <ContextMenuContent className="w-52">
+                      <ContextMenuLabel className="text-xs font-semibold flex items-center justify-between">
+                        <span className="truncate max-w-[140px]">{pool.name}</span>
+                        <span className="text-[10px] text-muted-foreground font-mono">
+                          {pool.latency_ms != null ? `${pool.latency_ms}ms` : ""}
                         </span>
-                      ) : pool.latency_ms != null ? (
-                        <span
-                          key={`latency-${pool.localId}-${pool.latency_ms}`}
-                          className="metric-number--changed"
+                      </ContextMenuLabel>
+                      <ContextMenuSeparator />
+
+                      <ContextMenuItem onClick={() => openRename(pool)} disabled={isTesting}>
+                        <Pencil size={14} aria-hidden />
+                        <span>Rename</span>
+                      </ContextMenuItem>
+
+                      {pool.remoteState === "linked" && (
+                        <ContextMenuItem
+                          onClick={() => handleToggle(pool)}
+                          disabled={isTesting || isQueued}
                         >
-                          {pool.latency_ms} ms
-                        </span>
-                      ) : (
-                        "—"
+                          <Power size={14} aria-hidden />
+                          <span>{pool.isActiveOnRouter ? "Deactivate" : "Activate"}</span>
+                        </ContextMenuItem>
                       )}
-                    </TableCell>
 
-                    <TableCell
-                      data-label="Uptime"
-                      className={isTesting ? "metric-cell--live" : ""}
-                    >
-                      {isTesting ? (
-                        <span className="metric-value-loader" aria-label="Measuring uptime" />
-                      ) : (
-                        <span
-                          key={`uptime-${pool.localId}-${pool.successes}-${pool.failures}`}
-                          className="metric-number--changed"
+
+                      {pool.remoteState === "delete_failed" && (
+                        <ContextMenuItem
+                          onClick={() => handleRetryRemoval(pool)}
+                          disabled={isTesting}
+                          variant="destructive"
                         >
-                          {pool.successes + pool.failures > 0
-                            ? `${Math.round((pool.successes / (pool.successes + pool.failures)) * 100)}%`
-                            : "—"}
-                        </span>
+                          <RotateCcw size={14} aria-hidden />
+                          <span>Retry removal</span>
+                        </ContextMenuItem>
                       )}
-                    </TableCell>
 
-                    <TableCell data-label="Last checked" className="pool-last-checked-cell">
-                      {pool.checked_at ? formatTime(pool.checked_at) : "Never"}
-                    </TableCell>
-
-                    <TableCell data-label="Health">
-                      <ProxyHealthBadge pool={pool} />
-                    </TableCell>
-
-                    <TableCell data-label="Action" className="pool-action-cell">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <button
-                            type="button"
-                            className="btn-icon"
-                            aria-label={`Actions for ${pool.name}`}
+                      {pool.remoteState === "linked" && (
+                        <>
+                          <ContextMenuSeparator />
+                          <ContextMenuItem
+                            onClick={() => openRemove(pool)}
                             disabled={isTesting}
+                            variant="destructive"
                           >
-                            <MoreVertical size={16} aria-hidden />
-                          </button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="pool-menu-content">
-                          <DropdownMenuItem
-                            onClick={() => handleTestSingle(pool)}
-                            disabled={isTesting || isQueued}
-                          >
-                            <Play size={14} aria-hidden />
-                            <span>Test now</span>
-                          </DropdownMenuItem>
-
-                          <DropdownMenuItem onClick={() => openRename(pool)} disabled={isTesting}>
-                            <Pencil size={14} aria-hidden />
-                            <span>Rename</span>
-                          </DropdownMenuItem>
-
-                          {pool.remoteState === "linked" && (
-                            <DropdownMenuItem
-                              onClick={() => handleToggle(pool)}
-                              disabled={isTesting || isQueued}
-                            >
-                              <Power size={14} aria-hidden />
-                              <span>{pool.isActiveOnRouter ? "Deactivate" : "Activate"}</span>
-                            </DropdownMenuItem>
-                          )}
-
-                          {pool.remoteState === "revived" && (
-                            <DropdownMenuItem onClick={() => openRestore(pool)} disabled={isTesting}>
-                              <RotateCcw size={14} aria-hidden />
-                              <span>Restore proxy</span>
-                            </DropdownMenuItem>
-                          )}
-
-                          {pool.remoteState === "delete_failed" && (
-                            <DropdownMenuItem
-                              onClick={() => handleRetryRemoval(pool)}
-                              disabled={isTesting}
-                              className="text-error"
-                            >
-                              <RotateCcw size={14} aria-hidden />
-                              <span>Retry removal</span>
-                            </DropdownMenuItem>
-                          )}
-
-                          {pool.remoteState === "linked" && (
-                            <>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                onClick={() => openRemove(pool)}
-                                disabled={isTesting}
-                                className="text-error"
-                              >
-                                <Trash2 size={14} aria-hidden />
-                                <span>Remove</span>
-                              </DropdownMenuItem>
-                            </>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
+                            <Trash2 size={14} aria-hidden />
+                            <span>Remove</span>
+                          </ContextMenuItem>
+                        </>
+                      )}
+                    </ContextMenuContent>
+                  </ContextMenu>
                 );
               })}
             </TableBody>
           </Table>
         )}
       </div>
+
+      {/* Pagination Controls */}
+      {filteredCount > 0 && (
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 py-3 px-1 text-xs text-muted-foreground">
+          <div className="flex items-center gap-2">
+            <span>
+              Showing {pagination.pageIndex * pagination.pageSize + 1} to{" "}
+              {Math.min((pagination.pageIndex + 1) * pagination.pageSize, filteredCount)} of{" "}
+              {filteredCount} {filteredCount < totalCount ? `(filtered from ${totalCount})` : "proxies"}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <span>Rows per page</span>
+              <select
+                aria-label="Rows per page"
+                value={table.state.pagination.pageSize}
+                onChange={(e) => {
+                  table.setPageSize(Number(e.target.value));
+                }}
+                className="h-8 rounded-md border border-border bg-card px-2 py-0.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+              >
+                {[10, 20, 50].map((pageSize) => (
+                  <option key={pageSize} value={pageSize}>
+                    {pageSize}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-center gap-1">
+              <Button
+                variant="outline"
+                size="icon"
+                className="size-8"
+                onClick={() => table.setPageIndex(0)}
+                disabled={!table.getCanPreviousPage()}
+                aria-label="Go to first page"
+              >
+                <ChevronsLeft className="size-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                className="size-8"
+                onClick={() => table.previousPage()}
+                disabled={!table.getCanPreviousPage()}
+                aria-label="Go to previous page"
+              >
+                <ChevronLeft className="size-4" />
+              </Button>
+              <span className="px-2 font-medium text-foreground">
+                Page {table.state.pagination.pageIndex + 1} of {Math.max(1, table.getPageCount())}
+              </span>
+              <Button
+                variant="outline"
+                size="icon"
+                className="size-8"
+                onClick={() => table.nextPage()}
+                disabled={!table.getCanNextPage()}
+                aria-label="Go to next page"
+              >
+                <ChevronRight className="size-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                className="size-8"
+                onClick={() => table.setPageIndex(table.getPageCount() - 1)}
+                disabled={!table.getCanNextPage()}
+                aria-label="Go to last page"
+              >
+                <ChevronsRight className="size-4" />
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Rename Dialog */}
       <Dialog open={!!renameTarget} onOpenChange={(open) => !open && setRenameTarget(null)}>
@@ -699,46 +1000,6 @@ export default function ProxiesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Restore Dialog */}
-      <Dialog open={!!restoreTarget} onOpenChange={(open) => !open && setRestoreTarget(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Restore proxy pool</DialogTitle>
-            <DialogDescription>
-              Restore this revived proxy back to the active inventory.
-            </DialogDescription>
-          </DialogHeader>
-          {restoreTarget && (
-            <div className="dialog-confirm-content">
-              <div className="dialog-kv">
-                <span className="dialog-kv__label">Proxy name</span>
-                <strong>{restoreTarget.name}</strong>
-              </div>
-              <div className="dialog-kv">
-                <span className="dialog-kv__label">Endpoint</span>
-                <span className="mono">{restoreTarget.proxyUrl}</span>
-              </div>
-              <div className="dialog-note banner--notice">
-                <AlertTriangle size={14} aria-hidden />
-                <span>Restoration starts inactive in the Reserve tier.</span>
-              </div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button
-              variant="outline"
-              type="button"
-              onClick={() => setRestoreTarget(null)}
-              disabled={restoreSubmitting}
-            >
-              Cancel
-            </Button>
-            <Button type="button" onClick={submitRestore} disabled={restoreSubmitting}>
-              {restoreSubmitting ? "Restoring…" : "Confirm restore"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Manual Remove Confirmation Dialog */}
       <Dialog open={!!removeTarget} onOpenChange={(open) => !open && setRemoveTarget(null)}>
