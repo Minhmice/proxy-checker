@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { DetailedDiagnosticResult, ParsedProxy, PoolRecord, PoolStats, RemoteState, TestState } from "../lib/types.js";
 import { getSettingsSecrets } from "./app-config.js";
-import { getActivitySnapshot, logActivity, resetSyncProgress, setSyncProgress } from "./activity-log.js";
+import { getActivitySnapshot, logActivity, logActivityThrottled, resetSyncProgress, setSyncProgress } from "./activity-log.js";
 import { checkMany, checkProxy as defaultCheckProxy } from "./checker.js";
 import { createMetricsHistory } from "./metrics-history.js";
 import {
@@ -89,6 +89,9 @@ function normalizeRecord(raw: unknown, fallbackKey: string): PoolRecord {
     exit_ip: typeof item.exit_ip === "string" ? item.exit_ip : null,
     checked_at: typeof item.checked_at === "number" ? item.checked_at : 0,
     isActiveOnRouter: item.isActiveOnRouter === true,
+    remoteTestStatus: typeof item.remoteTestStatus === "string" ? item.remoteTestStatus : null,
+    remoteLastError: typeof item.remoteLastError === "string" ? item.remoteLastError : null,
+    remoteLastTestedAt: typeof item.remoteLastTestedAt === "number" ? item.remoteLastTestedAt : null,
     successes: Number(item.successes || 0),
     failures: Number(item.failures || 0),
     firstFailure: typeof item.firstFailure === "string" ? item.firstFailure : undefined,
@@ -111,6 +114,8 @@ export function createPoolRanker(
   const deps: PoolRankerDeps = { ...defaultDeps, ...injectedDeps };
   const stateFile = path.join(dataDir, "pool-state.json");
   const metrics = createMetricsHistory({ dataDir });
+  let lastRemoteRefreshAt = 0;
+  let refreshPromise: Promise<{ refreshed: boolean; skipped: boolean; error?: string }> | null = null;
   let syncing = false;
   let lastError = "";
   const busyIds = new Set<string>();
@@ -186,6 +191,113 @@ export function createPoolRanker(
       stats: computeStats(Object.values(poolMap), skipped),
       lastError: error,
     });
+  }
+
+  async function refreshRemoteTrackingInternal(): Promise<{ refreshed: boolean; skipped: boolean; error?: string }> {
+    if (syncing) return { refreshed: false, skipped: true };
+    try {
+      const remotePools = await deps.listPools();
+      lastRemoteRefreshAt = Date.now();
+      const current = readState();
+      const previousPools = current.pools;
+      const nextPools: Record<string, PoolRecord> = {};
+
+      const existingByRemoteId = new Map<string, PoolRecord>();
+      const existingByEndpoint = new Map<string, PoolRecord>();
+      for (const record of Object.values(previousPools)) {
+        if (record.remoteId) existingByRemoteId.set(record.remoteId, record);
+        const parsed = parseProxy(record.proxyUrl);
+        if (parsed) existingByEndpoint.set(parsed.endpoint, record);
+      }
+
+      for (const remote of remotePools) {
+        const parsed = parseProxy(remote.proxyUrl);
+        const matched = existingByRemoteId.get(remote.id) ?? (parsed ? existingByEndpoint.get(parsed.endpoint) : undefined);
+        const localId = matched?.localId ?? remote.id;
+        const prev = previousPools[localId] ?? matched;
+
+        const hasActiveBool = typeof remote.isActive === "boolean";
+        const isActiveOnRouter = hasActiveBool ? Boolean(remote.isActive) : (prev?.isActiveOnRouter ?? false);
+        let tier: PoolRecord["tier"] = prev?.tier ?? "reserve";
+        if (hasActiveBool) {
+          if (remote.isActive === true) {
+            tier = "active";
+          } else if (tier === "active") {
+            tier = "reserve";
+          }
+        }
+
+        let remoteLastTestedAt: number | null = null;
+        if (remote.lastTestedAt) {
+          const parsedTime = new Date(remote.lastTestedAt).getTime();
+          if (!Number.isNaN(parsedTime)) remoteLastTestedAt = parsedTime;
+        }
+
+        nextPools[localId] = {
+          localId,
+          remoteId: remote.id,
+          remoteState: "linked",
+          testState: prev?.testState ?? "idle",
+          name: remote.name || prev?.name || "Unnamed proxy",
+          proxyUrl: remote.proxyUrl || prev?.proxyUrl || "",
+          type: remote.type || prev?.type || "http",
+          status: prev?.status ?? "usable",
+          tier,
+          healthStatus: prev?.healthStatus ?? "done",
+          latency_ms: prev?.latency_ms ?? null,
+          exit_ip: prev?.exit_ip ?? null,
+          checked_at: prev?.checked_at ?? 0,
+          isActiveOnRouter,
+          remoteTestStatus: remote.testStatus ?? null,
+          remoteLastError: remote.lastError ?? null,
+          remoteLastTestedAt: remoteLastTestedAt ?? prev?.remoteLastTestedAt ?? null,
+          successes: prev?.successes ?? 0,
+          failures: prev?.failures ?? 0,
+          firstFailure: prev?.firstFailure,
+          last_error: prev?.last_error,
+        };
+      }
+
+      // Any local linked pool not in remote list becomes removed
+      for (const [id, record] of Object.entries(previousPools)) {
+        if (!nextPools[id]) {
+          if (record.remoteState === "linked") {
+            nextPools[id] = {
+              ...record,
+              remoteId: null,
+              remoteState: "removed",
+              tier: "removed",
+              isActiveOnRouter: false,
+            };
+          } else {
+            nextPools[id] = { ...record };
+          }
+        }
+      }
+
+      current.pools = nextPools;
+      current.stats = computeStats(Object.values(nextPools));
+      writeState(current);
+      return { refreshed: true, skipped: false };
+    } catch (err: unknown) {
+      const message = (err as Error).message;
+      logActivityThrottled("remote-track-fail", "warn", `Remote tracking refresh failed: ${message}`);
+      return { refreshed: false, skipped: false, error: message };
+    }
+  }
+
+  async function refreshRemoteTracking(): Promise<{ refreshed: boolean; skipped: boolean; error?: string }> {
+    if (syncing) return { refreshed: false, skipped: true };
+    if (refreshPromise) return refreshPromise;
+    if (Date.now() - lastRemoteRefreshAt < 60_000) {
+      return { refreshed: false, skipped: true };
+    }
+    refreshPromise = refreshRemoteTrackingInternal();
+    try {
+      return await refreshPromise;
+    } finally {
+      refreshPromise = null;
+    }
   }
 
   function assignTiers(checkedPools: PoolRecord[]) {
@@ -855,6 +967,7 @@ export function createPoolRanker(
     restorePool,
     testPools,
     promoteDiagnostics,
+    refreshRemoteTracking,
   };
 }
 
