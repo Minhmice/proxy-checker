@@ -123,3 +123,50 @@ test("sync renames usable pools by ascending latency and keeps going after one r
   assert.equal(state.pools["remote-b"].name, "Imported B");
   assert.equal(state.pools["remote-c"].name, "3");
 });
+
+test("sync reconciles tier to remote truth on activation failure and renames highest rank to 1", async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "sync-activation-fail-"));
+  const remotePools = [
+    { id: "remote-a", name: "Imported A", proxyUrl: "http://127.0.0.1:8001", type: "http", isActive: false },
+    { id: "remote-b", name: "Imported B", proxyUrl: "http://127.0.0.1:8002", type: "http", isActive: false },
+    { id: "remote-c", name: "Imported C", proxyUrl: "http://127.0.0.1:8003", type: "http", isActive: false },
+  ];
+  const renameCalls: Array<{ id: string; name: string }> = [];
+
+  const ranker = createPoolRanker(
+    { dataDir },
+    {
+      listPools: async () => remotePools,
+      testPool: async (id: string) => {
+        const elapsedMs = id === "remote-a" ? 100 : id === "remote-b" ? 200 : 300;
+        return { ok: true, elapsedMs };
+      },
+      bulkSetActive: async (items: Array<{ id: string; isActive: boolean }>) =>
+        items.map((item) =>
+          item.id === "remote-b"
+            ? { ...item, ok: false, error: "remote update refused" }
+            : { ...item, ok: true }
+        ),
+      updatePool: async (id: string, patch: { name?: string; isActive?: boolean }) => {
+        renameCalls.push({ id, name: patch.name ?? "" });
+        return {};
+      },
+      checkProxy: async () => {
+        throw new Error("local checker must not be called");
+      },
+    } as unknown as Partial<PoolRankerDeps>
+  );
+
+  await ranker.syncPools({ force: true });
+  const state = ranker.readState();
+
+  assert.equal(state.pools["remote-b"].isActiveOnRouter, false);
+  assert.equal(state.pools["remote-b"].tier, "reserve");
+  assert.match(state.pools["remote-b"].last_error ?? "", /remote update refused/);
+
+  assert.deepEqual(renameCalls, [
+    { id: "remote-c", name: "3" },
+    { id: "remote-b", name: "2" },
+    { id: "remote-a", name: "1" },
+  ]);
+});
