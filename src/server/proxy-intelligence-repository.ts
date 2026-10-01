@@ -2,7 +2,7 @@ import type { ProxyIntelligenceDb, SqlParam } from "./proxy-intelligence-db.js";
 import { parseProxyInput } from "../auditor/parser.js";
 import type { ParsedProxyInput, ProxyAuditResult } from "../auditor/types.js";
 
-export type ProxyLifecycleState = "working" | "unstable" | "dead" | "dangerous" | "unknown" | "invalid";
+export type ProxyLifecycleState = "working" | "unstable" | "dead" | "dangerous" | "unknown";
 
 export interface ProxyInventoryItem {
   proxyKey: string;
@@ -96,6 +96,40 @@ export interface ExportResult {
   contentType: string;
   body: string;
 }
+export interface UnifiedProxyItem {
+  key: string;
+  name: string;
+  protocol: "http" | "https" | "socks4" | "socks5";
+  host: string;
+  port: number;
+  status: "working" | "dead" | "regressed";
+  udp: "Yes" | "No" | "Unknown";
+  sync: "active" | "reserve" | "unsynced";
+  latencyMs: number | null;
+  exitIp: string | null;
+  geo?: { city?: string; country?: string };
+  isp?: string;
+  timezone?: string;
+  lastCheckedAt: number | null;
+}
+
+export interface UnifiedProxyCounts {
+  all: number;
+  working: number;
+  regressed: number;
+  dead: number;
+}
+
+export interface UnifiedProxyFilter {
+  status?: "all" | "working" | "regressed" | "dead" | string;
+  search?: string;
+  protocol?: string;
+  page?: number;
+  pageSize?: number;
+  activePoolEndpoints?: Set<string>;
+  reservePoolEndpoints?: Set<string>;
+}
+
 
 export interface ProxyIntelligenceRepository {
   importProxies(input: ProxyImportInput): Promise<ProxyImportSummary>;
@@ -103,6 +137,20 @@ export interface ProxyIntelligenceRepository {
   getProxy(proxyKey: string): Promise<ProxyInventoryDetail | null>;
   resolveProxyKeys(filter: ProxyInventoryFilter): Promise<string[]>;
   exportWorkingProxies(filter?: WorkingExportFilter): Promise<ExportResult>;
+  syncWorkingPools(pools: Array<{
+    endpoint?: string;
+    proxyUrl: string;
+    tier?: string;
+    status?: string;
+    isActiveOnRouter?: boolean;
+    latency_ms?: number | null;
+    exit_ip?: string | null;
+  }>): Promise<{ imported: number; proxyKeys: string[] }>;
+  getUnifiedProxies(filter?: UnifiedProxyFilter): Promise<{
+    total: number;
+    counts: UnifiedProxyCounts;
+    items: UnifiedProxyItem[];
+  }>;
 }
 
 function computeProxyKey(protocol: string, host: string, port: number, username?: string | null): string {
@@ -530,6 +578,256 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
         filename: `working-proxies-${dateStr}.txt`,
         contentType: "text/plain; charset=utf-8",
         body: lines.join("\n"),
+      };
+    },
+    async syncWorkingPools(pools) {
+      const validPools = pools.filter((p) => p.status === "usable" || p.tier === "active" || Boolean(p.isActiveOnRouter));
+      const now = Date.now();
+      const proxyKeys: string[] = [];
+      let imported = 0;
+
+      db.transaction(() => {
+        for (const item of validPools) {
+          let parsedResult;
+          try {
+            parsedResult = parseProxyInput(item.proxyUrl);
+          } catch {
+            continue;
+          }
+          if (!parsedResult?.parsed) continue;
+          const p = parsedResult.parsed;
+          const key = computeProxyKey(p.protocol, p.host, p.port, p.username);
+          proxyKeys.push(key);
+
+          const existing = db.get<{ proxy_key: string }>("SELECT proxy_key FROM proxies WHERE proxy_key = ?", [key]);
+          if (existing) {
+            db.run(
+              `UPDATE proxies SET
+                source = '9router-working',
+                lifecycle_state = 'working',
+                status = 'usable',
+                latency_ms = COALESCE(?, latency_ms),
+                exit_ip = COALESCE(?, exit_ip),
+                password = COALESCE(?, password),
+                updated_at = ?
+              WHERE proxy_key = ?`,
+              [item.latency_ms ?? null, item.exit_ip ?? null, p.password ?? null, now, key]
+            );
+          } else {
+            db.run(
+              `INSERT INTO proxies (
+                proxy_key, endpoint, protocol, host, port, status, exit_ip,
+                latency_ms, checked_at, successes, failures, last_error,
+                source, lifecycle_state, username, password, created_at, updated_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                key,
+                `${p.host}:${p.port}`,
+                p.protocol,
+                p.host,
+                p.port,
+                "usable",
+                item.exit_ip ?? null,
+                item.latency_ms ?? null,
+                now,
+                1,
+                0,
+                null,
+                "9router-working",
+                "working",
+                p.username ?? null,
+                p.password ?? null,
+                now,
+                now,
+              ]
+            );
+          }
+          imported++;
+        }
+      });
+
+      return { imported, proxyKeys };
+    },
+    async getUnifiedProxies(filter: UnifiedProxyFilter = {}): Promise<{
+      total: number;
+      counts: UnifiedProxyCounts;
+      items: UnifiedProxyItem[];
+    }> {
+      const page = Math.max(1, filter.page ?? 1);
+      const pageSize = Math.max(1, Math.min(100, filter.pageSize ?? 50));
+      const offset = (page - 1) * pageSize;
+
+      const baseWhere: string[] = ["1 = 1"];
+      const baseParams: SqlParam[] = [];
+
+      if (filter.search?.trim()) {
+        const term = `%${filter.search.trim().toLowerCase()}%`;
+        baseWhere.push("(LOWER(p.proxy_key) LIKE ? OR LOWER(p.endpoint) LIKE ? OR LOWER(COALESCE(p.exit_ip, '')) LIKE ? OR LOWER(COALESCE(p.host, '')) LIKE ?)");
+        baseParams.push(term, term, term, term);
+      }
+
+      if (filter.protocol && filter.protocol !== "all") {
+        baseWhere.push("LOWER(p.protocol) = ?");
+        baseParams.push(filter.protocol.toLowerCase());
+      }
+
+      const baseWhereSql = baseWhere.join(" AND ");
+
+      // 1. Calculate overall counts for all, working, regressed, dead
+      const countsRow = db.get<{
+        total_all: number;
+        total_working: number;
+        total_regressed: number;
+        total_dead: number;
+      }>(
+        `SELECT
+           COUNT(*) AS total_all,
+           SUM(CASE WHEN (p.status = 'usable' OR COALESCE(latest_a.verdict, '') = 'PASS') THEN 1 ELSE 0 END) AS total_working,
+           SUM(CASE WHEN NOT (p.status = 'usable' OR COALESCE(latest_a.verdict, '') = 'PASS') AND (COALESCE(p.successes, 0) > 0 OR COALESCE(audit_pass.has_pass, 0) = 1) THEN 1 ELSE 0 END) AS total_regressed,
+           SUM(CASE WHEN NOT (p.status = 'usable' OR COALESCE(latest_a.verdict, '') = 'PASS') AND NOT (COALESCE(p.successes, 0) > 0 OR COALESCE(audit_pass.has_pass, 0) = 1) THEN 1 ELSE 0 END) AS total_dead
+         FROM proxies p
+         LEFT JOIN proxy_audits latest_a ON latest_a.rowid = (
+           SELECT a2.rowid FROM proxy_audits a2
+           WHERE a2.proxy_key = p.proxy_key
+           ORDER BY a2.finished_at DESC
+           LIMIT 1
+         )
+         LEFT JOIN (
+           SELECT proxy_key, 1 AS has_pass FROM proxy_audits WHERE verdict = 'PASS' GROUP BY proxy_key
+         ) audit_pass ON audit_pass.proxy_key = p.proxy_key
+         WHERE ${baseWhereSql}`,
+        baseParams
+      );
+
+      const counts: UnifiedProxyCounts = {
+        all: Number(countsRow?.total_all ?? 0),
+        working: Number(countsRow?.total_working ?? 0),
+        regressed: Number(countsRow?.total_regressed ?? 0),
+        dead: Number(countsRow?.total_dead ?? 0),
+      };
+
+      // 2. Filter by status if specified
+      const statusWhere = [...baseWhere];
+      const statusParams = [...baseParams];
+
+      if (filter.status === "working") {
+        statusWhere.push("(p.status = 'usable' OR COALESCE(latest_a.verdict, '') = 'PASS')");
+      } else if (filter.status === "regressed") {
+        statusWhere.push("NOT (p.status = 'usable' OR COALESCE(latest_a.verdict, '') = 'PASS') AND (COALESCE(p.successes, 0) > 0 OR COALESCE(audit_pass.has_pass, 0) = 1)");
+      } else if (filter.status === "dead") {
+        statusWhere.push("NOT (p.status = 'usable' OR COALESCE(latest_a.verdict, '') = 'PASS') AND NOT (COALESCE(p.successes, 0) > 0 OR COALESCE(audit_pass.has_pass, 0) = 1)");
+      }
+
+      const statusWhereSql = statusWhere.join(" AND ");
+
+      const countFilteredRow = db.get<{ total: number }>(
+        `SELECT COUNT(*) AS total
+         FROM proxies p
+         LEFT JOIN proxy_audits latest_a ON latest_a.rowid = (
+           SELECT a2.rowid FROM proxy_audits a2
+           WHERE a2.proxy_key = p.proxy_key
+           ORDER BY a2.finished_at DESC
+           LIMIT 1
+         )
+         LEFT JOIN (
+           SELECT proxy_key, 1 AS has_pass FROM proxy_audits WHERE verdict = 'PASS' GROUP BY proxy_key
+         ) audit_pass ON audit_pass.proxy_key = p.proxy_key
+         WHERE ${statusWhereSql}`,
+        statusParams
+      );
+
+      const total = Number(countFilteredRow?.total ?? 0);
+
+      const rows = db.all<Record<string, unknown>>(
+        `SELECT
+           p.proxy_key,
+           p.endpoint,
+           p.protocol,
+           p.host,
+           p.port,
+           p.status,
+           p.exit_ip,
+           p.latency_ms,
+           p.checked_at,
+           p.successes,
+           p.failures,
+           latest_a.verdict AS latest_verdict,
+           latest_a.result_json,
+           audit_pass.has_pass,
+           CASE
+             WHEN (p.status = 'usable' OR COALESCE(latest_a.verdict, '') = 'PASS') THEN 'working'
+             WHEN (COALESCE(p.successes, 0) > 0 OR COALESCE(audit_pass.has_pass, 0) = 1) THEN 'regressed'
+             ELSE 'dead'
+           END AS computed_status
+         FROM proxies p
+         LEFT JOIN proxy_audits latest_a ON latest_a.rowid = (
+           SELECT a2.rowid FROM proxy_audits a2
+           WHERE a2.proxy_key = p.proxy_key
+           ORDER BY a2.finished_at DESC
+           LIMIT 1
+         )
+         LEFT JOIN (
+           SELECT proxy_key, 1 AS has_pass FROM proxy_audits WHERE verdict = 'PASS' GROUP BY proxy_key
+         ) audit_pass ON audit_pass.proxy_key = p.proxy_key
+         WHERE ${statusWhereSql}
+         ORDER BY
+           CASE WHEN (p.status = 'usable' OR COALESCE(latest_a.verdict, '') = 'PASS') THEN 0 WHEN (COALESCE(p.successes, 0) > 0 OR COALESCE(audit_pass.has_pass, 0) = 1) THEN 1 ELSE 2 END ASC,
+           p.latency_ms ASC NULLS LAST,
+           p.checked_at DESC NULLS LAST
+         LIMIT ? OFFSET ?`,
+        [...statusParams, pageSize, offset]
+      );
+
+      const items: UnifiedProxyItem[] = rows.map((r) => {
+        let geo: { city?: string; country?: string } | undefined;
+        let isp: string | undefined;
+        let timezone: string | undefined;
+        let udpVal: "Yes" | "No" | "Unknown" = String(r.protocol).toLowerCase() === "socks5" ? "Yes" : "No";
+
+        if (typeof r.result_json === "string") {
+          try {
+            const parsed = JSON.parse(r.result_json);
+            if (parsed.evidence?.exitIp) {
+              geo = parsed.evidence.exitIp.geo;
+              isp = parsed.evidence.exitIp.isp;
+              timezone = parsed.evidence.exitIp.timezone;
+            }
+            if (parsed.evidence?.network?.udp !== undefined) {
+              udpVal = parsed.evidence.network.udp ? "Yes" : "No";
+            }
+          } catch {}
+        }
+
+        const endpoint = String(r.endpoint ?? "");
+        let syncStatus: "active" | "reserve" | "unsynced" = "unsynced";
+        if (filter.activePoolEndpoints?.has(endpoint)) {
+          syncStatus = "active";
+        } else if (filter.reservePoolEndpoints?.has(endpoint)) {
+          syncStatus = "reserve";
+        }
+
+        return {
+          key: String(r.proxy_key),
+          name: endpoint,
+          protocol: String(r.protocol).toLowerCase() as any,
+          host: String(r.host || endpoint.split(":")[0]),
+          port: Number(r.port || endpoint.split(":")[1] || 0),
+          status: r.computed_status as "working" | "dead" | "regressed",
+          udp: udpVal,
+          sync: syncStatus,
+          latencyMs: r.latency_ms !== null && r.latency_ms !== undefined ? Number(r.latency_ms) : null,
+          exitIp: r.exit_ip ? String(r.exit_ip) : null,
+          geo,
+          isp,
+          timezone,
+          lastCheckedAt: r.checked_at ? Number(r.checked_at) : null,
+        };
+      });
+
+      return {
+        total,
+        counts,
+        items,
       };
     },
   };
