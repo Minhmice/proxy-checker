@@ -6,14 +6,14 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   Globe,
-  ScanSearch,
   ShieldCheck,
   HelpCircle,
   Settings,
   LogOut,
-  Shield,
+  Server,
+  Network,
   Activity,
-  Zap,
+  Bell,
 } from "lucide-react";
 import { useAuth } from "./auth-provider";
 import {
@@ -34,9 +34,14 @@ import {
 const NAV_MAIN = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
   { href: "/proxies", label: "Proxies", icon: Globe },
-  { href: "/diagnostics", label: "Diagnostics", icon: ScanSearch },
-  { href: "/auditor", label: "Safety Auditor", icon: ShieldCheck },
   { href: "/help", label: "Help Center", icon: HelpCircle },
+] as const;
+
+const NAV_INFRASTRUCTURE = [
+  { href: "/nodes", label: "Nodes", icon: Server },
+  { href: "/proxy-endpoints", label: "Proxy Endpoints", icon: Network },
+  { href: "/monitoring", label: "Monitoring", icon: Activity },
+  { href: "/events", label: "Events", icon: Bell },
 ] as const;
 
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
@@ -102,6 +107,39 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
           </SidebarGroupContent>
         </SidebarGroup>
 
+        <SidebarSeparator className="my-2" />
+
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-xs uppercase tracking-wider text-muted-foreground font-semibold px-2 mb-1">
+            Infrastructure
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu className="gap-1">
+              {NAV_INFRASTRUCTURE.map((item) => {
+                const isActive = pathname.startsWith(item.href);
+                const Icon = item.icon;
+                return (
+                  <SidebarMenuItem key={item.href}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={isActive}
+                      tooltip={item.label}
+                      className="transition-all font-medium h-9 text-xs rounded-md data-[active=true]:font-semibold data-[active=true]:bg-primary/10 data-[active=true]:text-primary"
+                    >
+                      <Link href={item.href} className="flex items-center gap-2.5 w-full">
+                        <Icon className="size-4 shrink-0" />
+                        <span className="truncate flex-1">{item.label}</span>
+                        {isActive && (
+                          <span className="size-1.5 rounded-full bg-primary shrink-0 group-data-[collapsible=icon]:hidden shadow-[0_0_6px_var(--primary)]" />
+                        )}
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
         <SidebarSeparator className="my-2" />
 
         <SidebarGroup>
