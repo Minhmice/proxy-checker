@@ -1,5 +1,18 @@
 import type { AuditVerdict, ProxyAuditResult, ProxyInput } from "../auditor/types.js";
 export type { AuditVerdict, ProxyAuditResult, ProxyInput };
+import type {
+  ProxyLifecycleState,
+  ProxyInventoryItem,
+  ProxyInventoryDetail,
+  ProxyInventoryFilter,
+  ProxyInventoryPage,
+  ProxyImportInput,
+  ProxyImportSummary,
+  UnifiedProxyItem,
+  UnifiedProxyCounts,
+  UnifiedProxyFilter,
+} from "../server/proxy-intelligence-repository.js";
+
 export type {
   ProxyLifecycleState,
   ProxyInventoryItem,
@@ -8,7 +21,26 @@ export type {
   ProxyInventoryPage,
   ProxyImportInput,
   ProxyImportSummary,
-} from "../server/proxy-intelligence-repository.js";
+  UnifiedProxyItem,
+  UnifiedProxyCounts,
+  UnifiedProxyFilter,
+};
+
+export interface UnifiedProxyHistoryEntry {
+  id: string;
+  status: "passed" | "failed";
+  exitIp: string | null;
+  isp: string | null;
+  udp: "Yes" | "No";
+  latencyMs: number | null;
+  timestamp: number;
+}
+
+export interface UnifiedProxyResponse {
+  total: number;
+  counts: UnifiedProxyCounts;
+  items: UnifiedProxyItem[];
+}
 
 export type ProxyProtocol = "http" | "socks5";
 
@@ -95,9 +127,10 @@ export interface PoolStatus {
   authMode?: "password" | "api_key" | "none";
   lastSyncAt: number | null;
   lastError: string;
-  stats: PoolStats;
-  syncIntervalMinutes: number;
-  activeLimit: number;
+   stats: PoolStats;
+  autoSync?: boolean;
+   syncIntervalMinutes: number;
+   activeLimit: number;
   activity?: ActivityEntry[];
   syncProgress?: SyncProgress;
 }
@@ -119,6 +152,7 @@ export interface AppSettingsPublic {
   controlPasswordSet: boolean;
   nineRouterPasswordSet: boolean;
   nineRouterApiKeySet: boolean;
+  nineRouterAutoSync: boolean;
   activePoolLimit: number;
   nineRouterSyncMinutes: number;
   checkConcurrency: number;
@@ -142,6 +176,7 @@ export interface SettingsUpdatePayload {
   nineRouterUrl?: string;
   nineRouterPassword?: string;
   nineRouterApiKey?: string;
+  nineRouterAutoSync?: boolean;
   activePoolLimit?: number;
   nineRouterSyncMinutes?: number;
   checkConcurrency?: number;

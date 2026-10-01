@@ -1,8 +1,20 @@
-import type { DiagnosticJob, DetailedDiagnosticResult, PoolRecord, PoolStatus, MetricsSnapshot } from "./types";
+import type {
+  DiagnosticJob,
+  DetailedDiagnosticResult,
+  PoolRecord,
+  PoolStatus,
+  MetricsSnapshot,
+  SettingsResponse,
+  SettingsUpdatePayload,
+  NineRouterTestResult,
+  UnifiedProxyItem,
+  UnifiedProxyResponse,
+  UnifiedProxyHistoryEntry,
+} from "./types";
 
 const STORAGE_KEY = "minhmiceproxy-password";
 const STORAGE_DATE_KEY = "minhmiceproxy-password-date";
-
+const COOKIE_NAME = "minhmiceproxy-auth";
 function todayKey(): string {
   const now = new Date();
   return `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
@@ -20,18 +32,30 @@ export function getStoredPassword(): string | null {
   if (sessionStorage.getItem(STORAGE_DATE_KEY) !== todayKey()) {
     sessionStorage.removeItem(STORAGE_KEY);
     sessionStorage.removeItem(STORAGE_DATE_KEY);
+    document.cookie = `${COOKIE_NAME}=; path=/; max-age=0`;
     return null;
   }
-  return sessionStorage.getItem(STORAGE_KEY);
+  const pass = sessionStorage.getItem(STORAGE_KEY);
+  if (pass) {
+    document.cookie = `${COOKIE_NAME}=${encodeURIComponent(pass)}; path=/; max-age=86400; SameSite=Lax`;
+  }
+  return pass;
 }
 
 export function storePassword(password: string) {
   sessionStorage.setItem(STORAGE_KEY, password);
   sessionStorage.setItem(STORAGE_DATE_KEY, todayKey());
+  if (typeof document !== "undefined") {
+    document.cookie = `${COOKIE_NAME}=${encodeURIComponent(password)}; path=/; max-age=86400; SameSite=Lax`;
+  }
 }
 
 export async function clearStoredPassword() {
   sessionStorage.removeItem(STORAGE_KEY);
+  sessionStorage.removeItem(STORAGE_DATE_KEY);
+  if (typeof document !== "undefined") {
+    document.cookie = `${COOKIE_NAME}=; path=/; max-age=0`;
+  }
 }
 
 export async function fetchStatus(password: string, signal?: AbortSignal): Promise<PoolStatus> {
@@ -157,7 +181,7 @@ export async function fetchSettings(password: string, signal?: AbortSignal) {
   return response.json() as Promise<import("./types").SettingsResponse>;
 }
 
-export async function updateSettings(password: string, patch: import("./types").SettingsUpdatePayload) {
+export async function updateSettings(password: string, patch: SettingsUpdatePayload) {
   const response = await fetch("/api/settings", {
     method: "PUT",
     headers: authHeaders(password),
@@ -166,7 +190,7 @@ export async function updateSettings(password: string, patch: import("./types").
   const body = await response.json();
   if (response.status === 401) throw new Error("Wrong control password");
   if (!response.ok) throw new Error(body.error || "Could not save settings");
-  return body as import("./types").SettingsResponse;
+  return body as SettingsResponse;
 }
 
 export async function testNineRouterConnection(
@@ -180,5 +204,118 @@ export async function testNineRouterConnection(
   });
   const body = await response.json();
   if (response.status === 401) throw new Error("Wrong control password");
-  return body as import("./types").NineRouterTestResult;
+  return body as NineRouterTestResult;
+}
+
+export async function downloadProxyExport(
+  password: string,
+  format: "txt" | "csv",
+  includeCredentials = false
+): Promise<{ blob: Blob; filename: string }> {
+  const query = new URLSearchParams({
+    format,
+    includeCredentials: String(includeCredentials),
+  });
+  const response = await fetch(`/api/settings/proxy-export?${query.toString()}`, {
+    headers: authHeaders(password),
+  });
+  if (response.status === 401) throw new Error("Wrong control password");
+  if (!response.ok) {
+    let msg = "Failed to export proxies";
+    try {
+      const body = await response.json();
+      if (body.error) msg = body.error;
+    } catch {}
+    throw new Error(msg);
+  }
+  const blob = await response.blob();
+  const disposition = response.headers.get("content-disposition");
+  let filename = `proxies-${format === "csv" ? "export.csv" : "export.txt"}`;
+  if (disposition) {
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    if (match?.[1]) filename = match[1];
+  }
+  return { blob, filename };
+}
+
+export async function fetchUnifiedProxies(
+  password: string,
+  params?: {
+    status?: string;
+    search?: string;
+    protocol?: string;
+    page?: number;
+    pageSize?: number;
+  },
+  signal?: AbortSignal
+): Promise<UnifiedProxyResponse> {
+  const query = new URLSearchParams();
+  if (params?.status) query.set("status", params.status);
+  if (params?.search) query.set("search", params.search);
+  if (params?.protocol) query.set("protocol", params.protocol);
+  if (params?.page) query.set("page", String(params.page));
+  if (params?.pageSize) query.set("pageSize", String(params.pageSize));
+
+  const response = await fetch(`/api/proxies/unified?${query.toString()}`, {
+    cache: "no-store",
+    signal,
+    headers: authHeaders(password),
+  });
+  if (response.status === 401) throw new Error("Wrong control password");
+  if (!response.ok) {
+    let msg = "Failed to fetch proxies";
+    try {
+      const data = await response.json();
+      if (data.error) msg = data.error;
+    } catch {}
+    throw new Error(msg);
+  }
+  return response.json();
+}
+
+export async function checkProxyValidity(
+  password: string,
+  proxyKey: string,
+  signal?: AbortSignal
+): Promise<{ proxy: UnifiedProxyItem; auditResult?: unknown }> {
+  const response = await fetch("/api/proxies/check", {
+    method: "POST",
+    cache: "no-store",
+    signal,
+    headers: authHeaders(password),
+    body: JSON.stringify({ proxyKey }),
+  });
+  if (response.status === 401) throw new Error("Wrong control password");
+  if (!response.ok) {
+    let msg = "Failed to check proxy validity";
+    try {
+      const data = await response.json();
+      if (data.error) msg = data.error;
+    } catch {}
+    throw new Error(msg);
+  }
+  return response.json();
+}
+
+export async function fetchProxyHistory(
+  password: string,
+  proxyKey: string,
+  signal?: AbortSignal
+): Promise<{ history: UnifiedProxyHistoryEntry[] }> {
+  const query = new URLSearchParams({ key: proxyKey });
+  const response = await fetch(`/api/proxies/history?${query.toString()}`, {
+    cache: "no-store",
+    signal,
+    headers: authHeaders(password),
+  });
+  if (response.status === 401) throw new Error("Wrong control password");
+  if (!response.ok) {
+    let msg = "Failed to fetch proxy history";
+    try {
+      const data = await response.json();
+      if (data.error) msg = data.error;
+    } catch {}
+    throw new Error(msg);
+  }
+  return response.json();
 }
