@@ -18,6 +18,9 @@ import { openProxyIntelligenceDb } from "./proxy-intelligence-db.js";
 import { createProxyIntelligenceRepository } from "./proxy-intelligence-repository.js";
 import { createProxyIntelligenceJobManager } from "./proxy-intelligence-jobs.js";
 
+import { checkProxy } from "../auditor/index.js";
+import { createFleetRepository } from "../proxyfleet/db.js";
+import { createFleetApiHandler } from "../proxyfleet/api-router.js";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "../..");
 
@@ -31,6 +34,12 @@ const proxyIntelligenceJobs = createProxyIntelligenceJobManager({
   repo: proxyIntelligenceRepo,
 });
 
+const fleetRepo = createFleetRepository({ sqlitePath: path.join(dataDir, "fleet.sqlite3") });
+void fleetRepo.migrate().catch((err) => console.error("Fleet DB migration failed:", err));
+const handleFleetApi = createFleetApiHandler({
+  repo: fleetRepo,
+  verifyAuth: verifyControlPassword,
+});
 const inputChecker = createInputChecker({
   inputDir,
   dataDir,
@@ -42,11 +51,33 @@ const auditorJobs = createAuditorJobManager({ dataDir });
 
 function auth(request: http.IncomingMessage): boolean {
   const header = request.headers.authorization;
-  if (!header?.startsWith("Basic ")) return false;
-  const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
-  const colon = decoded.indexOf(":");
-  if (colon < 0 || decoded.slice(0, colon) !== "admin") return false;
-  return verifyControlPassword(decoded.slice(colon + 1));
+  if (header?.startsWith("Basic ")) {
+    const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
+    const colon = decoded.indexOf(":");
+    if (colon >= 0 && decoded.slice(0, colon) === "admin") {
+      if (verifyControlPassword(decoded.slice(colon + 1))) return true;
+    }
+  }
+  if (header?.startsWith("Bearer ")) {
+    if (verifyControlPassword(header.slice(7).trim())) return true;
+  }
+
+  const cookieHeader = request.headers.cookie;
+  if (cookieHeader) {
+    const match = cookieHeader.split("; ").find((c) => c.startsWith("minhmiceproxy-auth="));
+    if (match) {
+      const cookiePass = decodeURIComponent(match.slice("minhmiceproxy-auth=".length));
+      if (verifyControlPassword(cookiePass)) return true;
+    }
+  }
+
+  const parsedUrl = new URL(request.url ?? "/", "http://localhost");
+  const queryAuth = parsedUrl.searchParams.get("password") || parsedUrl.searchParams.get("auth") || parsedUrl.searchParams.get("token");
+  if (queryAuth && verifyControlPassword(queryAuth)) {
+    return true;
+  }
+
+  return false;
 }
 
 function json(response: http.ServerResponse, payload: unknown, status = 200) {
@@ -365,6 +396,7 @@ async function handleSettings(request: http.IncomingMessage, response: http.Serv
         nineRouterPassword: typeof body.nineRouterPassword === "string" ? body.nineRouterPassword : undefined,
         nineRouterApiKey: typeof body.nineRouterApiKey === "string" ? body.nineRouterApiKey : undefined,
         activePoolLimit: body.activePoolLimit !== undefined ? Number(body.activePoolLimit) : undefined,
+        nineRouterAutoSync: body.nineRouterAutoSync !== undefined ? Boolean(body.nineRouterAutoSync) : undefined,
         nineRouterSyncMinutes: body.nineRouterSyncMinutes !== undefined ? Number(body.nineRouterSyncMinutes) : undefined,
         checkConcurrency: body.checkConcurrency !== undefined ? Number(body.checkConcurrency) : undefined,
         checkTimeoutMs: body.checkTimeoutMs !== undefined ? Number(body.checkTimeoutMs) : undefined,
@@ -391,10 +423,29 @@ async function handleSettings(request: http.IncomingMessage, response: http.Serv
     const format = parsedUrl.searchParams.get("format") === "csv" ? "csv" : "txt";
     const includeCredentials = parsedUrl.searchParams.get("includeCredentials") === "true";
 
-    const exportData = await proxyIntelligenceRepo.exportWorkingProxies({
+    const scopeParam = parsedUrl.searchParams.get("scope");
+    const scope = scopeParam === "usable" || scopeParam === "all" ? scopeParam : "active";
+
+    let exportData = poolRanker.exportActiveProxies({
       format,
       includeCredentials,
+      scope,
     });
+
+    if (exportData.count === 0) {
+      const fallback = await proxyIntelligenceRepo.exportWorkingProxies({
+        format,
+        includeCredentials,
+      });
+      if (fallback.body.trim()) {
+        exportData = {
+          filename: fallback.filename,
+          contentType: fallback.contentType,
+          body: fallback.body,
+          count: fallback.body.split("\n").length,
+        };
+      }
+    }
 
     response.writeHead(200, {
       "Content-Type": exportData.contentType,
@@ -426,9 +477,10 @@ function scheduleNineRouterSync() {
     clearInterval(syncIntervalId);
     syncIntervalId = null;
   }
-  if (!nineRouterConfigured()) return;
+  const secrets = getSettingsSecrets();
+  if (!nineRouterConfigured() || secrets.nineRouterAutoSync === false) return;
 
-  const intervalMs = Math.max(360, getSettingsSecrets().nineRouterSyncMinutes) * 60_000;
+  const intervalMs = Math.max(1, secrets.nineRouterSyncMinutes) * 60_000;
   const lastSyncAt = poolRanker.readState().lastSyncAt;
   const isRecent = typeof lastSyncAt === "number" && Date.now() - lastSyncAt < intervalMs;
 
@@ -450,7 +502,7 @@ onSettingsChange((_settings, changed) => {
   if (changed.some((key) => ["nineRouterUrl", "nineRouterPassword", "nineRouterApiKey"].includes(key))) {
     clearNineRouterSession();
   }
-  if (changed.includes("nineRouterSyncMinutes")) {
+  if (changed.includes("nineRouterSyncMinutes") || changed.includes("nineRouterAutoSync")) {
     scheduleNineRouterSync();
   }
 });
@@ -486,6 +538,23 @@ async function handleIntelligence(request: http.IncomingMessage, response: http.
     const summary = await proxyIntelligenceRepo.importProxies({ source, content });
     return json(response, summary);
   }
+  if (request.method === "POST" && pathname === "/api/intelligence/sync-working") {
+    try {
+      const body = (await readBody(request, 100_000).catch(() => ({}))) as Record<string, unknown>;
+      const pools = poolRanker.listByTier("all");
+      const summary = await proxyIntelligenceRepo.syncWorkingPools(pools);
+      let job;
+      if (Boolean(body.startAudit) && summary.proxyKeys.length > 0) {
+        job = await proxyIntelligenceJobs.createJob({
+          proxyKeys: summary.proxyKeys,
+          options: { attempts: 2, timeoutMs: 15000, concurrency: 5 },
+        });
+      }
+      return json(response, { ...summary, job });
+    } catch (err) {
+      return json(response, { error: (err as Error).message }, 500);
+    }
+  }
   if (request.method === "POST" && pathname === "/api/intelligence/jobs") {
     const body = await readBody(request, 1_000_000);
     const proxyKeys = Array.isArray(body.proxyKeys) ? (body.proxyKeys as string[]) : undefined;
@@ -518,6 +587,163 @@ async function handleIntelligence(request: http.IncomingMessage, response: http.
 
   return json(response, { error: "not found" }, 404);
 }
+async function handleProxiesUnified(request: http.IncomingMessage, response: http.ServerResponse, pathname: string) {
+  const parsedUrl = new URL(request.url ?? "/", "http://localhost");
+
+  if (request.method === "GET" && pathname === "/api/proxies/unified") {
+    const activePools = poolRanker.listByTier("active");
+    const reservePools = poolRanker.listByTier("reserve");
+    const activePoolEndpoints = new Set<string>();
+    for (const p of activePools) {
+      if (p.proxyUrl) {
+        try {
+          const u = new URL(p.proxyUrl);
+          activePoolEndpoints.add(u.host);
+        } catch {
+          const cleaned = p.proxyUrl.replace(/^[a-zA-Z0-9]+:\/\//, "").split("/")[0].split("@").pop() || "";
+          if (cleaned) activePoolEndpoints.add(cleaned);
+        }
+      }
+    }
+    const reservePoolEndpoints = new Set<string>();
+    for (const p of reservePools) {
+      if (p.proxyUrl) {
+        try {
+          const u = new URL(p.proxyUrl);
+          reservePoolEndpoints.add(u.host);
+        } catch {
+          const cleaned = p.proxyUrl.replace(/^[a-zA-Z0-9]+:\/\//, "").split("/")[0].split("@").pop() || "";
+          if (cleaned) reservePoolEndpoints.add(cleaned);
+        }
+      }
+    }
+
+    const filter = {
+      status: parsedUrl.searchParams.get("status") || "all",
+      search: parsedUrl.searchParams.get("search") || undefined,
+      protocol: parsedUrl.searchParams.get("protocol") || undefined,
+      page: Number(parsedUrl.searchParams.get("page") || "1"),
+      pageSize: Number(parsedUrl.searchParams.get("pageSize") || "50"),
+      activePoolEndpoints,
+      reservePoolEndpoints,
+    };
+
+    const res = await proxyIntelligenceRepo.getUnifiedProxies(filter);
+    return json(response, res);
+  }
+
+  if (request.method === "POST" && pathname === "/api/proxies/check") {
+    const body = (await readBody(request, 100_000).catch(() => ({}))) as Record<string, unknown>;
+    const proxyKey = typeof body.proxyKey === "string" ? body.proxyKey : "";
+    if (!proxyKey) return json(response, { error: "proxyKey is required" }, 400);
+
+    try {
+      const auditResult = await checkProxy(proxyKey, { attempts: 1, timeoutMs: 10000 });
+      const verdict = auditResult.verdict;
+      const auditId = crypto.randomUUID();
+      const finishedTime = Date.now();
+
+      proxyIntelligenceDb.transaction(() => {
+        proxyIntelligenceDb.run(
+          `INSERT INTO proxy_audits (
+            id, proxy_key, verdict, lifecycle_state, overall_score,
+            transport_score, privacy_score, reputation_score, reliability_score,
+            started_at, finished_at, result_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            auditId,
+            proxyKey,
+            verdict,
+            verdict === "PASS" ? "working" : "dead",
+            auditResult.scores?.overallSafety ?? null,
+            auditResult.scores?.transportSecurity ?? null,
+            auditResult.scores?.privacy ?? null,
+            auditResult.scores?.reputation ?? null,
+            auditResult.scores?.reliability ?? null,
+            finishedTime,
+            finishedTime,
+            JSON.stringify(auditResult),
+          ]
+        );
+
+        proxyIntelligenceDb.run(
+          `UPDATE proxies SET
+            latency_ms = COALESCE(?, latency_ms),
+            exit_ip = COALESCE(?, exit_ip),
+            status = ?,
+            checked_at = ?,
+            updated_at = ?
+          WHERE proxy_key = ?`,
+          [
+            auditResult.connectivity?.latencyMs ?? null,
+            auditResult.exitIp?.ip ?? null,
+            verdict === "FAIL" ? "dead" : "usable",
+            finishedTime,
+            finishedTime,
+            proxyKey,
+          ]
+        );
+      });
+
+      const updated = await proxyIntelligenceRepo.getUnifiedProxies({ search: proxyKey, pageSize: 1 });
+      const item = updated.items.find((i) => i.key === proxyKey) || updated.items[0];
+      return json(response, { proxy: item, auditResult });
+    } catch (err) {
+      return json(response, { error: (err as Error).message }, 500);
+    }
+  }
+
+  if (request.method === "GET" && pathname === "/api/proxies/history") {
+    const key = parsedUrl.searchParams.get("key");
+    if (!key) return json(response, { error: "key is required" }, 400);
+
+    const rows = proxyIntelligenceDb.all<{
+      id: string;
+      verdict: string;
+      finished_at: number;
+      result_json: string;
+    }>(
+      `SELECT id, verdict, finished_at, result_json
+       FROM proxy_audits
+       WHERE proxy_key = ?
+       ORDER BY finished_at DESC
+       LIMIT 10`,
+      [key]
+    );
+
+    const history = rows.map((r) => {
+      let exitIp: string | null = null;
+      let isp: string | null = null;
+      let udp: "Yes" | "No" = "No";
+      let latencyMs: number | null = null;
+
+      if (typeof r.result_json === "string") {
+        try {
+          const parsed = JSON.parse(r.result_json);
+          exitIp = (parsed.exitIp?.ip ?? parsed.evidence?.exitIp?.ip) ?? null;
+          isp = (parsed.exitIp?.isp ?? parsed.evidence?.exitIp?.isp) ?? null;
+          udp = (parsed.network?.udp ?? parsed.evidence?.network?.udp) ? "Yes" : "No";
+          latencyMs = (parsed.connectivity?.latencyMs ?? parsed.evidence?.connectivity?.latencyMs) ?? null;
+        } catch {}
+      }
+
+      return {
+        id: r.id,
+        status: r.verdict === "PASS" ? "passed" : "failed",
+        exitIp,
+        isp,
+        udp,
+        latencyMs,
+        timestamp: r.finished_at,
+      };
+    });
+
+    return json(response, { history });
+  }
+
+  return json(response, { error: "not found" }, 404);
+}
+
 
 
 async function main() {
@@ -528,8 +754,39 @@ async function main() {
   const upgradeHandler = dev ? app.getUpgradeHandler() : null;
   const server = http.createServer(async (request, response) => {
     const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+    if (request.method === "GET" && pathname === "/install-agent.sh") {
+      const scriptPath = path.join(root, "scripts", "install-agent.sh");
+      if (fs.existsSync(scriptPath)) {
+        const content = fs.readFileSync(scriptPath);
+        response.writeHead(200, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Content-Length": content.length,
+          "Cache-Control": "no-cache",
+        });
+        response.end(content);
+        return;
+      }
+    }
+    if (request.method === "GET" && pathname.startsWith("/bin/")) {
+      const binaryName = path.basename(pathname);
+      const binPath = path.join(root, "bin", binaryName);
+      if (fs.existsSync(binPath) && fs.statSync(binPath).isFile()) {
+        const content = fs.readFileSync(binPath);
+        response.writeHead(200, {
+          "Content-Type": "application/octet-stream",
+          "Content-Length": content.length,
+          "Cache-Control": "no-cache",
+        });
+        response.end(content);
+        return;
+      }
+    }
     if (!pathname.startsWith("/api/")) return handle(request, response);
     if (pathname === "/api/health") return json(response, { ok: true });
+    if (pathname.startsWith("/api/fleet/")) {
+      const handled = await handleFleetApi(request, response, pathname);
+      if (handled) return;
+    }
     if (!auth(request)) return json(response, { error: "Invalid control password" }, 401);
 
     if (pathname.startsWith("/api/ninerouter/")) return handleNineRouter(request, response, pathname);
@@ -537,6 +794,7 @@ async function main() {
     if (pathname.startsWith("/api/auditor/")) return handleAuditor(request, response, pathname);
     if (pathname.startsWith("/api/settings")) return handleSettings(request, response, pathname);
     if (pathname.startsWith("/api/intelligence/")) return handleIntelligence(request, response, pathname);
+    if (pathname.startsWith("/api/proxies/")) return handleProxiesUnified(request, response, pathname);
 
     if (request.method === "GET" && pathname === "/api/best") {
       return json(response, { proxies: inputChecker.best().slice(0, 20), running: inputChecker.isRunning() });
@@ -594,6 +852,11 @@ process.on("uncaughtException", (error) => {
 function shutdown() {
   try {
     proxyIntelligenceDb.close();
+  } catch {
+    // ignore error on shutdown
+  }
+  try {
+    fleetRepo.close();
   } catch {
     // ignore error on shutdown
   }

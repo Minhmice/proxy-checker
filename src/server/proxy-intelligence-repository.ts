@@ -787,13 +787,15 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
         if (typeof r.result_json === "string") {
           try {
             const parsed = JSON.parse(r.result_json);
-            if (parsed.evidence?.exitIp) {
-              geo = parsed.evidence.exitIp.geo;
-              isp = parsed.evidence.exitIp.isp;
-              timezone = parsed.evidence.exitIp.timezone;
+            const exitIpObj = parsed.exitIp || parsed.evidence?.exitIp;
+            if (exitIpObj) {
+              geo = exitIpObj.geo;
+              isp = exitIpObj.isp;
+              timezone = exitIpObj.timezone;
             }
-            if (parsed.evidence?.network?.udp !== undefined) {
-              udpVal = parsed.evidence.network.udp ? "Yes" : "No";
+            const netObj = parsed.network || parsed.evidence?.network;
+            if (netObj?.udp !== undefined) {
+              udpVal = netObj.udp ? "Yes" : "No";
             }
           } catch {}
         }
