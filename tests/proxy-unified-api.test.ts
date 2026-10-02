@@ -65,6 +65,32 @@ test("repository and history serialization for unified proxies API", async () =>
     assert.equal(item.geo?.country, "Vietnam");
     assert.equal(item.timezone, "Asia/Bangkok");
 
+    // Assert new unified contract fields
+    assert.equal(res.pagination.total, 1);
+    assert.equal(res.facets.all, 1);
+    assert.equal(res.facets.working, 1);
+    assert.equal(res.facets.protocols.socks5, 1);
+    assert.equal(item.health, "working");
+    assert.equal(item.poolTier, "active");
+    assert.equal(item.lastAudit?.verdict, "PASS");
+
+    // 1b. Query audit detail
+    const detail = await repo.getAuditDetail(key);
+    assert.ok(detail);
+    assert.equal(detail.proxyKey, key);
+    assert.equal(detail.verdict, "PASS");
+
+    // 1c. Test previewImport
+    const preview = await repo.previewImport({
+      source: "bulk.txt",
+      content: "http://1.2.3.4:8080\nsocks5://5.6.7.8:1080\ninvalid-line\n",
+    });
+    assert.equal(preview.totalLines, 3);
+    assert.equal(preview.valid, 2);
+    assert.equal(preview.invalid, 1);
+    assert.equal(preview.protocols.http, 1);
+    assert.equal(preview.protocols.socks5, 1);
+
     // 2. Query history
     const historyRows = db.all<{
       id: string;

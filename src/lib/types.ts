@@ -13,6 +13,7 @@ import type {
   UnifiedProxyItem,
   UnifiedProxyCounts,
   UnifiedProxyFilter,
+  UnifiedProxyResponse,
 } from "../server/proxy-intelligence-repository.js";
 
 export type {
@@ -28,6 +29,7 @@ export type {
   UnifiedProxyItem,
   UnifiedProxyCounts,
   UnifiedProxyFilter,
+  UnifiedProxyResponse,
 };
 
 export interface UnifiedProxyHistoryEntry {
@@ -40,11 +42,6 @@ export interface UnifiedProxyHistoryEntry {
   timestamp: number;
 }
 
-export interface UnifiedProxyResponse {
-  total: number;
-  counts: UnifiedProxyCounts;
-  items: UnifiedProxyItem[];
-}
 
 export type ProxyProtocol = "http" | "socks5";
 

@@ -413,8 +413,13 @@ async function handleSettings(request: http.IncomingMessage, response: http.Serv
   if (request.method === "GET" && pathname === "/api/settings/proxy-export") {
     const parsedUrl = new URL(request.url ?? "/", "http://localhost");
     const format = parsedUrl.searchParams.get("format") === "csv" ? "csv" : "txt";
-    const includeCredentials = parsedUrl.searchParams.get("includeCredentials") === "true";
+    const confirm = parsedUrl.searchParams.get("confirmCredentials");
+    const requestedCreds = parsedUrl.searchParams.get("includeCredentials") === "true";
+    const includeCredentials = requestedCreds && (confirm === "yes" || confirm === "true");
 
+    if (requestedCreds && !includeCredentials) {
+      return json(response, { error: "Exporting credentials requires explicit confirmation (confirmCredentials=yes)" }, 403);
+    }
     const scopeParam = parsedUrl.searchParams.get("scope");
     const scope = scopeParam === "usable" || scopeParam === "all" ? scopeParam : "active";
 
@@ -533,6 +538,14 @@ async function handleIntelligence(request: http.IncomingMessage, response: http.
     const summary = await proxyIntelligenceRepo.importProxies({ source, content });
     return json(response, summary);
   }
+  if (request.method === "POST" && pathname === "/api/intelligence/import/preview") {
+    const body = await readBody(request, 5_000_000);
+    const source = typeof body.source === "string" ? body.source.trim() : "import.txt";
+    const content = typeof body.content === "string" ? body.content : "";
+    if (!content.trim()) return json(response, { error: "content cannot be empty" }, 400);
+    const preview = await proxyIntelligenceRepo.previewImport({ source, content });
+    return json(response, { preview });
+  }
   if (request.method === "POST" && pathname === "/api/intelligence/sync-working") {
     try {
       const body = (await readBody(request, 100_000).catch(() => ({}))) as Record<string, unknown>;
@@ -621,17 +634,28 @@ async function handleProxiesUnified(request: http.IncomingMessage, response: htt
     }
 
     const filter = {
-      status: parsedUrl.searchParams.get("status") || "all",
-      search: parsedUrl.searchParams.get("search") || undefined,
+      status: parsedUrl.searchParams.get("health") || parsedUrl.searchParams.get("status") || "all",
+      search: parsedUrl.searchParams.get("q") || parsedUrl.searchParams.get("search") || undefined,
       protocol: parsedUrl.searchParams.get("protocol") || undefined,
-      page: Number(parsedUrl.searchParams.get("page") || "1"),
-      pageSize: Number(parsedUrl.searchParams.get("pageSize") || "50"),
+      source: parsedUrl.searchParams.get("source") || undefined,
+      sort: (parsedUrl.searchParams.get("sort") as any) || undefined,
+      direction: (parsedUrl.searchParams.get("direction") as any) || undefined,
+      page: Math.max(1, Number(parsedUrl.searchParams.get("page") || "1")),
+      pageSize: Math.max(1, Math.min(100, Number(parsedUrl.searchParams.get("pageSize") || "50"))),
       activePoolEndpoints,
       reservePoolEndpoints,
     };
 
     const res = await proxyIntelligenceRepo.getUnifiedProxies(filter);
     return json(response, res);
+  }
+
+  if (request.method === "GET" && pathname === "/api/proxies/detail") {
+    const key = parsedUrl.searchParams.get("key");
+    if (!key) return json(response, { error: "key is required" }, 400);
+    const auditId = parsedUrl.searchParams.get("auditId") || undefined;
+    const auditDetail = await proxyIntelligenceRepo.getAuditDetail(key, auditId);
+    return json(response, { auditDetail });
   }
 
   if (request.method === "POST" && pathname === "/api/proxies/check") {
@@ -641,55 +665,20 @@ async function handleProxiesUnified(request: http.IncomingMessage, response: htt
 
     try {
       const auditResult = await checkProxy(proxyKey, { attempts: 1, timeoutMs: 10000 });
-      const verdict = auditResult.verdict;
       const auditId = crypto.randomUUID();
       const finishedTime = Date.now();
 
-      proxyIntelligenceDb.transaction(() => {
-        proxyIntelligenceDb.run(
-          `INSERT INTO proxy_audits (
-            id, proxy_key, verdict, lifecycle_state, overall_score,
-            transport_score, privacy_score, reputation_score, reliability_score,
-            started_at, finished_at, result_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            auditId,
-            proxyKey,
-            verdict,
-            verdict === "PASS" ? "working" : "dead",
-            auditResult.scores?.overallSafety ?? null,
-            auditResult.scores?.transportSecurity ?? null,
-            auditResult.scores?.privacy ?? null,
-            auditResult.scores?.reputation ?? null,
-            auditResult.scores?.reliability ?? null,
-            finishedTime,
-            finishedTime,
-            JSON.stringify(auditResult),
-          ]
-        );
-
-        proxyIntelligenceDb.run(
-          `UPDATE proxies SET
-            latency_ms = COALESCE(?, latency_ms),
-            exit_ip = COALESCE(?, exit_ip),
-            status = ?,
-            checked_at = ?,
-            updated_at = ?
-          WHERE proxy_key = ?`,
-          [
-            auditResult.connectivity?.latencyMs ?? null,
-            auditResult.exitIp?.ip ?? null,
-            verdict === "FAIL" ? "dead" : "usable",
-            finishedTime,
-            finishedTime,
-            proxyKey,
-          ]
-        );
+      await proxyIntelligenceRepo.persistAuditSnapshot({
+        proxyKey,
+        result: auditResult,
+        auditId,
+        finishedAt: finishedTime,
       });
 
+      const auditDetail = await proxyIntelligenceRepo.getAuditDetail(proxyKey, auditId);
       const updated = await proxyIntelligenceRepo.getUnifiedProxies({ search: proxyKey, pageSize: 1 });
-      const item = updated.items.find((i) => i.key === proxyKey) || updated.items[0];
-      return json(response, { proxy: item, auditResult });
+      const item = updated.items.find((i) => i.key === proxyKey || i.proxyKey === proxyKey) || updated.items[0];
+      return json(response, { proxy: item, auditDetail, auditResult });
     } catch (err) {
       return json(response, { error: (err as Error).message }, 500);
     }

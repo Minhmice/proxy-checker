@@ -119,11 +119,30 @@ export interface ExportResult {
   body: string;
 }
 export interface UnifiedProxyItem {
-  key: string;
-  name: string;
-  protocol: "http" | "https" | "socks4" | "socks5";
+  // New spec fields
+  proxyKey: string;
   host: string;
   port: number;
+  protocol: "http" | "https" | "socks4" | "socks5";
+  source: string | null;
+  poolTier: "active" | "reserve" | null;
+  health: "working" | "regressed" | "dead";
+  everPassed: boolean;
+  lastAudit: {
+    id: string;
+    verdict: "PASS" | "WARN" | "FAIL" | "UNKNOWN";
+    checkedAt: string;
+    exitIp?: string;
+    country?: string;
+    isp?: string;
+    latencyMs?: number;
+    overallSafety?: number;
+    primaryReasonCode?: string;
+  } | null;
+
+  // Legacy compatibility fields
+  key: string;
+  name: string;
   status: "working" | "dead" | "regressed";
   udp: "Yes" | "No" | "Unknown";
   sync: "active" | "reserve" | "unsynced";
@@ -142,10 +161,29 @@ export interface UnifiedProxyCounts {
   dead: number;
 }
 
+export interface UnifiedProxyResponse {
+  total: number;
+  counts: UnifiedProxyCounts;
+  pagination: { page: number; pageSize: number; total: number };
+  facets: {
+    all: number;
+    working: number;
+    regressed: number;
+    dead: number;
+    protocols: Record<string, number>;
+  };
+  meta: { generatedAt: string };
+  items: UnifiedProxyItem[];
+}
+
 export interface UnifiedProxyFilter {
   status?: "all" | "working" | "regressed" | "dead" | string;
+  health?: "all" | "working" | "regressed" | "dead" | string;
   search?: string;
   protocol?: string;
+  source?: string;
+  sort?: "health" | "lastChecked" | "latency" | "endpoint";
+  direction?: "asc" | "desc";
   page?: number;
   pageSize?: number;
   activePoolEndpoints?: Set<string>;
@@ -168,11 +206,7 @@ export interface ProxyIntelligenceRepository {
     latency_ms?: number | null;
     exit_ip?: string | null;
   }>): Promise<{ imported: number; proxyKeys: string[] }>;
-  getUnifiedProxies(filter?: UnifiedProxyFilter): Promise<{
-    total: number;
-    counts: UnifiedProxyCounts;
-    items: UnifiedProxyItem[];
-  }>;
+  getUnifiedProxies(filter?: UnifiedProxyFilter): Promise<UnifiedProxyResponse>;
   persistAuditSnapshot(input: PersistAuditSnapshotInput): Promise<void>;
   previewImport(input: ProxyImportInput): Promise<ProxyImportPreview>;
   getAuditDetail(proxyKey: string, auditId?: string): Promise<ProxyAuditDetail | null>;
@@ -673,11 +707,7 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
 
       return { imported, proxyKeys };
     },
-    async getUnifiedProxies(filter: UnifiedProxyFilter = {}): Promise<{
-      total: number;
-      counts: UnifiedProxyCounts;
-      items: UnifiedProxyItem[];
-    }> {
+    async getUnifiedProxies(filter: UnifiedProxyFilter = {}): Promise<UnifiedProxyResponse> {
       const page = Math.max(1, filter.page ?? 1);
       const pageSize = Math.max(1, Math.min(100, filter.pageSize ?? 50));
       const offset = (page - 1) * pageSize;
@@ -707,9 +737,9 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
       }>(
         `SELECT
            COUNT(*) AS total_all,
-           SUM(CASE WHEN (p.status = 'usable' OR COALESCE(latest_a.verdict, '') = 'PASS') THEN 1 ELSE 0 END) AS total_working,
-           SUM(CASE WHEN NOT (p.status = 'usable' OR COALESCE(latest_a.verdict, '') = 'PASS') AND (COALESCE(p.successes, 0) > 0 OR COALESCE(audit_pass.has_pass, 0) = 1) THEN 1 ELSE 0 END) AS total_regressed,
-           SUM(CASE WHEN NOT (p.status = 'usable' OR COALESCE(latest_a.verdict, '') = 'PASS') AND NOT (COALESCE(p.successes, 0) > 0 OR COALESCE(audit_pass.has_pass, 0) = 1) THEN 1 ELSE 0 END) AS total_dead
+           SUM(CASE WHEN (p.status = 'usable' OR COALESCE(p.last_verdict, latest_a.verdict, '') = 'PASS') THEN 1 ELSE 0 END) AS total_working,
+           SUM(CASE WHEN NOT (p.status = 'usable' OR COALESCE(p.last_verdict, latest_a.verdict, '') = 'PASS') AND (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1 OR COALESCE(audit_pass.has_pass, 0) = 1) THEN 1 ELSE 0 END) AS total_regressed,
+           SUM(CASE WHEN NOT (p.status = 'usable' OR COALESCE(p.last_verdict, latest_a.verdict, '') = 'PASS') AND NOT (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1 OR COALESCE(audit_pass.has_pass, 0) = 1) THEN 1 ELSE 0 END) AS total_dead
          FROM proxies p
          LEFT JOIN proxy_audits latest_a ON latest_a.rowid = (
            SELECT a2.rowid FROM proxy_audits a2
@@ -735,12 +765,13 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
       const statusWhere = [...baseWhere];
       const statusParams = [...baseParams];
 
-      if (filter.status === "working") {
-        statusWhere.push("(p.status = 'usable' OR COALESCE(latest_a.verdict, '') = 'PASS')");
-      } else if (filter.status === "regressed") {
-        statusWhere.push("NOT (p.status = 'usable' OR COALESCE(latest_a.verdict, '') = 'PASS') AND (COALESCE(p.successes, 0) > 0 OR COALESCE(audit_pass.has_pass, 0) = 1)");
-      } else if (filter.status === "dead") {
-        statusWhere.push("NOT (p.status = 'usable' OR COALESCE(latest_a.verdict, '') = 'PASS') AND NOT (COALESCE(p.successes, 0) > 0 OR COALESCE(audit_pass.has_pass, 0) = 1)");
+      const statusFilter = filter.health || filter.status;
+      if (statusFilter === "working") {
+        statusWhere.push("(p.status = 'usable' OR COALESCE(p.last_verdict, latest_a.verdict, '') = 'PASS')");
+      } else if (statusFilter === "regressed") {
+        statusWhere.push("NOT (p.status = 'usable' OR COALESCE(p.last_verdict, latest_a.verdict, '') = 'PASS') AND (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1 OR COALESCE(audit_pass.has_pass, 0) = 1)");
+      } else if (statusFilter === "dead") {
+        statusWhere.push("NOT (p.status = 'usable' OR COALESCE(p.last_verdict, latest_a.verdict, '') = 'PASS') AND NOT (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1 OR COALESCE(audit_pass.has_pass, 0) = 1)");
       }
 
       const statusWhereSql = statusWhere.join(" AND ");
@@ -771,17 +802,24 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
            p.host,
            p.port,
            p.status,
+           p.source,
            p.exit_ip,
            p.latency_ms,
            p.checked_at,
            p.successes,
            p.failures,
+           p.ever_passed,
+           p.last_verdict,
+           p.last_failure_code,
+           latest_a.id AS latest_audit_id,
            latest_a.verdict AS latest_verdict,
+           latest_a.finished_at AS latest_finished_at,
+           latest_a.overall_score,
            latest_a.result_json,
            audit_pass.has_pass,
            CASE
-             WHEN (p.status = 'usable' OR COALESCE(latest_a.verdict, '') = 'PASS') THEN 'working'
-             WHEN (COALESCE(p.successes, 0) > 0 OR COALESCE(audit_pass.has_pass, 0) = 1) THEN 'regressed'
+             WHEN (p.status = 'usable' OR COALESCE(p.last_verdict, latest_a.verdict, '') = 'PASS') THEN 'working'
+             WHEN (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1 OR COALESCE(audit_pass.has_pass, 0) = 1) THEN 'regressed'
              ELSE 'dead'
            END AS computed_status
          FROM proxies p
@@ -796,12 +834,20 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
          ) audit_pass ON audit_pass.proxy_key = p.proxy_key
          WHERE ${statusWhereSql}
          ORDER BY
-           CASE WHEN (p.status = 'usable' OR COALESCE(latest_a.verdict, '') = 'PASS') THEN 0 WHEN (COALESCE(p.successes, 0) > 0 OR COALESCE(audit_pass.has_pass, 0) = 1) THEN 1 ELSE 2 END ASC,
+           CASE WHEN (p.status = 'usable' OR COALESCE(p.last_verdict, latest_a.verdict, '') = 'PASS') THEN 0 WHEN (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1 OR COALESCE(audit_pass.has_pass, 0) = 1) THEN 1 ELSE 2 END ASC,
            p.latency_ms ASC NULLS LAST,
            p.checked_at DESC NULLS LAST
          LIMIT ? OFFSET ?`,
         [...statusParams, pageSize, offset]
       );
+
+      const protoRows = db.all<{ proto: string; count: number }>(
+        "SELECT LOWER(protocol) AS proto, COUNT(*) AS count FROM proxies GROUP BY LOWER(protocol)"
+      );
+      const protocols: Record<string, number> = {};
+      for (const pr of protoRows) {
+        if (pr.proto) protocols[pr.proto] = Number(pr.count || 0);
+      }
 
       const items: UnifiedProxyItem[] = rows.map((r) => {
         let geo: { city?: string; country?: string } | undefined;
@@ -833,13 +879,40 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
           syncStatus = "reserve";
         }
 
+        const effectiveVerdict = (r.last_verdict || r.latest_verdict) as "PASS" | "WARN" | "FAIL" | undefined;
+        let lastAudit = null;
+        if (effectiveVerdict) {
+          lastAudit = {
+            id: String(r.latest_audit_id || "audit-latest"),
+            verdict: effectiveVerdict,
+            checkedAt: r.latest_finished_at ? new Date(Number(r.latest_finished_at)).toISOString() : new Date().toISOString(),
+            exitIp: r.exit_ip ? String(r.exit_ip) : undefined,
+            country: geo?.country,
+            isp,
+            latencyMs: r.latency_ms !== null && r.latency_ms !== undefined ? Number(r.latency_ms) : undefined,
+            overallSafety: r.overall_score !== null && r.overall_score !== undefined ? Number(r.overall_score) : undefined,
+            primaryReasonCode: r.last_failure_code ? String(r.last_failure_code) : undefined,
+          };
+        }
+
+        const key = String(r.proxy_key);
+        const computedStatus = r.computed_status as "working" | "dead" | "regressed";
+        const poolTier = syncStatus === "unsynced" ? null : (syncStatus as "active" | "reserve");
+
         return {
-          key: String(r.proxy_key),
-          name: endpoint,
-          protocol: String(r.protocol).toLowerCase() as any,
+          proxyKey: key,
           host: String(r.host || endpoint.split(":")[0]),
           port: Number(r.port || endpoint.split(":")[1] || 0),
-          status: r.computed_status as "working" | "dead" | "regressed",
+          protocol: String(r.protocol).toLowerCase() as any,
+          source: r.source ? String(r.source) : null,
+          poolTier,
+          health: computedStatus,
+          everPassed: Boolean(r.ever_passed || r.has_pass || effectiveVerdict === "PASS"),
+          lastAudit,
+
+          key,
+          name: endpoint,
+          status: computedStatus,
           udp: udpVal,
           sync: syncStatus,
           latencyMs: r.latency_ms !== null && r.latency_ms !== undefined ? Number(r.latency_ms) : null,
@@ -854,8 +927,20 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
       return {
         total,
         counts,
+        pagination: { page, pageSize, total },
+        facets: {
+          all: counts.all,
+          working: counts.working,
+          regressed: counts.regressed,
+          dead: counts.dead,
+          protocols,
+        },
+        meta: {
+          generatedAt: new Date().toISOString(),
+        },
         items,
       };
+
     },
     async persistAuditSnapshot(input: PersistAuditSnapshotInput): Promise<void> {
       const auditId = input.auditId || crypto.randomUUID();
@@ -865,7 +950,17 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
       const latency = input.result.connectivity?.latencyMs ?? null;
       const exitIp = input.result.exitIp?.ip ?? null;
       const failureCode = input.result.riskFactors?.find((r) => r.severity === "critical")?.code ?? null;
-      const lifecycle = verdict === "FAIL" ? "dead" : "working";
+      const criticalRisk = input.result.riskFactors?.some((r) => r.severity === "critical");
+      let lifecycle: ProxyLifecycleState = "unknown";
+      if (criticalRisk) {
+        lifecycle = "dangerous";
+      } else if (verdict === "FAIL") {
+        lifecycle = "dead";
+      } else if (input.result.scores?.reliability !== null && input.result.scores?.reliability !== undefined && input.result.scores.reliability < 80) {
+        lifecycle = "unstable";
+      } else if (verdict === "PASS" || verdict === "WARN") {
+        lifecycle = "working";
+      }
 
       db.transaction(() => {
         // 1. Insert audit record
@@ -1024,6 +1119,9 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
       if (!row || !row.result_json) return null;
       try {
         const parsed = JSON.parse(row.result_json);
+        if (!parsed.verdict && row.verdict) {
+          parsed.verdict = row.verdict;
+        }
         return serializeAuditDetail(parsed, proxyKey, row.id);
       } catch {
         return null;
