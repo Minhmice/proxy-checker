@@ -224,3 +224,25 @@ export async function cancelIntelligenceJob(
 
   return data.job as IntelligenceJob;
 }
+
+export async function fetchIntelligenceJobs(
+  arg1?: string | AbortSignal,
+  arg2?: AbortSignal
+): Promise<IntelligenceJob[]> {
+  const signal = arg1 instanceof AbortSignal ? arg1 : arg2;
+  const password = typeof arg1 === "string" ? arg1 : undefined;
+
+  const response = await fetch("/api/intelligence/jobs", {
+    cache: "no-store",
+    signal,
+    credentials: "same-origin",
+    headers: authHeaders(password),
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || "Jobs unavailable");
+  }
+
+  return (data.jobs || []) as IntelligenceJob[];
+}

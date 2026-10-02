@@ -550,6 +550,10 @@ async function handleIntelligence(request: http.IncomingMessage, response: http.
       return json(response, { error: (err as Error).message }, 500);
     }
   }
+  if (request.method === "GET" && pathname === "/api/intelligence/jobs") {
+    const jobs = proxyIntelligenceJobs.listJobs();
+    return json(response, { jobs });
+  }
   if (request.method === "POST" && pathname === "/api/intelligence/jobs") {
     const body = await readBody(request, 1_000_000);
     const proxyKeys = Array.isArray(body.proxyKeys) ? (body.proxyKeys as string[]) : undefined;
