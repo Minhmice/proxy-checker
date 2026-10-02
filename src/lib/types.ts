@@ -1,5 +1,23 @@
-import type { AuditVerdict, ProxyAuditResult, ProxyInput } from "../auditor/types.js";
-export type { AuditVerdict, ProxyAuditResult, ProxyInput };
+import type {
+  AuditVerdict,
+  ProxyAuditResult,
+  ProxyInput,
+  ProxyAuditDetail,
+  AuditProbe,
+  AuditReason,
+  AuditProvenance,
+  ProbeStatus,
+} from "../auditor/types.js";
+export type {
+  AuditVerdict,
+  ProxyAuditResult,
+  ProxyInput,
+  ProxyAuditDetail,
+  AuditProbe,
+  AuditReason,
+  AuditProvenance,
+  ProbeStatus,
+};
 import type {
   ProxyLifecycleState,
   ProxyInventoryItem,

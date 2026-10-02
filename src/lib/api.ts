@@ -10,6 +10,7 @@ import type {
   UnifiedProxyItem,
   UnifiedProxyResponse,
   UnifiedProxyHistoryEntry,
+  ProxyAuditDetail,
 } from "./types";
 
 export function jsonHeaders(customHeaders?: HeadersInit): HeadersInit {
@@ -564,6 +565,31 @@ export async function fetchProxyHistory(
   if (response.status === 401) throw new Error("Wrong control password");
   if (!response.ok) {
     let msg = "Failed to fetch proxy history";
+    try {
+      const data = await response.json();
+      if (data.error) msg = data.error;
+    } catch {}
+    throw new Error(msg);
+  }
+  return response.json();
+}
+
+export async function fetchProxyAuditDetail(
+  proxyKey: string,
+  auditId?: string,
+  signal?: AbortSignal
+): Promise<{ auditDetail: ProxyAuditDetail | null }> {
+  const query = new URLSearchParams({ key: proxyKey });
+  if (auditId) query.set("auditId", auditId);
+
+  const response = await fetch(`/api/proxies/detail?${query.toString()}`, {
+    cache: "no-store",
+    signal,
+    credentials: "same-origin",
+  });
+  if (response.status === 401) throw new Error("Wrong control password");
+  if (!response.ok) {
+    let msg = "Failed to fetch audit detail";
     try {
       const data = await response.json();
       if (data.error) msg = data.error;

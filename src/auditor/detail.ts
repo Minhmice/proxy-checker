@@ -12,6 +12,7 @@ export function serializeAuditDetail(
   proxyKey: string,
   auditId = "audit-current"
 ): ProxyAuditDetail {
+  const proto = result.proxy?.protocol || (proxyKey.startsWith("socks5") ? "socks5" : (proxyKey.startsWith("socks4") ? "socks4" : "http"));
   const probes: AuditProbe[] = [];
 
   // 1. Exit IP probe
@@ -91,11 +92,11 @@ export function serializeAuditDetail(
         summary: "TLS check skipped",
       });
     }
-  } else if (result.proxy.protocol === "http" || result.proxy.protocol === "socks4") {
+  } else if (proto === "http" || proto === "socks4") {
     probes.push({
       name: "tls",
       status: "UNSUPPORTED",
-      summary: `${result.proxy.protocol.toUpperCase()} proxy transport does not negotiate client TLS tunnel`,
+      summary: `${proto.toUpperCase()} proxy transport does not negotiate client TLS tunnel`,
     });
   } else {
     probes.push({
@@ -178,7 +179,7 @@ export function serializeAuditDetail(
       summary: netObj.udp ? "UDP datagram transport supported" : "UDP routing not available",
       evidence: netObj,
     });
-  } else if (result.proxy.protocol === "http") {
+  } else if (proto === "http") {
     probes.push({
       name: "udp",
       status: "UNSUPPORTED",
@@ -292,6 +293,7 @@ export function serializeAuditDetail(
     ip: result.exitIp?.ip,
     country: result.exitIp?.country || (netContext?.country as string | undefined),
     region: result.exitIp?.region || (netContext?.region as string | undefined),
+    city: result.exitIp?.city || (netContext?.city as string | undefined),
     isp: (netContext?.organization as string | undefined) || (result.exitIp as Record<string, unknown> | undefined)?.isp as string | undefined,
     asn: (netContext?.asn as string | undefined) || (result.exitIp as Record<string, unknown> | undefined)?.asn as string | undefined,
     timezone: result.exitIp?.timezone || (result.exitIp as Record<string, unknown> | undefined)?.timezone as string | undefined,

@@ -2,21 +2,37 @@
 
 import { useEffect, useState } from "react";
 import {
+  AlertTriangle,
+  Check,
   CheckCircle2,
   Clock,
+  Copy,
   Globe2,
+  HelpCircle,
+  Info,
   Loader2,
-  Play,
+  Network,
   RotateCcw,
   Shield,
+  ShieldAlert,
+  ShieldCheck,
   Wifi,
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useAuth } from "./auth-provider";
-import { checkProxyValidity, fetchProxyHistory } from "@/lib/api";
+import {
+  checkProxyValidity,
+  fetchProxyAuditDetail,
+  fetchProxyHistory,
+} from "@/lib/api";
 import { isAbortError } from "@/lib/request-lifecycle";
-import type { UnifiedProxyItem, UnifiedProxyHistoryEntry } from "@/lib/types";
+import type {
+  UnifiedProxyItem,
+  UnifiedProxyHistoryEntry,
+  ProxyAuditDetail,
+  AuditProbe,
+  AuditReason,
+} from "@/lib/types";
 import {
   Sheet,
   SheetContent,
@@ -27,6 +43,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { cn } from "@/lib/utils";
 
 export interface ProxyDetailDrawerProps {
   proxy: UnifiedProxyItem | null;
@@ -49,54 +66,67 @@ export function ProxyDetailDrawer({
   onOpenChange,
   onProxyUpdated,
 }: ProxyDetailDrawerProps) {
-  const { password } = useAuth();
   const [checking, setChecking] = useState(false);
   const [history, setHistory] = useState<UnifiedProxyHistoryEntry[]>([]);
-  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [auditDetail, setAuditDetail] = useState<ProxyAuditDetail | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const proxyKey = proxy?.key || proxy?.proxyKey;
 
   useEffect(() => {
-    if (!open || !proxy || !password) {
+    if (!open || !proxyKey) {
       setHistory([]);
+      setAuditDetail(null);
       return;
     }
 
     const controller = new AbortController();
-    setLoadingHistory(true);
+    setLoadingDetail(true);
 
-    fetchProxyHistory(password, proxy.key, controller.signal)
-      .then((res) => {
+    Promise.all([
+      fetchProxyAuditDetail(proxyKey, undefined, controller.signal),
+      fetchProxyHistory(proxyKey, controller.signal),
+    ])
+      .then(([detailRes, histRes]) => {
         if (!controller.signal.aborted) {
-          setHistory(res.history);
+          setAuditDetail(detailRes.auditDetail);
+          setHistory(histRes.history);
         }
       })
       .catch((err) => {
         if (!controller.signal.aborted && !isAbortError(err)) {
-          console.error("Failed to load history:", err);
+          console.error("Failed to load proxy details:", err);
         }
       })
       .finally(() => {
         if (!controller.signal.aborted) {
-          setLoadingHistory(false);
+          setLoadingDetail(false);
         }
       });
 
     return () => {
       controller.abort();
     };
-  }, [open, proxy?.key, password]);
+  }, [open, proxyKey]);
 
   const handleCheck = async () => {
-    if (!proxy || !password || checking) return;
+    if (!proxyKey || checking) return;
     setChecking(true);
     try {
-      const res = await checkProxyValidity(password, proxy.key);
-      toast.success(`Check succeeded for ${proxy.name}`);
+      const res = await checkProxyValidity(proxyKey);
+      toast.success(`Check succeeded: ${res.proxy.health?.toUpperCase() || res.proxy.status.toUpperCase()}`);
       if (onProxyUpdated) {
         onProxyUpdated(res.proxy);
       }
-      // Refresh history
-      const hist = await fetchProxyHistory(password, proxy.key);
-      setHistory(hist.history);
+
+      // Refresh detail and history
+      const [detailRes, histRes] = await Promise.all([
+        fetchProxyAuditDetail(proxyKey),
+        fetchProxyHistory(proxyKey),
+      ]);
+      setAuditDetail(detailRes.auditDetail);
+      setHistory(histRes.history);
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -104,139 +134,303 @@ export function ProxyDetailDrawer({
     }
   };
 
+  const handleCopy = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    toast.success("Copied endpoint to clipboard");
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   if (!proxy) return null;
 
-  const isWorking = proxy.status === "working";
-  const locationText = [proxy.geo?.city, proxy.geo?.country].filter(Boolean).join(", ") || "Unknown Location";
+  const endpoint = `${proxy.host}:${proxy.port}`;
+  const effectiveVerdict = auditDetail?.verdict || proxy.lastAudit?.verdict || (proxy.status === "working" ? "PASS" : "FAIL");
+  const isHealthy = proxy.health === "working" || proxy.status === "working";
+  const isRegressed = proxy.health === "regressed" || proxy.status === "regressed";
+
+  const renderVerdictBadge = (verdict: string) => {
+    switch (verdict) {
+      case "PASS":
+        return (
+          <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/40 text-xs font-semibold px-2.5 py-0.5">
+            <CheckCircle2 className="h-3 w-3 mr-1 shrink-0" />
+            PASS
+          </Badge>
+        );
+      case "WARN":
+        return (
+          <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/40 text-xs font-semibold px-2.5 py-0.5">
+            <AlertTriangle className="h-3 w-3 mr-1 shrink-0" />
+            WARN
+          </Badge>
+        );
+      case "FAIL":
+        return (
+          <Badge className="bg-rose-500/20 text-rose-400 border-rose-500/40 text-xs font-semibold px-2.5 py-0.5">
+            <XCircle className="h-3 w-3 mr-1 shrink-0" />
+            FAIL
+          </Badge>
+        );
+      default:
+        return (
+          <Badge variant="outline" className="text-muted-foreground text-xs font-semibold px-2.5 py-0.5">
+            <HelpCircle className="h-3 w-3 mr-1 shrink-0" />
+            UNKNOWN
+          </Badge>
+        );
+    }
+  };
+
+  const renderProbeStatus = (status: AuditProbe["status"]) => {
+    switch (status) {
+      case "PASS":
+        return <span className="text-[11px] font-semibold text-emerald-400 uppercase">PASS</span>;
+      case "WARN":
+        return <span className="text-[11px] font-semibold text-amber-400 uppercase">WARN</span>;
+      case "FAIL":
+        return <span className="text-[11px] font-semibold text-rose-400 uppercase">FAIL</span>;
+      case "UNSUPPORTED":
+        return <span className="text-[11px] font-medium text-muted-foreground uppercase">UNSUPPORTED</span>;
+      case "SKIPPED":
+        return <span className="text-[11px] font-medium text-muted-foreground uppercase">SKIPPED</span>;
+      case "ERROR":
+      default:
+        return <span className="text-[11px] font-semibold text-rose-400 uppercase">ERROR</span>;
+    }
+  };
+
+  const scores = auditDetail?.scores || {
+    overallSafety: proxy.lastAudit?.overallSafety ?? null,
+    transportSecurity: null,
+    privacy: null,
+    reputation: null,
+    reliability: null,
+  };
+
+  const scoreItems = [
+    { label: "Overall Safety", value: scores.overallSafety },
+    { label: "Transport Security", value: scores.transportSecurity },
+    { label: "Privacy", value: scores.privacy },
+    { label: "Reputation", value: scores.reputation },
+    { label: "Reliability", value: scores.reliability },
+  ];
+
+  const exitIp = auditDetail?.exit.ip || proxy.exitIp || proxy.host;
+  const locationText = [
+    auditDetail?.exit.city || proxy.geo?.city,
+    auditDetail?.exit.country || proxy.geo?.country,
+  ]
+    .filter(Boolean)
+    .join(", ") || "Unknown Location";
+
+  const ispText = auditDetail?.exit.isp || proxy.isp || "Unknown ISP";
+  const asnText = auditDetail?.exit.asn ? ` • ${auditDetail.exit.asn}` : "";
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-md md:max-w-lg flex flex-col p-6 overflow-hidden">
-        <SheetHeader className="border-b border-border/40 pb-4">
-          <div className="flex items-center gap-2">
-            <Badge variant="outline" className="text-[10px] uppercase font-mono tracking-wider">
-              {proxy.protocol}
-            </Badge>
-            <span className="text-[11px] text-muted-foreground font-mono">This device</span>
+      <SheetContent className="w-full sm:max-w-md md:max-w-lg lg:max-w-xl flex flex-col p-6 overflow-hidden bg-card border-border/80">
+        <SheetHeader className="border-b border-border/50 pb-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="text-[10px] uppercase font-mono tracking-wider">
+                {proxy.protocol}
+              </Badge>
+              <span className="text-xs text-muted-foreground font-mono">
+                {proxy.source || "inventory"}
+              </span>
+            </div>
+            {renderVerdictBadge(effectiveVerdict)}
           </div>
-          <SheetTitle className="text-lg font-bold font-mono tracking-tight mt-1 text-foreground">
-            {proxy.name}
-          </SheetTitle>
-          <SheetDescription className="text-xs text-muted-foreground">
-            Connection test
+
+          <div className="flex items-center justify-between gap-2 mt-2">
+            <SheetTitle className="text-base font-bold font-mono tracking-tight text-foreground truncate">
+              {endpoint}
+            </SheetTitle>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleCopy(endpoint)}
+              className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground shrink-0 cursor-pointer"
+              aria-label={`Copy ${endpoint}`}
+            >
+              {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+            </Button>
+          </div>
+
+          <SheetDescription className="text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5">
+            <Clock className="h-3 w-3" />
+            <span>
+              {auditDetail?.checkedAt
+                ? new Date(auditDetail.checkedAt).toLocaleString()
+                : proxy.lastCheckedAt
+                ? new Date(proxy.lastCheckedAt).toLocaleString()
+                : "Not checked yet"}
+            </span>
           </SheetDescription>
         </SheetHeader>
 
         <ScrollArea className="flex-1 mt-4 pr-3">
           <div className="space-y-6 text-xs">
-            {/* Verified Exit Section */}
-            <div className="rounded-lg border border-border/60 bg-muted/20 p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="font-semibold text-muted-foreground uppercase text-[10px] tracking-wider">
-                  Verified exit
-                </span>
-                <span className="font-mono text-xs text-muted-foreground">
-                  {proxy.host}:{proxy.port}
-                </span>
+            {/* Regression Banner if Regressed */}
+            {isRegressed && (
+              <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3.5 space-y-1.5 animate-in fade-in duration-200">
+                <div className="flex items-center gap-2 text-amber-400 font-semibold">
+                  <AlertTriangle className="h-4 w-4 shrink-0" />
+                  <span>Regression Detected (Zombie Proxy)</span>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  This proxy successfully connected or passed audits in the past, but is currently unreachable.
+                </p>
               </div>
+            )}
+
+            {/* Verified Exit Card */}
+            <div className="rounded-lg border border-border/60 bg-surface/50 p-4 space-y-3">
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block">
+                Verified Exit Node
+              </span>
 
               <div className="flex items-baseline justify-between gap-2">
-                <span className="text-xl font-bold font-mono text-foreground">
-                  {proxy.exitIp || proxy.host}
-                </span>
+                <span className="text-xl font-bold font-mono text-foreground">{exitIp}</span>
                 <Badge variant="secondary" className="text-xs font-normal">
                   <Globe2 className="h-3 w-3 mr-1 text-muted-foreground" />
                   {locationText}
                 </Badge>
               </div>
 
-              {/* Status Banner */}
-              <div className="pt-2 border-t border-border/40 flex items-center justify-between text-xs">
-                <div className="flex items-center gap-1.5">
-                  {isWorking ? (
-                    <>
-                      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                      <span className="font-medium text-emerald-500">Last check succeeded</span>
-                    </>
-                  ) : (
-                    <>
-                      <XCircle className="h-4 w-4 text-rose-500" />
-                      <span className="font-medium text-rose-500">Last check failed</span>
-                    </>
-                  )}
-                </div>
-                {proxy.lastCheckedAt && (
-                  <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-                    <Clock className="h-3 w-3" />
-                    {new Date(proxy.lastCheckedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* 4-Box Metrics Grid */}
-            <div className="grid grid-cols-2 gap-3">
-              {/* UDP */}
-              <div className="rounded-lg border border-border/50 bg-card p-3">
-                <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-                  UDP
+              <div className="text-xs text-muted-foreground flex items-center justify-between pt-2 border-t border-border/40">
+                <span className="truncate max-w-[240px]" title={`${ispText}${asnText}`}>
+                  {ispText}
+                  {asnText}
                 </span>
-                <div className="mt-1 flex items-center gap-1.5">
-                  <Badge
-                    variant={proxy.udp === "Yes" ? "default" : "secondary"}
-                    className={proxy.udp === "Yes" ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-xs" : "text-xs"}
-                  >
-                    {proxy.udp}
-                  </Badge>
-                </div>
-              </div>
-
-              {/* ISP */}
-              <div className="rounded-lg border border-border/50 bg-card p-3">
-                <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-                  ISP
-                </span>
-                <p className="mt-1 font-medium truncate text-foreground" title={proxy.isp || "Unknown"}>
-                  {proxy.isp || "Unknown ISP"}
-                </p>
-              </div>
-
-              {/* Timezone */}
-              <div className="rounded-lg border border-border/50 bg-card p-3">
-                <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-                  Timezone
-                </span>
-                <p className="mt-1 font-medium truncate text-foreground" title={proxy.timezone || "Unknown"}>
-                  {proxy.timezone || "Unknown"}
-                </p>
-              </div>
-
-              {/* Took */}
-              <div className="rounded-lg border border-border/50 bg-card p-3">
-                <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-                  Took
-                </span>
-                <p className="mt-1 font-mono font-semibold text-foreground">
+                <span className="font-mono text-foreground font-medium">
                   {proxy.latencyMs !== null ? `${proxy.latencyMs} ms` : "—"}
-                </p>
+                </span>
               </div>
             </div>
 
-            <p className="text-[11px] text-muted-foreground italic px-1">
-              This tests the stored proxy. A profile may use different routing.
-            </p>
+            {/* 5 Security & Performance Scores */}
+            <div className="space-y-2.5">
+              <h4 className="font-semibold text-foreground text-xs uppercase tracking-wider flex items-center justify-between">
+                <span>Security & Reliability Scores</span>
+                {loadingDetail && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+              </h4>
 
-            {/* Check validity action */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                {scoreItems.map((item) => {
+                  const score = item.value;
+                  const hasScore = typeof score === "number";
+
+                  return (
+                    <div
+                      key={item.label}
+                      className="rounded-lg border border-border/50 bg-surface/40 p-2.5 flex flex-col justify-between"
+                    >
+                      <span className="text-[10px] uppercase font-semibold text-muted-foreground truncate" title={item.label}>
+                        {item.label}
+                      </span>
+                      <span
+                        className={cn(
+                          "font-mono text-base font-bold mt-1",
+                          hasScore
+                            ? score >= 80
+                              ? "text-emerald-400"
+                              : score >= 50
+                              ? "text-amber-400"
+                              : "text-rose-400"
+                            : "text-muted-foreground/60 text-xs"
+                        )}
+                      >
+                        {hasScore ? `${score}/100` : "Not measured"}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Why This Verdict (Reason Codes) */}
+            {auditDetail?.reasons && auditDetail.reasons.length > 0 && (
+              <div className="space-y-2.5">
+                <h4 className="font-semibold text-foreground text-xs uppercase tracking-wider">
+                  Audit Findings & Reasoning
+                </h4>
+
+                <div className="space-y-2">
+                  {auditDetail.reasons.map((reason, idx) => (
+                    <div
+                      key={`${reason.code}-${idx}`}
+                      className={cn(
+                        "rounded-lg border p-3 flex items-start gap-2.5",
+                        reason.severity === "critical"
+                          ? "border-rose-500/40 bg-rose-500/10 text-rose-300"
+                          : reason.severity === "warning"
+                          ? "border-amber-500/40 bg-amber-500/10 text-amber-300"
+                          : "border-blue-500/40 bg-blue-500/10 text-blue-300"
+                      )}
+                    >
+                      {reason.severity === "critical" ? (
+                        <ShieldAlert className="h-4 w-4 shrink-0 text-rose-400 mt-0.5" />
+                      ) : reason.severity === "warning" ? (
+                        <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
+                      ) : (
+                        <Info className="h-4 w-4 shrink-0 text-blue-400 mt-0.5" />
+                      )}
+
+                      <div className="space-y-0.5 flex-1">
+                        <div className="flex items-center justify-between">
+                          <span className="font-mono font-semibold text-xs tracking-tight">
+                            {reason.code}
+                          </span>
+                          <span className="text-[10px] uppercase tracking-wider font-semibold opacity-80">
+                            {reason.severity}
+                          </span>
+                        </div>
+                        <p className="text-[11px] leading-relaxed opacity-90">{reason.summary}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Measurement Probes Evidence */}
+            {auditDetail?.probes && auditDetail.probes.length > 0 && (
+              <div className="space-y-2.5">
+                <h4 className="font-semibold text-foreground text-xs uppercase tracking-wider">
+                  Probe Measurement Details
+                </h4>
+
+                <div className="rounded-lg border border-border/60 bg-surface/30 divide-y divide-border/40">
+                  {auditDetail.probes.map((probe) => (
+                    <div key={probe.name} className="p-3 flex items-center justify-between gap-3">
+                      <div className="space-y-0.5 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs font-semibold text-foreground uppercase">
+                            {probe.name}
+                          </span>
+                          {renderProbeStatus(probe.status)}
+                        </div>
+                        <p className="text-[11px] text-muted-foreground leading-normal">{probe.summary}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Check Action Button */}
             <div>
               <Button
-                className="w-full h-10 font-medium text-xs gap-2"
+                className="w-full h-10 font-semibold text-xs gap-2 bg-primary text-primary-foreground hover:bg-primary-hover cursor-pointer"
                 onClick={handleCheck}
                 disabled={checking}
+                aria-label={`Run audit on ${endpoint}`}
               >
                 {checking ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    <span>Testing connectivity & UDP...</span>
+                    <span>Executing full audit pipeline...</span>
                   </>
                 ) : (
                   <>
@@ -248,14 +442,16 @@ export function ProxyDetailDrawer({
             </div>
 
             {/* Recent Checks History */}
-            <div className="pt-2">
-              <h4 className="font-semibold text-foreground text-xs mb-3 flex items-center justify-between">
-                <span>Recent checks</span>
-                {loadingHistory && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+            <div className="space-y-2.5 pt-2">
+              <h4 className="font-semibold text-foreground text-xs uppercase tracking-wider flex items-center justify-between">
+                <span>Recent Checks History</span>
+                <span className="text-muted-foreground font-mono text-[11px]">
+                  {history.length} record{history.length === 1 ? "" : "s"}
+                </span>
               </h4>
 
               {history.length === 0 ? (
-                <div className="rounded-md border border-dashed border-border/60 p-4 text-center text-muted-foreground">
+                <div className="rounded-lg border border-dashed border-border/60 p-4 text-center text-muted-foreground">
                   No check history recorded yet.
                 </div>
               ) : (
@@ -263,13 +459,18 @@ export function ProxyDetailDrawer({
                   {history.map((entry) => (
                     <div
                       key={entry.id}
-                      className="rounded-lg border border-border/40 bg-card p-3 flex items-center justify-between text-xs"
+                      className="rounded-lg border border-border/50 bg-surface/30 p-3 flex items-center justify-between text-xs"
                     >
                       <div className="space-y-0.5">
                         <div className="flex items-center gap-2">
                           <Badge
                             variant={entry.status === "passed" ? "default" : "destructive"}
-                            className={entry.status === "passed" ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-[10px] uppercase py-0" : "text-[10px] uppercase py-0"}
+                            className={cn(
+                              "text-[10px] uppercase font-mono py-0",
+                              entry.status === "passed"
+                                ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                                : ""
+                            )}
                           >
                             {entry.status === "passed" ? "Passed" : "Failed"}
                           </Badge>
@@ -277,7 +478,7 @@ export function ProxyDetailDrawer({
                             {entry.exitIp || "—"}
                           </span>
                         </div>
-                        <p className="text-[11px] text-muted-foreground truncate max-w-[200px]">
+                        <p className="text-[11px] text-muted-foreground truncate max-w-[220px]">
                           {entry.isp || "Unknown ISP"} • UDP {entry.udp}
                         </p>
                       </div>

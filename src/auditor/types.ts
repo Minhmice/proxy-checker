@@ -64,6 +64,7 @@ export interface ProxyAuditDetail {
     ip?: string;
     country?: string;
     region?: string;
+    city?: string;
     isp?: string;
     asn?: string;
     timezone?: string;
