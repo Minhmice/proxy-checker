@@ -422,22 +422,40 @@ export async function downloadProxyExport(
 
 export async function fetchUnifiedProxies(
   arg1?: string | {
+    health?: string;
     status?: string;
     search?: string;
     protocol?: string;
+    source?: string;
+    sort?: string;
+    direction?: string;
     page?: number;
     pageSize?: number;
   } | AbortSignal,
   arg2?: {
+    health?: string;
     status?: string;
     search?: string;
     protocol?: string;
+    source?: string;
+    sort?: string;
+    direction?: string;
     page?: number;
     pageSize?: number;
   } | AbortSignal,
   arg3?: AbortSignal
 ): Promise<UnifiedProxyResponse> {
-  let params: { status?: string; search?: string; protocol?: string; page?: number; pageSize?: number } | undefined;
+  let params: {
+    health?: string;
+    status?: string;
+    search?: string;
+    protocol?: string;
+    source?: string;
+    sort?: string;
+    direction?: string;
+    page?: number;
+    pageSize?: number;
+  } | undefined;
   let signal: AbortSignal | undefined;
   let password: string | undefined;
 
@@ -453,12 +471,15 @@ export async function fetchUnifiedProxies(
   }
 
   const query = new URLSearchParams();
+  if (params?.health) query.set("health", params.health);
   if (params?.status) query.set("status", params.status);
   if (params?.search) query.set("search", params.search);
   if (params?.protocol) query.set("protocol", params.protocol);
+  if (params?.source) query.set("source", params.source);
+  if (params?.sort) query.set("sort", params.sort);
+  if (params?.direction) query.set("direction", params.direction);
   if (params?.page) query.set("page", String(params.page));
   if (params?.pageSize) query.set("pageSize", String(params.pageSize));
-
   const response = await fetch(`/api/proxies/unified?${query.toString()}`, {
     cache: "no-store",
     signal,

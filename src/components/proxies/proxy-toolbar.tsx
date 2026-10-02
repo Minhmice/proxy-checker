@@ -1,0 +1,169 @@
+"use client";
+
+import {
+  Download,
+  Loader2,
+  Plus,
+  RotateCcw,
+  Search,
+  Upload,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import type { ProxyWorkspaceQuery } from "@/lib/proxy-url-state";
+
+export interface ProxyToolbarProps {
+  query: ProxyWorkspaceQuery;
+  onQueryChange: (patch: Partial<ProxyWorkspaceQuery>) => void;
+  onSync9Router: () => void;
+  syncing: boolean;
+  onOpenImport: () => void;
+  onOpenExport: () => void;
+  onOpenAdd: () => void;
+}
+
+export function ProxyToolbar({
+  query,
+  onQueryChange,
+  onSync9Router,
+  syncing,
+  onOpenImport,
+  onOpenExport,
+  onOpenAdd,
+}: ProxyToolbarProps) {
+  const protocolLabels: Record<string, string> = {
+    all: "All Protocols",
+    socks5: "SOCKS5",
+    http: "HTTP",
+    https: "HTTPS",
+    socks4: "SOCKS4",
+  };
+
+  const sortLabels: Record<string, string> = {
+    health: "Sort: Health",
+    latency: "Sort: Latency",
+    lastChecked: "Sort: Checked time",
+    endpoint: "Sort: Endpoint",
+  };
+
+  return (
+    <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+      {/* Search & Filter Group */}
+      <div className="flex flex-1 items-center gap-2 max-w-md">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+          <Input
+            value={query.q}
+            onChange={(e) => onQueryChange({ q: e.target.value, page: 1 })}
+            placeholder="Search host, port, exit IP, ISP..."
+            className="pl-8.5 h-9 text-xs bg-surface border-border/60 focus-visible:ring-primary/40"
+            aria-label="Search proxies"
+          />
+        </div>
+
+        {/* Protocol Selector */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 px-3 text-xs bg-surface border-border/60 text-muted-foreground hover:text-foreground shrink-0"
+              aria-label="Filter by protocol"
+            >
+              {protocolLabels[query.protocol] || "Protocol"}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="bg-popover border-border/80">
+            {Object.entries(protocolLabels).map(([proto, label]) => (
+              <DropdownMenuItem
+                key={proto}
+                onClick={() => onQueryChange({ protocol: proto as ProxyWorkspaceQuery["protocol"], page: 1 })}
+                className="text-xs cursor-pointer"
+              >
+                {label}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        {/* Sort Selector */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 px-3 text-xs bg-surface border-border/60 text-muted-foreground hover:text-foreground shrink-0"
+              aria-label="Sort proxies"
+            >
+              {sortLabels[query.sort] || "Sort"}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="bg-popover border-border/80">
+            {Object.entries(sortLabels).map(([sortKey, label]) => (
+              <DropdownMenuItem
+                key={sortKey}
+                onClick={() => onQueryChange({ sort: sortKey as ProxyWorkspaceQuery["sort"] })}
+                className="text-xs cursor-pointer"
+              >
+                {label}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      {/* Primary Actions */}
+      <div className="flex items-center gap-2 shrink-0">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onSync9Router}
+          disabled={syncing}
+          className="h-9 text-xs gap-1.5 border-border/60 bg-surface hover:bg-surface-raised cursor-pointer"
+          aria-label="Sync router pools"
+        >
+          {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+          <span>Sync 9Router</span>
+        </Button>
+
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onOpenImport}
+          className="h-9 text-xs gap-1.5 border-border/60 bg-surface hover:bg-surface-raised cursor-pointer"
+          aria-label="Import proxies"
+        >
+          <Upload className="h-3.5 w-3.5" />
+          <span>Import</span>
+        </Button>
+
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onOpenExport}
+          className="h-9 text-xs gap-1.5 border-border/60 bg-surface hover:bg-surface-raised cursor-pointer"
+          aria-label="Export proxies"
+        >
+          <Download className="h-3.5 w-3.5" />
+          <span>Export</span>
+        </Button>
+
+        <Button
+          size="sm"
+          onClick={onOpenAdd}
+          className="h-9 text-xs gap-1.5 bg-primary text-primary-foreground hover:bg-primary-hover shadow-sm cursor-pointer"
+          aria-label="Add proxy"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          <span>New proxy</span>
+        </Button>
+      </div>
+    </div>
+  );
+}

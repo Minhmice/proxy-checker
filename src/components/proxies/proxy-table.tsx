@@ -1,0 +1,381 @@
+"use client";
+
+import {
+  AlertTriangle,
+  Check,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+  Globe2,
+  Loader2,
+  Play,
+  RotateCcw,
+  SlidersHorizontal,
+  XCircle,
+} from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import type { UnifiedProxyItem } from "@/lib/types";
+import { cn } from "@/lib/utils";
+
+export interface ProxyTableProps {
+  items: UnifiedProxyItem[];
+  loading: boolean;
+  page: number;
+  pageSize: number;
+  total: number;
+  onPageChange: (newPage: number) => void;
+  selectedKeys: Set<string>;
+  onToggleSelectKey: (key: string) => void;
+  onToggleSelectAllPage: () => void;
+  allPageSelected: boolean;
+  checkingKey: string | null;
+  onCheckSingle: (proxy: UnifiedProxyItem) => void;
+  onOpenDetail: (proxy: UnifiedProxyItem) => void;
+  copiedKey: string | null;
+  onCopyEndpoint: (text: string) => void;
+  onResetFilters?: () => void;
+}
+
+export function ProxyTable({
+  items,
+  loading,
+  page,
+  pageSize,
+  total,
+  onPageChange,
+  selectedKeys,
+  onToggleSelectKey,
+  onToggleSelectAllPage,
+  allPageSelected,
+  checkingKey,
+  onCheckSingle,
+  onOpenDetail,
+  copiedKey,
+  onCopyEndpoint,
+  onResetFilters,
+}: ProxyTableProps) {
+  const totalPages = Math.ceil(total / pageSize) || 1;
+
+  const renderHealthBadge = (health: string) => {
+    switch (health) {
+      case "working":
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+            <CheckCircle2 className="h-3 w-3 shrink-0" aria-hidden="true" />
+            <span>Healthy</span>
+          </span>
+        );
+      case "regressed":
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30">
+            <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden="true" />
+            <span>Regressed</span>
+          </span>
+        );
+      case "dead":
+      default:
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-rose-500/15 text-rose-400 border border-rose-500/30">
+            <XCircle className="h-3 w-3 shrink-0" aria-hidden="true" />
+            <span>Never verified</span>
+          </span>
+        );
+    }
+  };
+
+  const renderPoolBadge = (tier: string | null) => {
+    if (!tier || tier === "unsynced") {
+      return <span className="text-muted-foreground/60 font-mono text-[11px]">—</span>;
+    }
+    if (tier === "active") {
+      return (
+        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] uppercase font-mono font-semibold tracking-wider bg-primary/20 text-primary border border-primary/40">
+          Active
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] uppercase font-mono font-semibold tracking-wider bg-muted/40 text-muted-foreground border border-border/50">
+        Reserve
+      </span>
+    );
+  };
+
+  return (
+    <div className="rounded-lg border border-border/70 bg-card overflow-hidden shadow-sm flex flex-col">
+      <div className="overflow-x-auto min-h-[380px]">
+        <Table>
+          <TableHeader className="bg-surface/80">
+            <TableRow className="border-border/60 hover:bg-transparent">
+              <TableHead className="w-10 px-3">
+                <Checkbox
+                  checked={allPageSelected}
+                  onCheckedChange={onToggleSelectAllPage}
+                  aria-label="Select all proxies on page"
+                />
+              </TableHead>
+              <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Proxy Endpoint
+              </TableHead>
+              <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Protocol
+              </TableHead>
+              <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Health
+              </TableHead>
+              <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Pool
+              </TableHead>
+              <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Exit / ISP
+              </TableHead>
+              <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground text-right">
+                Privacy
+              </TableHead>
+              <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground text-right">
+                Latency
+              </TableHead>
+              <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground text-right pr-4">
+                Actions
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+
+          <TableBody>
+            {loading && items.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={9} className="h-48 text-center text-muted-foreground">
+                  <div className="flex flex-col items-center justify-center gap-2">
+                    <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                    <span className="text-xs font-medium">Loading proxy fleet...</span>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ) : items.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={9} className="h-48 text-center text-muted-foreground">
+                  <div className="flex flex-col items-center justify-center gap-3">
+                    <p className="text-xs">No proxies match the selected filters or search.</p>
+                    {onResetFilters && (
+                      <Button variant="outline" size="sm" onClick={onResetFilters} className="text-xs h-8">
+                        Reset filters
+                      </Button>
+                    )}
+                  </div>
+                </TableCell>
+              </TableRow>
+            ) : (
+              items.map((item) => {
+                const isSelected = selectedKeys.has(item.key || item.proxyKey);
+                const isChecking = checkingKey === (item.key || item.proxyKey);
+                const endpoint = `${item.host}:${item.port}`;
+                const locationText = [item.geo?.city, item.geo?.country].filter(Boolean).join(", ");
+                const privacyScore = item.lastAudit?.overallSafety ?? null;
+
+                return (
+                  <TableRow
+                    key={item.key || item.proxyKey}
+                    data-state={isSelected ? "selected" : undefined}
+                    className={cn(
+                      "border-border/50 transition-colors group cursor-pointer",
+                      isSelected ? "bg-primary/5" : "hover:bg-surface/50"
+                    )}
+                    onClick={(e) => {
+                      const target = e.target as HTMLElement;
+                      if (target.closest("button") || target.closest("input")) return;
+                      onOpenDetail(item);
+                    }}
+                  >
+                    {/* Checkbox */}
+                    <TableCell className="px-3" onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={isSelected}
+                        onCheckedChange={() => onToggleSelectKey(item.key || item.proxyKey)}
+                        aria-label={`Select proxy ${endpoint}`}
+                      />
+                    </TableCell>
+
+                    {/* Endpoint + Copy */}
+                    <TableCell className="font-mono text-xs font-medium text-foreground py-3">
+                      <div className="flex items-center gap-1.5">
+                        <span className="hover:text-primary transition-colors">{endpoint}</span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onCopyEndpoint(endpoint);
+                          }}
+                          className="opacity-0 group-hover:opacity-100 p-1 hover:text-foreground text-muted-foreground transition-all cursor-pointer"
+                          aria-label={`Copy endpoint ${endpoint}`}
+                        >
+                          {copiedKey === endpoint ? (
+                            <Check className="h-3 w-3 text-emerald-400" />
+                          ) : (
+                            <Copy className="h-3 w-3" />
+                          )}
+                        </button>
+                      </div>
+                    </TableCell>
+
+                    {/* Protocol */}
+                    <TableCell>
+                      <Badge variant="outline" className="text-[10px] uppercase font-mono tracking-wider py-0">
+                        {item.protocol}
+                      </Badge>
+                    </TableCell>
+
+                    {/* Health Status */}
+                    <TableCell>{renderHealthBadge(item.health || item.status)}</TableCell>
+
+                    {/* Pool Tier */}
+                    <TableCell>{renderPoolBadge(item.poolTier ?? (item.sync as string))}</TableCell>
+
+                    {/* Exit IP & Location / ISP */}
+                    <TableCell className="text-xs">
+                      {item.exitIp ? (
+                        <div className="space-y-0.5">
+                          <span className="font-mono text-xs font-medium text-foreground block">
+                            {item.exitIp}
+                          </span>
+                          <span className="text-[11px] text-muted-foreground flex items-center gap-1 truncate max-w-[200px]" title={item.isp || locationText}>
+                            {locationText && <Globe2 className="h-2.5 w-2.5 shrink-0" />}
+                            {locationText || item.isp || "Unknown location"}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground/60 font-mono text-[11px]">—</span>
+                      )}
+                    </TableCell>
+
+                    {/* Privacy Score */}
+                    <TableCell className="text-right font-mono text-xs">
+                      {privacyScore !== null ? (
+                        <span
+                          className={cn(
+                            "font-semibold",
+                            privacyScore >= 80
+                              ? "text-emerald-400"
+                              : privacyScore >= 50
+                              ? "text-amber-400"
+                              : "text-rose-400"
+                          )}
+                        >
+                          {privacyScore}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground/60">—</span>
+                      )}
+                    </TableCell>
+
+                    {/* Latency */}
+                    <TableCell className="text-right font-mono text-xs">
+                      {item.latencyMs !== null ? (
+                        <span
+                          className={cn(
+                            item.latencyMs < 300
+                              ? "text-emerald-400 font-medium"
+                              : item.latencyMs < 1000
+                              ? "text-foreground"
+                              : "text-amber-400 font-medium"
+                          )}
+                        >
+                          {item.latencyMs} ms
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground/60">—</span>
+                      )}
+                    </TableCell>
+
+                    {/* Row Actions */}
+                    <TableCell className="text-right pr-4" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onCheckSingle(item)}
+                          disabled={isChecking}
+                          className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
+                          aria-label={`Test connectivity for ${endpoint}`}
+                        >
+                          {isChecking ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                          ) : (
+                            <Play className="h-3.5 w-3.5" />
+                          )}
+                        </Button>
+
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onOpenDetail(item)}
+                          className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
+                          aria-label={`Inspect details for ${endpoint}`}
+                        >
+                          <SlidersHorizontal className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })
+            )}
+          </TableBody>
+        </Table>
+      </div>
+
+      {/* Pagination Footer */}
+      <div className="flex items-center justify-between px-4 py-3 border-t border-border/60 bg-surface/40 text-xs text-muted-foreground">
+        <div>
+          Showing{" "}
+          <strong className="font-semibold text-foreground">
+            {total > 0 ? (page - 1) * pageSize + 1 : 0}
+          </strong>{" "}
+          to{" "}
+          <strong className="font-semibold text-foreground">
+            {Math.min(page * pageSize, total)}
+          </strong>{" "}
+          of <strong className="font-semibold text-foreground">{total.toLocaleString()}</strong> proxies
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onPageChange(Math.max(1, page - 1))}
+            disabled={page <= 1 || loading}
+            className="h-7 w-7 p-0 border-border/70 cursor-pointer"
+            aria-label="Previous page"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </Button>
+
+          <span className="font-mono text-xs px-2">
+            Page {page} of {totalPages}
+          </span>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+            disabled={page >= totalPages || loading}
+            className="h-7 w-7 p-0 border-border/70 cursor-pointer"
+            aria-label="Next page"
+          >
+            <ChevronRight className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}

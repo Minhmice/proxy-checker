@@ -1,27 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import {
-  Check,
-  CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
-  Copy,
-  Download,
-  Globe,
-  Loader2,
-  MoreVertical,
-  Plus,
-  Play,
-  RotateCcw,
-  Search,
-  SlidersHorizontal,
-  Trash2,
-  Upload,
-  Wifi,
-  XCircle,
-  AlertTriangle,
-} from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/components/auth-provider";
 import {
@@ -30,7 +11,10 @@ import {
   fetchUnifiedProxies,
   syncPools,
 } from "@/lib/api";
-import { importIntelligenceProxies } from "@/lib/proxy-intelligence-api";
+import {
+  createIntelligenceJob,
+  importIntelligenceProxies,
+} from "@/lib/proxy-intelligence-api";
 import { isAbortError } from "@/lib/request-lifecycle";
 import type {
   UnifiedProxyItem,
@@ -38,14 +22,6 @@ import type {
 } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -55,17 +31,45 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ProxyDetailDrawer } from "@/components/proxy-detail-drawer";
+import { ProxySummary } from "@/components/proxies/proxy-summary";
+import { ProxyToolbar } from "@/components/proxies/proxy-toolbar";
+import { ProxyTable } from "@/components/proxies/proxy-table";
+import { ProxySelectionBar } from "@/components/proxies/proxy-selection-bar";
+import { AuditJobIndicator } from "@/components/proxies/audit-job-indicator";
+import {
+  parseProxyQuery,
+  serializeProxyQuery,
+  type ProxyWorkspaceQuery,
+} from "@/lib/proxy-url-state";
 
 export default function ProxiesPage() {
-  const { password } = useAuth();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const { authenticated } = useAuth();
 
-  // Filters & Pagination
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [protocolFilter, setProtocolFilter] = useState<string>("all");
-  const [search, setSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [page, setPage] = useState(1);
-  const pageSize = 50;
+  // URL Query State
+  const initialQuery = useMemo(() => parseProxyQuery(searchParams), [searchParams]);
+  const [query, setQuery] = useState<ProxyWorkspaceQuery>(initialQuery);
+  const [debouncedSearch, setDebouncedSearch] = useState(initialQuery.q);
+
+  // Sync state if URL changes externally
+  useEffect(() => {
+    const parsed = parseProxyQuery(searchParams);
+    setQuery(parsed);
+  }, [searchParams]);
+
+  const updateQuery = useCallback(
+    (patch: Partial<ProxyWorkspaceQuery>) => {
+      setQuery((prev) => {
+        const next = { ...prev, ...patch };
+        const serialized = serializeProxyQuery(next);
+        router.replace(`${pathname}${serialized ? `?${serialized}` : ""}`, { scroll: false });
+        return next;
+      });
+    },
+    [pathname, router]
+  );
 
   // Data
   const [items, setItems] = useState<UnifiedProxyItem[]>([]);
@@ -83,54 +87,67 @@ export default function ProxiesPage() {
   const [checkingKey, setCheckingKey] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
+  // Selection
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+  const [selectAllMatching, setSelectAllMatching] = useState(false);
+  const [auditing, setAuditing] = useState(false);
+
+  // Audit job tracking
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+
   // Drawer
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [inspectProxy, setInspectProxy] = useState<UnifiedProxyItem | null>(null);
 
-  // New Proxy Dialog
+  // Add Proxy Dialog
   const [newProxyOpen, setNewProxyOpen] = useState(false);
   const [newProxyText, setNewProxyText] = useState("");
   const [addingProxy, setAddingProxy] = useState(false);
 
-  // Debounce search
+  // Debounce search input
   useEffect(() => {
     const timer = setTimeout(() => {
-      setDebouncedSearch(search);
-      setPage(1);
+      setDebouncedSearch(query.q);
     }, 250);
-    return () => clearTimeout(timer);
-  }, [search]);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [query.q]);
 
   // Load Proxies
-  const loadProxies = useCallback(async (signal?: AbortSignal) => {
-    if (!password) return;
-    setLoading(true);
-    try {
-      const res = await fetchUnifiedProxies(
-        password,
-        {
-          status: statusFilter,
-          search: debouncedSearch.trim() || undefined,
-          protocol: protocolFilter !== "all" ? protocolFilter : undefined,
-          page,
-          pageSize,
-        },
-        signal
-      );
-      if (signal?.aborted) return;
-      setItems(res.items);
-      setCounts(res.counts);
-      setTotal(res.total);
-    } catch (err) {
-      if (!signal?.aborted && !isAbortError(err)) {
-        toast.error((err as Error).message);
+  const loadProxies = useCallback(
+    async (signal?: AbortSignal) => {
+      setLoading(true);
+      try {
+        const res = await fetchUnifiedProxies(
+          {
+            health: query.health,
+            search: debouncedSearch.trim() || undefined,
+            protocol: query.protocol !== "all" ? query.protocol : undefined,
+            source: query.source || undefined,
+            sort: query.sort,
+            direction: query.direction,
+            page: query.page,
+            pageSize: query.pageSize,
+          },
+          signal
+        );
+        if (signal?.aborted) return;
+        setItems(res.items);
+        setCounts(res.counts);
+        setTotal(res.total);
+      } catch (err) {
+        if (!signal?.aborted && !isAbortError(err)) {
+          toast.error((err as Error).message);
+        }
+      } finally {
+        if (!signal?.aborted) {
+          setLoading(false);
+        }
       }
-    } finally {
-      if (!signal?.aborted) {
-        setLoading(false);
-      }
-    }
-  }, [password, statusFilter, debouncedSearch, protocolFilter, page, pageSize]);
+    },
+    [query.health, debouncedSearch, query.protocol, query.source, query.sort, query.direction, query.page, query.pageSize]
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -142,10 +159,10 @@ export default function ProxiesPage() {
 
   // Sync 9Router
   const handleSync9Router = async () => {
-    if (!password || syncing) return;
+    if (syncing) return;
     setSyncing(true);
     try {
-      await syncPools(password);
+      await syncPools();
       toast.success("9Router sync initiated");
       const { promise: delayPromise, resolve: delayResolve } = Promise.withResolvers<void>();
       setTimeout(delayResolve, 1200);
@@ -158,29 +175,86 @@ export default function ProxiesPage() {
     }
   };
 
-  // Import File
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !password) return;
-    const text = await file.text();
+  // Add Single Proxy
+  const handleAddProxy = async () => {
+    if (!newProxyText.trim() || addingProxy) return;
+    setAddingProxy(true);
     try {
-      const res = await importIntelligenceProxies(password, {
-        source: file.name,
-        content: text,
+      const res = await importIntelligenceProxies({
+        source: "manual-entry",
+        content: newProxyText.trim(),
       });
-      toast.success(`Imported ${res.inserted} proxies (${res.invalid} invalid) from ${res.source}`);
-      void loadProxies();
+      if (res.inserted > 0) {
+        toast.success("Added proxy successfully");
+        setNewProxyText("");
+        setNewProxyOpen(false);
+        void loadProxies();
+      } else {
+        toast.error("Invalid proxy format. Use protocol://host:port or host:port");
+      }
     } catch (err) {
       toast.error((err as Error).message);
+    } finally {
+      setAddingProxy(false);
     }
-    e.target.value = "";
   };
 
-  // Export File
-  const handleExport = async () => {
-    if (!password) return;
+  // Check Single Proxy (Row-local)
+  const handleCheckSingle = async (proxy: UnifiedProxyItem) => {
+    const key = proxy.key || proxy.proxyKey;
+    if (checkingKey) return;
+    setCheckingKey(key);
     try {
-      const { blob, filename } = await downloadProxyExport(password, "txt", false);
+      const res = await checkProxyValidity(key);
+      const verdict = res.proxy.health?.toUpperCase() || res.proxy.status.toUpperCase();
+      toast.success(`Check completed for ${proxy.name || key}: ${verdict}`);
+      setItems((prev) => prev.map((item) => ((item.key || item.proxyKey) === key ? res.proxy : item)));
+      if ((inspectProxy?.key || inspectProxy?.proxyKey) === key) {
+        setInspectProxy(res.proxy);
+      }
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setCheckingKey(null);
+    }
+  };
+
+  // Bulk Audit
+  const handleAuditSelected = async () => {
+    if (selectedKeys.size === 0 || auditing) return;
+    setAuditing(true);
+    try {
+      let job;
+      if (selectAllMatching) {
+        job = await createIntelligenceJob({
+          filter: {
+            search: debouncedSearch.trim() || undefined,
+            lifecycle: query.health !== "all" ? (query.health as any) : undefined,
+            protocol: query.protocol !== "all" ? query.protocol : undefined,
+          },
+          options: { attempts: 1, timeoutMs: 12000, concurrency: 5 },
+        });
+      } else {
+        job = await createIntelligenceJob({
+          proxyKeys: Array.from(selectedKeys),
+          options: { attempts: 1, timeoutMs: 12000, concurrency: 5 },
+        });
+      }
+      setActiveJobId(job.id);
+      setSelectedKeys(new Set());
+      setSelectAllMatching(false);
+      toast.success(`Audit job queued for ${job.total.toLocaleString()} proxies`);
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setAuditing(false);
+    }
+  };
+
+  // Quick Export
+  const handleQuickExport = async () => {
+    try {
+      const { blob, filename } = await downloadProxyExport("txt", false);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -195,54 +269,14 @@ export default function ProxiesPage() {
     }
   };
 
-  // Add Single Proxy
-  const handleAddProxy = async () => {
-    if (!newProxyText.trim() || !password || addingProxy) return;
-    setAddingProxy(true);
-    try {
-      const res = await importIntelligenceProxies(password, {
-        source: "manual-entry",
-        content: newProxyText.trim(),
-      });
-      if (res.inserted > 0) {
-        toast.success(`Added proxy successfully`);
-        setNewProxyText("");
-        setNewProxyOpen(false);
-        void loadProxies();
-      } else {
-        toast.error(`Invalid proxy format. Use protocol://host:port or host:port`);
-      }
-    } catch (err) {
-      toast.error((err as Error).message);
-    } finally {
-      setAddingProxy(false);
-    }
-  };
-
-  // Check Single Proxy
-  const handleCheckSingle = async (proxy: UnifiedProxyItem) => {
-    if (!password || checkingKey) return;
-    setCheckingKey(proxy.key);
-    try {
-      const res = await checkProxyValidity(password, proxy.key);
-      toast.success(`Check completed: ${res.proxy.status.toUpperCase()}`);
-      setItems((prev) => prev.map((item) => (item.key === proxy.key ? res.proxy : item)));
-      if (inspectProxy?.key === proxy.key) {
-        setInspectProxy(res.proxy);
-      }
-    } catch (err) {
-      toast.error((err as Error).message);
-    } finally {
-      setCheckingKey(null);
-    }
-  };
-
   // Copy Endpoint
   const handleCopy = (text: string) => {
     navigator.clipboard.writeText(text);
     setCopiedKey(text);
-    setTimeout(() => setCopiedKey(null), 1500);
-    toast.success(`Copied ${text}`);
+    toast.success("Copied to clipboard");
+    setTimeout(() => {
+      setCopiedKey((curr) => (curr === text ? null : curr));
+    }, 2000);
   };
 
   // Open Drawer
@@ -251,402 +285,167 @@ export default function ProxiesPage() {
     setDrawerOpen(true);
   };
 
-  const totalPages = Math.ceil(total / pageSize) || 1;
+  // Selection handlers
+  const handleToggleSelectKey = (key: string) => {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+    setSelectAllMatching(false);
+  };
+
+  const handleToggleSelectAllPage = () => {
+    const pageKeys = items.map((i) => i.key || i.proxyKey);
+    const allSelected = pageKeys.length > 0 && pageKeys.every((k) => selectedKeys.has(k));
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        for (const k of pageKeys) next.delete(k);
+      } else {
+        for (const k of pageKeys) next.add(k);
+      }
+      return next;
+    });
+    setSelectAllMatching(false);
+  };
+
+  const pageKeys = items.map((i) => i.key || i.proxyKey);
+  const allPageSelected = pageKeys.length > 0 && pageKeys.every((k) => selectedKeys.has(k));
 
   return (
-    <div className="flex flex-col gap-6 p-6">
-      {/* Top Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/40 pb-5">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">Proxies</h1>
-            <Badge variant="secondary" className="font-mono text-xs">
-              {counts.all}
-            </Badge>
-          </div>
-          <p className="text-xs text-muted-foreground mt-1">
-            Manage proxy fleet, test connectivity, and sync with 9Router.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2.5">
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 text-xs gap-1.5"
-            disabled={syncing}
-            onClick={handleSync9Router}
-          >
-            <RotateCcw className={`h-3.5 w-3.5 ${syncing ? "animate-spin text-primary" : ""}`} />
-            <span>Sync 9Router</span>
-          </Button>
-
-          <label className="inline-flex items-center gap-1.5 h-8 px-3 text-xs font-medium rounded-md border border-input bg-background hover:bg-accent cursor-pointer">
-            <Upload className="h-3.5 w-3.5 text-muted-foreground" />
-            <span>Import</span>
-            <input type="file" accept=".txt" onChange={handleFileUpload} className="hidden" />
-          </label>
-
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 text-xs gap-1.5"
-            onClick={handleExport}
-          >
-            <Download className="h-3.5 w-3.5 text-muted-foreground" />
-            <span>Export</span>
-          </Button>
-
-          <Button
-            size="sm"
-            className="h-8 text-xs gap-1.5"
-            onClick={() => setNewProxyOpen(true)}
-          >
-            <Plus className="h-3.5 w-3.5" />
-            <span>New proxy</span>
-          </Button>
-        </div>
-      </div>
-
-      {/* Filter Bar with Status Pills */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-3 rounded-lg border border-border/50">
-        {/* Status Pills */}
-        <div className="flex flex-wrap items-center gap-2">
-          {/* All */}
-          <button
-            type="button"
-            onClick={() => {
-              setStatusFilter("all");
-              setPage(1);
-            }}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-              statusFilter === "all"
-                ? "bg-primary text-primary-foreground font-semibold shadow-xs"
-                : "bg-muted/50 text-muted-foreground hover:bg-muted"
-            }`}
-          >
-            <span>All</span>
-            <span className="font-mono text-[11px] opacity-80">{counts.all}</span>
-          </button>
-
-          {/* Working */}
-          <button
-            type="button"
-            onClick={() => {
-              setStatusFilter("working");
-              setPage(1);
-            }}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-              statusFilter === "working"
-                ? "bg-emerald-600 text-white font-semibold shadow-xs"
-                : "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20"
-            }`}
-          >
-            <CheckCircle2 className="h-3 w-3" />
-            <span>Working</span>
-            <span className="font-mono text-[11px] opacity-90">{counts.working}</span>
-          </button>
-
-          {/* Regressed (Formerly working, now dead) */}
-          <button
-            type="button"
-            onClick={() => {
-              setStatusFilter("regressed");
-              setPage(1);
-            }}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-              statusFilter === "regressed"
-                ? "bg-amber-600 text-white font-semibold shadow-xs"
-                : "bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/20"
-            }`}
-          >
-            <AlertTriangle className="h-3 w-3" />
-            <span>Regressed</span>
-            <span className="font-mono text-[11px] opacity-90">{counts.regressed}</span>
-          </button>
-
-          {/* Dead */}
-          <button
-            type="button"
-            onClick={() => {
-              setStatusFilter("dead");
-              setPage(1);
-            }}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-              statusFilter === "dead"
-                ? "bg-rose-600 text-white font-semibold shadow-xs"
-                : "bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 border border-rose-500/20"
-            }`}
-          >
-            <XCircle className="h-3 w-3" />
-            <span>Dead</span>
-            <span className="font-mono text-[11px] opacity-90">{counts.dead}</span>
-          </button>
-        </div>
-
-        {/* Search & Protocol */}
+    <div className="flex flex-col gap-5 p-6 max-w-7xl mx-auto w-full">
+      {/* Page Title & Subtitle */}
+      <div className="flex flex-col gap-1">
         <div className="flex items-center gap-2.5">
-          <div className="relative w-56 sm:w-64">
-            <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
-            <Input
-              placeholder="Search host, port, IP, ISP..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-8 text-xs h-8"
-            />
-          </div>
-
-          <select
-            value={protocolFilter}
-            onChange={(e) => {
-              setProtocolFilter(e.target.value);
-              setPage(1);
-            }}
-            className="h-8 px-2.5 text-xs rounded-md border border-input bg-background text-foreground"
-          >
-            <option value="all">All Protocols</option>
-            <option value="socks5">SOCKS5</option>
-            <option value="http">HTTP</option>
-          </select>
+          <h1 className="text-xl font-bold tracking-tight text-foreground font-mono">Proxies</h1>
+          <span className="font-mono text-xs px-2 py-0.5 rounded-full bg-muted/40 text-muted-foreground border border-border/40">
+            {total.toLocaleString()}
+          </span>
         </div>
+        <p className="text-xs text-muted-foreground">
+          Proxy Operations Console: monitor fleet health, verify egress connectivity, and synchronize with 9Router.
+        </p>
       </div>
 
-      {/* DonutBrowser 7-Column Table */}
-      <div className="rounded-lg border border-border/50 bg-card overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left">
-            <thead className="bg-muted/50 border-b border-border text-muted-foreground uppercase text-[10px]">
-              <tr>
-                <th className="p-3">Name</th>
-                <th className="p-3">Protocol</th>
-                <th className="p-3">Host : port</th>
-                <th className="p-3">UDP</th>
-                <th className="p-3">Status</th>
-                <th className="p-3">Sync</th>
-                <th className="p-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border/40 font-mono">
-              {loading ? (
-                <tr>
-                  <td colSpan={7} className="p-8 text-center text-muted-foreground font-sans">
-                    <Loader2 className="h-5 w-5 animate-spin mx-auto mb-2 text-primary" />
-                    Loading proxies...
-                  </td>
-                </tr>
-              ) : items.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="p-8 text-center text-muted-foreground font-sans">
-                    No proxies found matching current filters.
-                  </td>
-                </tr>
-              ) : (
-                items.map((p) => {
-                  const isRowChecking = checkingKey === p.key;
-                  return (
-                    <tr
-                      key={p.key}
-                      className="hover:bg-muted/30 transition-colors group cursor-pointer"
-                      onClick={() => handleOpenDetail(p)}
-                    >
-                      {/* Name */}
-                      <td className="p-3 font-semibold text-foreground truncate max-w-[180px]">
-                        {p.name}
-                      </td>
+      {/* 3-Tier Status Pills */}
+      <ProxySummary
+        facets={counts}
+        activeHealth={query.health}
+        onHealthChange={(health) => updateQuery({ health, page: 1 })}
+      />
 
-                      {/* Protocol */}
-                      <td className="p-3 uppercase">
-                        <Badge variant="outline" className="text-[10px] font-mono tracking-wider">
-                          {p.protocol}
-                        </Badge>
-                      </td>
+      {/* Toolbar */}
+      <ProxyToolbar
+        query={query}
+        onQueryChange={updateQuery}
+        onSync9Router={handleSync9Router}
+        syncing={syncing}
+        onOpenImport={() => {
+          // File input trigger or modal
+          const input = document.createElement("input");
+          input.type = "file";
+          input.accept = ".txt";
+          input.onchange = async (e) => {
+            const file = (e.target as HTMLInputElement).files?.[0];
+            if (!file) return;
+            const text = await file.text();
+            try {
+              const res = await importIntelligenceProxies({ source: file.name, content: text });
+              toast.success(`Imported ${res.inserted} proxies (${res.invalid} invalid) from ${res.source}`);
+              void loadProxies();
+            } catch (err) {
+              toast.error((err as Error).message);
+            }
+          };
+          input.click();
+        }}
+        onOpenExport={handleQuickExport}
+        onOpenAdd={() => setNewProxyOpen(true)}
+      />
 
-                      {/* Host : port */}
-                      <td className="p-3 text-muted-foreground" onClick={(e) => e.stopPropagation()}>
-                        <div className="inline-flex items-center gap-1.5">
-                          <span>
-                            {p.host}:{p.port}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => handleCopy(`${p.host}:${p.port}`)}
-                            className="p-1 hover:text-foreground opacity-60 hover:opacity-100 transition-opacity"
-                            title="Copy host:port"
-                          >
-                            {copiedKey === `${p.host}:${p.port}` ? (
-                              <Check className="h-3 w-3 text-emerald-400" />
-                            ) : (
-                              <Copy className="h-3 w-3" />
-                            )}
-                          </button>
-                        </div>
-                      </td>
+      {/* Active / Recent Audit Job Indicator */}
+      <AuditJobIndicator
+        activeJobId={activeJobId}
+        onJobFinished={() => {
+          toast.success("Audit completed");
+          void loadProxies();
+        }}
+        onDismiss={() => setActiveJobId(null)}
+      />
 
-                      {/* UDP */}
-                      <td className="p-3">
-                        <Badge
-                          variant={p.udp === "Yes" ? "default" : "secondary"}
-                          className={p.udp === "Yes" ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-[10px]" : "text-[10px]"}
-                        >
-                          {p.udp}
-                        </Badge>
-                      </td>
+      {/* Selection Action Bar */}
+      <ProxySelectionBar
+        selectedCount={selectedKeys.size}
+        totalMatching={total}
+        selectAllMatching={selectAllMatching}
+        onSelectAllMatchingToggle={setSelectAllMatching}
+        onAuditSelected={handleAuditSelected}
+        onExportSelected={handleQuickExport}
+        onClearSelection={() => {
+          setSelectedKeys(new Set());
+          setSelectAllMatching(false);
+        }}
+        auditing={auditing}
+      />
 
-                      {/* Status */}
-                      <td className="p-3">
-                        {p.status === "working" && (
-                          <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-[10px] gap-1">
-                            <span className="size-1.5 rounded-full bg-emerald-400" />
-                            Working
-                          </Badge>
-                        )}
-                        {p.status === "regressed" && (
-                          <Badge className="bg-amber-500/15 text-amber-400 border-amber-500/30 text-[10px] gap-1">
-                            <span className="size-1.5 rounded-full bg-amber-400" />
-                            Regressed
-                          </Badge>
-                        )}
-                        {p.status === "dead" && (
-                          <Badge className="bg-rose-500/15 text-rose-400 border-rose-500/30 text-[10px] gap-1">
-                            <span className="size-1.5 rounded-full bg-rose-400" />
-                            Dead
-                          </Badge>
-                        )}
-                      </td>
+      {/* Proxies Table */}
+      <ProxyTable
+        items={items}
+        loading={loading}
+        page={query.page}
+        pageSize={query.pageSize}
+        total={total}
+        onPageChange={(page) => updateQuery({ page })}
+        selectedKeys={selectedKeys}
+        onToggleSelectKey={handleToggleSelectKey}
+        onToggleSelectAllPage={handleToggleSelectAllPage}
+        allPageSelected={allPageSelected}
+        checkingKey={checkingKey}
+        onCheckSingle={handleCheckSingle}
+        onOpenDetail={handleOpenDetail}
+        copiedKey={copiedKey}
+        onCopyEndpoint={handleCopy}
+        onResetFilters={() => updateQuery({ q: "", health: "all", protocol: "all", page: 1 })}
+      />
 
-                      {/* Sync */}
-                      <td className="p-3">
-                        {p.sync === "active" && (
-                          <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-[10px]">
-                            Active
-                          </Badge>
-                        )}
-                        {p.sync === "reserve" && (
-                          <Badge variant="secondary" className="text-[10px]">
-                            Reserve
-                          </Badge>
-                        )}
-                        {p.sync === "unsynced" && (
-                          <span className="text-muted-foreground text-xs">—</span>
-                        )}
-                      </td>
-
-                      {/* Actions */}
-                      <td className="p-3 text-right" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center justify-end gap-1 font-sans">
-                          {/* Quick Check */}
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 w-7 p-0"
-                            disabled={isRowChecking}
-                            onClick={() => handleCheckSingle(p)}
-                            title="Check validity"
-                          >
-                            {isRowChecking ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                            ) : (
-                              <RotateCcw className="h-3.5 w-3.5 text-muted-foreground group-hover:text-foreground" />
-                            )}
-                          </Button>
-
-                          {/* Open Detail Drawer */}
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 w-7 p-0"
-                            onClick={() => handleOpenDetail(p)}
-                            title="View Connection Test & History"
-                          >
-                            <SlidersHorizontal className="h-3.5 w-3.5 text-muted-foreground group-hover:text-foreground" />
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Pagination Bar */}
-        <div className="flex items-center justify-between p-3 border-t border-border/40 text-xs text-muted-foreground font-sans">
-          <div>
-            Showing {items.length > 0 ? (page - 1) * pageSize + 1 : 0} to{" "}
-            {Math.min(page * pageSize, total)} of {total} proxies
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 w-7 p-0"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-            </Button>
-            <span className="text-xs font-medium text-foreground">
-              {page} / {totalPages}
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 w-7 p-0"
-              disabled={page >= totalPages}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            >
-              <ChevronRight className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      {/* DonutBrowser Detail & Evidence Drawer */}
+      {/* Detail Drawer */}
       <ProxyDetailDrawer
         proxy={inspectProxy}
         open={drawerOpen}
         onOpenChange={setDrawerOpen}
         onProxyUpdated={(updated) => {
-          setItems((prev) => prev.map((item) => (item.key === updated.key ? updated : item)));
+          setItems((prev) => prev.map((item) => ((item.key || item.proxyKey) === (updated.key || updated.proxyKey) ? updated : item)));
           setInspectProxy(updated);
         }}
       />
 
-      {/* New Proxy Dialog */}
+      {/* New Proxy Modal Dialog */}
       <Dialog open={newProxyOpen} onOpenChange={setNewProxyOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md bg-card border-border/80">
           <DialogHeader>
-            <DialogTitle className="text-base font-bold">Add New Proxy</DialogTitle>
+            <DialogTitle className="text-sm font-bold font-mono">Add Single Proxy</DialogTitle>
             <DialogDescription className="text-xs text-muted-foreground">
-              Enter proxy string in format: <code className="font-mono text-foreground">protocol://username:password@host:port</code> or <code className="font-mono text-foreground">host:port</code>
+              Enter endpoint string. E.g.: <code className="text-foreground">socks5://user:pass@host:port</code> or <code className="text-foreground">host:port</code>
             </DialogDescription>
           </DialogHeader>
 
           <div className="py-2">
             <Input
-              placeholder="e.g. socks5://100.71.252.27:10001"
               value={newProxyText}
               onChange={(e) => setNewProxyText(e.target.value)}
-              className="font-mono text-xs"
+              placeholder="protocol://username:password@host:port"
+              className="font-mono text-xs bg-surface border-border/60"
               autoFocus
             />
           </div>
 
           <DialogFooter className="gap-2 sm:gap-0">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setNewProxyOpen(false)}
-            >
+            <Button variant="outline" size="sm" onClick={() => setNewProxyOpen(false)} className="text-xs">
               Cancel
             </Button>
-            <Button
-              size="sm"
-              disabled={!newProxyText.trim() || addingProxy}
-              onClick={handleAddProxy}
-            >
+            <Button size="sm" onClick={handleAddProxy} disabled={addingProxy} className="text-xs">
               {addingProxy ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
               Add Proxy
             </Button>
