@@ -69,19 +69,39 @@ function createRedactedProxyInfo(
   return info;
 }
 
-export function parseProxyInput(input: ProxyInput): {
+/**
+ * Parse a proxy target. When `input` is a bare `host:port` string (no scheme),
+ * `defaultScheme` is applied first — mirroring how the detailed-checker infers
+ * protocol from the uploaded file name (socks* files -> socks5, otherwise http).
+ * Returns the inferred protocol as `inferredProtocol` so callers can try the
+ * alternate protocol when the primary probe fails.
+ */
+export function parseProxyInput(input: ProxyInput, defaultScheme?: string): {
   parsed: ParsedProxyInput;
   redacted: RedactedProxyInfo;
+  inferredProtocol?: ProxyProtocol;
 } {
   if (typeof input === "string") {
+    // Bare host:port lines have no scheme; prefix the filename-inferred one,
+    // e.g. "socks-list.txt" -> socks5, otherwise http (matches detailed-checker).
+    // Only host:port forms qualify — junk like "not-a-proxy" stays invalid so
+    // error paths never echo free-form input back.
+    const bareHostPort = !input.includes("://") && /^[^\s/:]+:\d+$/.test(input);
+
     let url: URL;
     try {
-      url = new URL(input);
+      url = new URL(
+        input.includes("://") || !bareHostPort ? input : `${defaultScheme ?? "http"}://${input}`
+      );
     } catch {
       // Do not include raw input to prevent leaking plaintext credentials
       throw new Error("Malformed proxy URL");
     }
 
+    const inferredProtocol =
+      bareHostPort && SUPPORTED_PROTOCOLS.has((defaultScheme ?? "").toLowerCase() as ProxyProtocol)
+        ? (defaultScheme!.toLowerCase() as ProxyProtocol)
+        : undefined;
     try {
       const protocol = normalizeProtocol(url.protocol);
       const host = normalizeHost(url.hostname);
@@ -100,11 +120,13 @@ export function parseProxyInput(input: ProxyInput): {
       return {
         parsed,
         redacted: createRedactedProxyInfo(protocol, host, port, username),
+        ...(inferredProtocol !== undefined ? { inferredProtocol } : {}),
       };
     } catch {
       throw new Error("Invalid proxy URL configuration");
     }
   }
+
 
   if (typeof input === "object" && input !== null) {
     const protocol = normalizeProtocol(input.protocol);

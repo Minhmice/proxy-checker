@@ -38,3 +38,4 @@ export interface BrowserAuditOptions {
 export * from "./types.js";
 export { checkProxy } from "./api.js";
 export { auditProxyInBrowser } from "./browser/api.js";
+export { serializeAuditDetail } from "./detail.js";

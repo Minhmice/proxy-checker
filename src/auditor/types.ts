@@ -28,6 +28,53 @@ export type ProxyInput =
 
 export type AuditVerdict = "PASS" | "WARN" | "FAIL" | "UNKNOWN";
 
+export type ProbeStatus = "PASS" | "WARN" | "FAIL" | "UNSUPPORTED" | "SKIPPED" | "ERROR";
+
+export interface AuditProbe {
+  name: string;
+  status: ProbeStatus;
+  durationMs?: number;
+  summary: string;
+  evidence?: unknown;
+}
+
+export interface AuditReason {
+  code: string;
+  severity: "info" | "warning" | "critical";
+  probe: string;
+  summary: string;
+}
+
+export interface AuditProvenance {
+  auditorVersion: string;
+  scoringVersion: string;
+  probeVersions: Record<string, string>;
+  timeoutMs: number;
+  baseline?: { id: string; ip?: string; capturedAt: string; networkFingerprint?: string };
+  providers?: Array<{ name: string; checkedAt: string; cacheState: "fresh" | "stale" | "unavailable" }>;
+  browser?: { engine: string; version?: string };
+}
+
+export interface ProxyAuditDetail {
+  auditId: string;
+  proxyKey: string;
+  verdict: AuditVerdict;
+  scores: SecurityScore;
+  exit: {
+    ip?: string;
+    country?: string;
+    region?: string;
+    isp?: string;
+    asn?: string;
+    timezone?: string;
+  };
+  reasons: AuditReason[];
+  probes: AuditProbe[];
+  checkedAt: string;
+  scoringVersion: string;
+  provenance: AuditProvenance;
+}
+
 export interface SecurityScore {
   overallSafety: number | null;
   transportSecurity: number | null;
@@ -205,5 +252,8 @@ export interface ProxyAuditResult {
   browserAudit?: BrowserAuditResult;
   riskFactors: RiskFactor[];
   recommendations: string[];
+  probes?: AuditProbe[];
+  reasons?: AuditReason[];
+  provenance?: AuditProvenance;
   metadata: AuditMetadata;
 }
