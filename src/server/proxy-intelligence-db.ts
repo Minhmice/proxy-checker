@@ -37,6 +37,12 @@ export function migrateProxyIntelligence(db: ProxyIntelligenceDb): void {
     // 2. Add additive columns to proxies if not present
     const columns = db.all<{ name: string }>("PRAGMA table_info(proxies)").map((c) => c.name);
 
+    if (!columns.includes("host")) {
+      db.exec("ALTER TABLE proxies ADD COLUMN host TEXT;");
+    }
+    if (!columns.includes("port")) {
+      db.exec("ALTER TABLE proxies ADD COLUMN port INTEGER;");
+    }
     if (!columns.includes("source")) {
       db.exec("ALTER TABLE proxies ADD COLUMN source TEXT NOT NULL DEFAULT 'legacy';");
     }
@@ -55,6 +61,25 @@ export function migrateProxyIntelligence(db: ProxyIntelligenceDb): void {
     if (!columns.includes("updated_at")) {
       db.exec("ALTER TABLE proxies ADD COLUMN updated_at INTEGER;");
     }
+    if (!columns.includes("last_verdict")) {
+      db.exec("ALTER TABLE proxies ADD COLUMN last_verdict TEXT;");
+    }
+    if (!columns.includes("last_checked_at")) {
+      db.exec("ALTER TABLE proxies ADD COLUMN last_checked_at INTEGER;");
+    }
+    if (!columns.includes("last_latency_ms")) {
+      db.exec("ALTER TABLE proxies ADD COLUMN last_latency_ms INTEGER;");
+    }
+    if (!columns.includes("last_exit_ip")) {
+      db.exec("ALTER TABLE proxies ADD COLUMN last_exit_ip TEXT;");
+    }
+    if (!columns.includes("last_failure_code")) {
+      db.exec("ALTER TABLE proxies ADD COLUMN last_failure_code TEXT;");
+    }
+    if (!columns.includes("ever_passed")) {
+      db.exec("ALTER TABLE proxies ADD COLUMN ever_passed INTEGER NOT NULL DEFAULT 0;");
+    }
+
 
     // 3. Create proxy_diagnostics table
     db.exec(`
@@ -98,14 +123,36 @@ export function migrateProxyIntelligence(db: ProxyIntelligenceDb): void {
         explanation TEXT NOT NULL
       );
     `);
+    // 6. Create audit_jobs table
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS audit_jobs (
+        id TEXT PRIMARY KEY,
+        state TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        started_at INTEGER,
+        finished_at INTEGER,
+        total INTEGER NOT NULL,
+        completed INTEGER NOT NULL DEFAULT 0,
+        passed INTEGER NOT NULL DEFAULT 0,
+        warned INTEGER NOT NULL DEFAULT 0,
+        failed INTEGER NOT NULL DEFAULT 0,
+        cancelled INTEGER NOT NULL DEFAULT 0,
+        options_json TEXT
+      );
+    `);
 
-    // 6. Create indexes
+
+    // 7. Create indexes
     db.exec(`
       CREATE INDEX IF NOT EXISTS proxy_diagnostics_proxy_checked_idx ON proxy_diagnostics(proxy_key, checked_at DESC);
       CREATE INDEX IF NOT EXISTS proxy_audits_proxy_finished_idx ON proxy_audits(proxy_key, finished_at DESC);
       CREATE INDEX IF NOT EXISTS proxy_audits_verdict_idx ON proxy_audits(verdict, lifecycle_state);
       CREATE INDEX IF NOT EXISTS proxies_lifecycle_idx ON proxies(lifecycle_state);
       CREATE INDEX IF NOT EXISTS proxies_source_idx ON proxies(source);
+      CREATE INDEX IF NOT EXISTS proxies_protocol_lifecycle_idx ON proxies(protocol, lifecycle_state);
+      CREATE INDEX IF NOT EXISTS proxies_source_lifecycle_idx ON proxies(source, lifecycle_state);
+      CREATE INDEX IF NOT EXISTS proxies_last_checked_idx ON proxies(last_checked_at DESC);
+      CREATE INDEX IF NOT EXISTS audit_jobs_created_idx ON audit_jobs(created_at DESC);
     `);
   });
 }
@@ -113,7 +160,7 @@ export function migrateProxyIntelligence(db: ProxyIntelligenceDb): void {
 export function openProxyIntelligenceDb(dataDir: string): ProxyIntelligenceDb {
   fs.mkdirSync(dataDir, { recursive: true });
   const dbFile = path.join(dataDir, "proxies.sqlite3");
-  const raw = new DatabaseSync(dbFile);
+  const raw = new DatabaseSync(dbFile, { timeout: 3000 });
 
   // Enable WAL and foreign keys for durability and cascading
   raw.exec("PRAGMA journal_mode = WAL;");

@@ -1,6 +1,8 @@
+import crypto from "node:crypto";
 import type { ProxyIntelligenceDb, SqlParam } from "./proxy-intelligence-db.js";
 import { parseProxyInput } from "../auditor/parser.js";
-import type { ParsedProxyInput, ProxyAuditResult } from "../auditor/types.js";
+import { serializeAuditDetail } from "../auditor/detail.js";
+import type { ParsedProxyInput, ProxyAuditDetail, ProxyAuditResult } from "../auditor/types.js";
 
 export type ProxyLifecycleState = "working" | "unstable" | "dead" | "dangerous" | "unknown";
 
@@ -84,6 +86,26 @@ export interface ProxyImportSummary {
   duplicates: number;
 }
 
+export interface PersistAuditSnapshotInput {
+  proxyKey: string;
+  result: ProxyAuditResult;
+  auditId?: string;
+  jobId?: string;
+  startedAt?: number;
+  finishedAt?: number;
+}
+
+export interface ProxyImportPreview {
+  source: string;
+  totalLines: number;
+  valid: number;
+  invalid: number;
+  duplicates: number;
+  protocols: Record<string, number>;
+  invalidLines: Array<{ line: number; text: string; error: string }>;
+  sampleValid: Array<{ endpoint: string; protocol: string }>;
+}
+
 export interface WorkingExportFilter {
   format?: "txt" | "csv";
   includeCredentials?: boolean;
@@ -151,6 +173,9 @@ export interface ProxyIntelligenceRepository {
     counts: UnifiedProxyCounts;
     items: UnifiedProxyItem[];
   }>;
+  persistAuditSnapshot(input: PersistAuditSnapshotInput): Promise<void>;
+  previewImport(input: ProxyImportInput): Promise<ProxyImportPreview>;
+  getAuditDetail(proxyKey: string, auditId?: string): Promise<ProxyAuditDetail | null>;
 }
 
 function computeProxyKey(protocol: string, host: string, port: number, username?: string | null): string {
@@ -831,6 +856,178 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
         counts,
         items,
       };
+    },
+    async persistAuditSnapshot(input: PersistAuditSnapshotInput): Promise<void> {
+      const auditId = input.auditId || crypto.randomUUID();
+      const finishedTime = input.finishedAt || Date.now();
+      const startedTime = input.startedAt || finishedTime;
+      const verdict = input.result.verdict;
+      const latency = input.result.connectivity?.latencyMs ?? null;
+      const exitIp = input.result.exitIp?.ip ?? null;
+      const failureCode = input.result.riskFactors?.find((r) => r.severity === "critical")?.code ?? null;
+      const lifecycle = verdict === "FAIL" ? "dead" : "working";
+
+      db.transaction(() => {
+        // 1. Insert audit record
+        db.run(
+          `INSERT INTO proxy_audits (
+            id, proxy_key, verdict, lifecycle_state, overall_score,
+            transport_score, privacy_score, reputation_score, reliability_score,
+            started_at, finished_at, result_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            auditId,
+            input.proxyKey,
+            verdict,
+            lifecycle,
+            input.result.scores?.overallSafety ?? null,
+            input.result.scores?.transportSecurity ?? null,
+            input.result.scores?.privacy ?? null,
+            input.result.scores?.reputation ?? null,
+            input.result.scores?.reliability ?? null,
+            startedTime,
+            finishedTime,
+            JSON.stringify(input.result),
+          ]
+        );
+
+        // 2. Insert typed risks
+        if (Array.isArray(input.result.riskFactors)) {
+          for (const r of input.result.riskFactors) {
+            db.run(
+              `INSERT INTO proxy_audit_risks (
+                id, audit_id, risk_code, severity, title, explanation
+              ) VALUES (?, ?, ?, ?, ?, ?)`,
+              [
+                crypto.randomUUID(),
+                auditId,
+                r.code ?? r.id,
+                r.severity,
+                r.title ?? r.id,
+                r.description ?? r.message ?? "",
+              ]
+            );
+          }
+        }
+
+        // 3. Update proxy snapshot
+        db.run(
+          `UPDATE proxies SET
+            last_verdict = ?,
+            last_checked_at = ?,
+            last_latency_ms = COALESCE(?, last_latency_ms),
+            last_exit_ip = COALESCE(?, last_exit_ip),
+            last_failure_code = ?,
+            ever_passed = CASE WHEN ? = 'PASS' THEN 1 ELSE ever_passed END,
+            status = CASE WHEN ? = 'FAIL' THEN 'dead' ELSE 'usable' END,
+            lifecycle_state = ?,
+            latency_ms = COALESCE(?, latency_ms),
+            exit_ip = COALESCE(?, exit_ip),
+            checked_at = ?,
+            updated_at = ?
+          WHERE proxy_key = ?`,
+          [
+            verdict,
+            finishedTime,
+            latency,
+            exitIp,
+            failureCode,
+            verdict,
+            verdict,
+            lifecycle,
+            latency,
+            exitIp,
+            finishedTime,
+            finishedTime,
+            input.proxyKey,
+          ]
+        );
+
+        // 4. Update audit job counters if jobId is provided
+        if (input.jobId) {
+          db.run(
+            `UPDATE audit_jobs SET
+              completed = completed + 1,
+              passed = passed + CASE WHEN ? = 'PASS' THEN 1 ELSE 0 END,
+              warned = warned + CASE WHEN ? = 'WARN' THEN 1 ELSE 0 END,
+              failed = failed + CASE WHEN ? = 'FAIL' THEN 1 ELSE 0 END
+            WHERE id = ?`,
+            [verdict, verdict, verdict, input.jobId]
+          );
+        }
+      });
+    },
+    async previewImport(input: ProxyImportInput): Promise<ProxyImportPreview> {
+      const lines = input.content.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
+      const protocols: Record<string, number> = {};
+      const invalidLines: Array<{ line: number; text: string; error: string }> = [];
+      const sampleValid: Array<{ endpoint: string; protocol: string }> = [];
+      let valid = 0;
+      let duplicates = 0;
+      const seenKeys = new Set<string>();
+
+      for (let idx = 0; idx < lines.length; idx++) {
+        const line = lines[idx]!;
+        const defaultScheme = input.source.toLowerCase().includes("socks") ? "socks5" : "http";
+        let parsedResult;
+        try {
+          parsedResult = parseProxyInput(line, defaultScheme);
+        } catch (err) {
+          invalidLines.push({ line: idx + 1, text: line, error: (err as Error).message });
+          continue;
+        }
+
+        if (!parsedResult?.parsed) {
+          invalidLines.push({ line: idx + 1, text: line, error: "Invalid proxy format" });
+          continue;
+        }
+
+        const p = parsedResult.parsed;
+        const key = computeProxyKey(p.protocol, p.host, p.port, p.username);
+        if (seenKeys.has(key)) {
+          duplicates++;
+          continue;
+        }
+        seenKeys.add(key);
+
+        valid++;
+        protocols[p.protocol] = (protocols[p.protocol] ?? 0) + 1;
+        if (sampleValid.length < 5) {
+          sampleValid.push({ endpoint: `${p.host}:${p.port}`, protocol: p.protocol });
+        }
+      }
+
+      return {
+        source: input.source,
+        totalLines: lines.length,
+        valid,
+        invalid: invalidLines.length,
+        duplicates,
+        protocols,
+        invalidLines: invalidLines.slice(0, 50),
+        sampleValid,
+      };
+    },
+    async getAuditDetail(proxyKey: string, auditId?: string): Promise<ProxyAuditDetail | null> {
+      let row: { id: string; proxy_key: string; verdict: string; finished_at: number; result_json: string } | undefined;
+      if (auditId) {
+        row = db.get<{ id: string; proxy_key: string; verdict: string; finished_at: number; result_json: string }>(
+          "SELECT id, proxy_key, verdict, finished_at, result_json FROM proxy_audits WHERE id = ? AND proxy_key = ?",
+          [auditId, proxyKey]
+        );
+      } else {
+        row = db.get<{ id: string; proxy_key: string; verdict: string; finished_at: number; result_json: string }>(
+          "SELECT id, proxy_key, verdict, finished_at, result_json FROM proxy_audits WHERE proxy_key = ? ORDER BY finished_at DESC LIMIT 1",
+          [proxyKey]
+        );
+      }
+      if (!row || !row.result_json) return null;
+      try {
+        const parsed = JSON.parse(row.result_json);
+        return serializeAuditDetail(parsed, proxyKey, row.id);
+      } catch {
+        return null;
+      }
     },
   };
 
