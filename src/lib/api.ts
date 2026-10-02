@@ -12,64 +12,114 @@ import type {
   UnifiedProxyHistoryEntry,
 } from "./types";
 
-const STORAGE_KEY = "minhmiceproxy-password";
-const STORAGE_DATE_KEY = "minhmiceproxy-password-date";
-const COOKIE_NAME = "minhmiceproxy-auth";
-function todayKey(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
+export function jsonHeaders(customHeaders?: HeadersInit): HeadersInit {
+  return {
+    "Content-Type": "application/json",
+    ...customHeaders,
+  };
 }
 
-export function authHeaders(password: string): HeadersInit {
+export function authHeaders(password?: string): HeadersInit {
+  if (password) {
+    return {
+      Authorization: `Basic ${btoa(`admin:${password}`)}`,
+      "Content-Type": "application/json",
+    };
+  }
   return {
-    Authorization: `Basic ${btoa(`admin:${password}`)}`,
     "Content-Type": "application/json",
   };
 }
 
+export async function login(password: string): Promise<boolean> {
+  const response = await fetch("/api/auth/login", {
+    method: "POST",
+    headers: jsonHeaders(),
+    body: JSON.stringify({ password }),
+    credentials: "same-origin",
+  });
+  if (!response.ok) {
+    let msg = "Invalid control password";
+    try {
+      const body = await response.json();
+      if (body.error) msg = body.error;
+    } catch {}
+    throw new Error(msg);
+  }
+  return true;
+}
+
+export async function logout(): Promise<void> {
+  await fetch("/api/auth/logout", {
+    method: "POST",
+    credentials: "same-origin",
+  }).catch(() => {});
+}
+
+export async function checkSession(signal?: AbortSignal): Promise<boolean> {
+  try {
+    const response = await fetch("/api/auth/session", {
+      cache: "no-store",
+      credentials: "same-origin",
+      signal,
+    });
+    if (!response.ok) return false;
+    const body = await response.json();
+    return Boolean(body.authenticated);
+  } catch {
+    return false;
+  }
+}
+
+// Deprecated compatibility stubs for stored password
 export function getStoredPassword(): string | null {
-  if (typeof window === "undefined") return null;
-  if (sessionStorage.getItem(STORAGE_DATE_KEY) !== todayKey()) {
-    sessionStorage.removeItem(STORAGE_KEY);
-    sessionStorage.removeItem(STORAGE_DATE_KEY);
-    document.cookie = `${COOKIE_NAME}=; path=/; max-age=0`;
-    return null;
-  }
-  const pass = sessionStorage.getItem(STORAGE_KEY);
-  if (pass) {
-    document.cookie = `${COOKIE_NAME}=${encodeURIComponent(pass)}; path=/; max-age=86400; SameSite=Lax`;
-  }
-  return pass;
+  return null;
+}
+export function storePassword(_password: string): void {}
+export async function clearStoredPassword(): Promise<void> {
+  await logout();
 }
 
-export function storePassword(password: string) {
-  sessionStorage.setItem(STORAGE_KEY, password);
-  sessionStorage.setItem(STORAGE_DATE_KEY, todayKey());
-  if (typeof document !== "undefined") {
-    document.cookie = `${COOKIE_NAME}=${encodeURIComponent(password)}; path=/; max-age=86400; SameSite=Lax`;
-  }
-}
+export async function fetchStatus(arg1?: string | AbortSignal, arg2?: AbortSignal): Promise<PoolStatus> {
+  const signal = arg1 instanceof AbortSignal ? arg1 : (arg2 instanceof AbortSignal ? arg2 : undefined);
+  const password = typeof arg1 === "string" ? arg1 : undefined;
 
-export async function clearStoredPassword() {
-  sessionStorage.removeItem(STORAGE_KEY);
-  sessionStorage.removeItem(STORAGE_DATE_KEY);
-  if (typeof document !== "undefined") {
-    document.cookie = `${COOKIE_NAME}=; path=/; max-age=0`;
-  }
-}
-
-export async function fetchStatus(password: string, signal?: AbortSignal): Promise<PoolStatus> {
-  const response = await fetch("/api/ninerouter/status", { cache: "no-store", signal, headers: authHeaders(password) });
+  const response = await fetch("/api/ninerouter/status", {
+    cache: "no-store",
+    signal,
+    credentials: "same-origin",
+    headers: authHeaders(password),
+  });
   if (response.status === 401) throw new Error("Wrong control password");
   if (!response.ok) throw new Error("Control service is unavailable");
   return response.json();
 }
 
-export async function fetchPools(password: string, tier?: string, signal?: AbortSignal): Promise<PoolRecord[]> {
+export async function fetchPools(arg1?: string | AbortSignal, arg2?: string | AbortSignal, arg3?: AbortSignal): Promise<PoolRecord[]> {
+  let tier: string | undefined;
+  let signal: AbortSignal | undefined;
+  let password: string | undefined;
+
+  if (typeof arg1 === "string") {
+    if (typeof arg2 === "string") {
+      password = arg1;
+      tier = arg2;
+      signal = arg3;
+    } else if (arg2 instanceof AbortSignal) {
+      tier = arg1;
+      signal = arg2;
+    } else {
+      tier = arg1;
+    }
+  } else if (arg1 instanceof AbortSignal) {
+    signal = arg1;
+  }
+
   const query = tier ? `?tier=${tier}` : "";
   const response = await fetch(`/api/ninerouter/pools${query}`, {
     cache: "no-store",
     headers: authHeaders(password),
+    credentials: "same-origin",
     signal,
   });
   if (response.status === 401) throw new Error("Wrong control password");
@@ -78,10 +128,26 @@ export async function fetchPools(password: string, tier?: string, signal?: Abort
   return body.pools ?? [];
 }
 
-export async function fetchMetrics(password: string, hours = 24, signal?: AbortSignal): Promise<MetricsSnapshot[]> {
+export async function fetchMetrics(arg1?: number | string | AbortSignal, arg2?: number | AbortSignal, arg3?: AbortSignal): Promise<MetricsSnapshot[]> {
+  let hours = 24;
+  let signal: AbortSignal | undefined;
+  let password: string | undefined;
+
+  if (typeof arg1 === "string") {
+    password = arg1;
+    if (typeof arg2 === "number") hours = arg2;
+    signal = arg3;
+  } else if (typeof arg1 === "number") {
+    hours = arg1;
+    if (arg2 instanceof AbortSignal) signal = arg2;
+  } else if (arg1 instanceof AbortSignal) {
+    signal = arg1;
+  }
+
   const response = await fetch(`/api/ninerouter/metrics?hours=${hours}`, {
     cache: "no-store",
     headers: authHeaders(password),
+    credentials: "same-origin",
     signal,
   });
   if (response.status === 401) throw new Error("Wrong control password");
@@ -90,9 +156,10 @@ export async function fetchMetrics(password: string, hours = 24, signal?: AbortS
   return body.snapshots ?? [];
 }
 
-export async function syncPools(password: string) {
+export async function syncPools(password?: string) {
   const response = await fetch("/api/ninerouter/sync", {
     method: "POST",
+    credentials: "same-origin",
     headers: authHeaders(password),
   });
   if (response.status === 401) throw new Error("Wrong control password");
@@ -100,9 +167,23 @@ export async function syncPools(password: string) {
   return response.json();
 }
 
-export async function togglePool(password: string, id: string, isActive: boolean) {
+export async function togglePool(arg1: string, arg2: string | boolean, arg3?: boolean) {
+  let id: string;
+  let isActive: boolean;
+  let password: string | undefined;
+
+  if (typeof arg3 === "boolean") {
+    password = arg1;
+    id = String(arg2);
+    isActive = arg3;
+  } else {
+    id = arg1;
+    isActive = Boolean(arg2);
+  }
+
   const response = await fetch("/api/ninerouter/activate", {
     method: "POST",
+    credentials: "same-origin",
     headers: authHeaders(password),
     body: JSON.stringify({ id, isActive }),
   });
@@ -111,50 +192,113 @@ export async function togglePool(password: string, id: string, isActive: boolean
   return body.pool as PoolRecord;
 }
 
-export async function fetchDiagnosticFiles(password: string) {
-  const response = await fetch("/api/diagnostics/files", { cache: "no-store", headers: authHeaders(password) });
+export async function fetchDiagnosticFiles(password?: string) {
+  const response = await fetch("/api/diagnostics/files", {
+    cache: "no-store",
+    credentials: "same-origin",
+    headers: authHeaders(password),
+  });
   if (!response.ok) throw new Error(response.status === 401 ? "Wrong control password" : "Diagnostic files unavailable");
   return response.json() as Promise<{ files: Array<{ name: string; count: number }>; job: DiagnosticJob }>;
 }
 
-export async function fetchDiagnosticJob(password: string, signal?: AbortSignal) {
-  const response = await fetch("/api/diagnostics/job", { cache: "no-store", signal, headers: authHeaders(password) });
+export async function fetchDiagnosticJob(arg1?: string | AbortSignal, arg2?: AbortSignal) {
+  const signal = arg1 instanceof AbortSignal ? arg1 : (arg2 instanceof AbortSignal ? arg2 : undefined);
+  const password = typeof arg1 === "string" ? arg1 : undefined;
+
+  const response = await fetch("/api/diagnostics/job", {
+    cache: "no-store",
+    signal,
+    credentials: "same-origin",
+    headers: authHeaders(password),
+  });
   if (!response.ok) throw new Error(response.status === 401 ? "Wrong control password" : "Diagnostic job unavailable");
   return (await response.json()).job as DiagnosticJob;
 }
 
-export async function uploadDiagnosticFile(password: string, name: string, content: string) {
-  const response = await fetch("/api/diagnostics/upload", { method: "POST", headers: authHeaders(password), body: JSON.stringify({ name, content }) });
+export async function uploadDiagnosticFile(arg1: string, arg2: string, arg3?: string) {
+  let name: string;
+  let content: string;
+  let password: string | undefined;
+
+  if (arg3 !== undefined) {
+    password = arg1;
+    name = arg2;
+    content = arg3;
+  } else {
+    name = arg1;
+    content = arg2;
+  }
+
+  const response = await fetch("/api/diagnostics/upload", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: authHeaders(password),
+    body: JSON.stringify({ name, content }),
+  });
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || "Could not upload input list");
   return body as { name: string; count: number };
 }
 
+export async function renamePool(arg1: string, arg2: string, arg3?: string) {
+  let localId: string;
+  let name: string;
+  let password: string | undefined;
 
-export async function renamePool(password: string, localId: string, name: string) {
-  const response = await fetch(`/api/ninerouter/pools/${encodeURIComponent(localId)}`, { method: "PATCH", headers: authHeaders(password), body: JSON.stringify({ name: name.trim() }) });
+  if (arg3 !== undefined) {
+    password = arg1;
+    localId = arg2;
+    name = arg3;
+  } else {
+    localId = arg1;
+    name = arg2;
+  }
+
+  const response = await fetch(`/api/ninerouter/pools/${encodeURIComponent(localId)}`, {
+    method: "PATCH",
+    credentials: "same-origin",
+    headers: authHeaders(password),
+    body: JSON.stringify({ name: name.trim() }),
+  });
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || "Could not rename proxy");
   return body.pool as PoolRecord;
 }
 
-export async function removePool(password: string, localId: string) {
-  const response = await fetch(`/api/ninerouter/pools/${encodeURIComponent(localId)}`, { method: "DELETE", headers: authHeaders(password) });
+export async function removePool(arg1: string, arg2?: string) {
+  const localId = arg2 !== undefined ? arg2 : arg1;
+  const password = arg2 !== undefined ? arg1 : undefined;
+
+  const response = await fetch(`/api/ninerouter/pools/${encodeURIComponent(localId)}`, {
+    method: "DELETE",
+    credentials: "same-origin",
+    headers: authHeaders(password),
+  });
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || "Could not remove proxy");
   return body.pool as PoolRecord;
 }
 
+export async function runDiagnostics(arg1: string | { file: string; samplePercent?: number; sampleCount?: number }, arg2?: { file: string; samplePercent?: number; sampleCount?: number }) {
+  const options = typeof arg1 === "object" ? arg1 : arg2!;
+  const password = typeof arg1 === "string" ? arg1 : undefined;
 
-export async function runDiagnostics(password: string, options: { file: string; samplePercent?: number; sampleCount?: number }) {
-  const response = await fetch("/api/diagnostics/run", { method: "POST", headers: authHeaders(password), body: JSON.stringify(options) });
+  const response = await fetch("/api/diagnostics/run", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: authHeaders(password),
+    body: JSON.stringify(options),
+  });
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || "Could not start diagnostics");
   return body as { started: boolean };
 }
-export async function stopDiagnostics(password: string) {
+
+export async function stopDiagnostics(password?: string) {
   const response = await fetch("/api/diagnostics/cancel", {
     method: "POST",
+    credentials: "same-origin",
     headers: authHeaders(password),
   });
   if (response.status === 401) throw new Error("Wrong control password");
@@ -162,8 +306,16 @@ export async function stopDiagnostics(password: string) {
   return response.json() as Promise<{ stopped: boolean; job: DiagnosticJob }>;
 }
 
-export async function promoteDiagnostics(password: string, ids: string[]) {
-  const response = await fetch("/api/diagnostics/promote", { method: "POST", headers: authHeaders(password), body: JSON.stringify({ ids }) });
+export async function promoteDiagnostics(arg1: string | string[], arg2?: string[]) {
+  const ids = Array.isArray(arg1) ? arg1 : arg2!;
+  const password = typeof arg1 === "string" ? arg1 : undefined;
+
+  const response = await fetch("/api/diagnostics/promote", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: authHeaders(password),
+    body: JSON.stringify({ ids }),
+  });
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || "Could not promote diagnostics");
   return body as { promoted: number; skipped: number; results: string[]; skippedIds: string[] };
@@ -174,16 +326,28 @@ export function formatTime(value: number | null): string {
   return new Date(value).toLocaleString();
 }
 
-export async function fetchSettings(password: string, signal?: AbortSignal) {
-  const response = await fetch("/api/settings", { cache: "no-store", signal, headers: authHeaders(password) });
+export async function fetchSettings(arg1?: string | AbortSignal, arg2?: AbortSignal) {
+  const signal = arg1 instanceof AbortSignal ? arg1 : (arg2 instanceof AbortSignal ? arg2 : undefined);
+  const password = typeof arg1 === "string" ? arg1 : undefined;
+
+  const response = await fetch("/api/settings", {
+    cache: "no-store",
+    signal,
+    credentials: "same-origin",
+    headers: authHeaders(password),
+  });
   if (response.status === 401) throw new Error("Wrong control password");
   if (!response.ok) throw new Error("Settings unavailable");
-  return response.json() as Promise<import("./types").SettingsResponse>;
+  return response.json() as Promise<SettingsResponse>;
 }
 
-export async function updateSettings(password: string, patch: SettingsUpdatePayload) {
+export async function updateSettings(arg1: string | SettingsUpdatePayload, arg2?: SettingsUpdatePayload) {
+  const patch = typeof arg1 === "object" ? arg1 : arg2!;
+  const password = typeof arg1 === "string" ? arg1 : undefined;
+
   const response = await fetch("/api/settings", {
     method: "PUT",
+    credentials: "same-origin",
     headers: authHeaders(password),
     body: JSON.stringify(patch),
   });
@@ -194,11 +358,15 @@ export async function updateSettings(password: string, patch: SettingsUpdatePayl
 }
 
 export async function testNineRouterConnection(
-  password: string,
-  patch?: { nineRouterUrl?: string; nineRouterPassword?: string; nineRouterApiKey?: string }
+  arg1?: string | { nineRouterUrl?: string; nineRouterPassword?: string; nineRouterApiKey?: string },
+  arg2?: { nineRouterUrl?: string; nineRouterPassword?: string; nineRouterApiKey?: string }
 ) {
+  const patch = typeof arg1 === "object" ? arg1 : arg2;
+  const password = typeof arg1 === "string" ? arg1 : undefined;
+
   const response = await fetch("/api/settings/test-ninerouter", {
     method: "POST",
+    credentials: "same-origin",
     headers: authHeaders(password),
     body: JSON.stringify(patch ?? {}),
   });
@@ -208,15 +376,29 @@ export async function testNineRouterConnection(
 }
 
 export async function downloadProxyExport(
-  password: string,
-  format: "txt" | "csv",
-  includeCredentials = false
+  arg1: string | ("txt" | "csv"),
+  arg2?: ("txt" | "csv") | boolean,
+  arg3 = false
 ): Promise<{ blob: Blob; filename: string }> {
+  let format: "txt" | "csv" = "txt";
+  let includeCredentials = false;
+  let password: string | undefined;
+
+  if (typeof arg1 === "string" && (arg1 === "txt" || arg1 === "csv")) {
+    format = arg1;
+    includeCredentials = Boolean(arg2);
+  } else if (typeof arg1 === "string") {
+    password = arg1;
+    format = (arg2 === "csv" ? "csv" : "txt");
+    includeCredentials = Boolean(arg3);
+  }
+
   const query = new URLSearchParams({
     format,
     includeCredentials: String(includeCredentials),
   });
   const response = await fetch(`/api/settings/proxy-export?${query.toString()}`, {
+    credentials: "same-origin",
     headers: authHeaders(password),
   });
   if (response.status === 401) throw new Error("Wrong control password");
@@ -239,16 +421,37 @@ export async function downloadProxyExport(
 }
 
 export async function fetchUnifiedProxies(
-  password: string,
-  params?: {
+  arg1?: string | {
     status?: string;
     search?: string;
     protocol?: string;
     page?: number;
     pageSize?: number;
-  },
-  signal?: AbortSignal
+  } | AbortSignal,
+  arg2?: {
+    status?: string;
+    search?: string;
+    protocol?: string;
+    page?: number;
+    pageSize?: number;
+  } | AbortSignal,
+  arg3?: AbortSignal
 ): Promise<UnifiedProxyResponse> {
+  let params: { status?: string; search?: string; protocol?: string; page?: number; pageSize?: number } | undefined;
+  let signal: AbortSignal | undefined;
+  let password: string | undefined;
+
+  if (arg1 instanceof AbortSignal) {
+    signal = arg1;
+  } else if (typeof arg1 === "string") {
+    password = arg1;
+    if (typeof arg2 === "object" && !(arg2 instanceof AbortSignal)) params = arg2;
+    signal = arg3;
+  } else if (typeof arg1 === "object" && arg1 !== null) {
+    params = arg1;
+    if (arg2 instanceof AbortSignal) signal = arg2;
+  }
+
   const query = new URLSearchParams();
   if (params?.status) query.set("status", params.status);
   if (params?.search) query.set("search", params.search);
@@ -259,6 +462,7 @@ export async function fetchUnifiedProxies(
   const response = await fetch(`/api/proxies/unified?${query.toString()}`, {
     cache: "no-store",
     signal,
+    credentials: "same-origin",
     headers: authHeaders(password),
   });
   if (response.status === 401) throw new Error("Wrong control password");
@@ -274,14 +478,28 @@ export async function fetchUnifiedProxies(
 }
 
 export async function checkProxyValidity(
-  password: string,
-  proxyKey: string,
-  signal?: AbortSignal
+  arg1: string,
+  arg2?: string | AbortSignal,
+  arg3?: AbortSignal
 ): Promise<{ proxy: UnifiedProxyItem; auditResult?: unknown }> {
+  let proxyKey: string;
+  let signal: AbortSignal | undefined;
+  let password: string | undefined;
+
+  if (typeof arg2 === "string") {
+    password = arg1;
+    proxyKey = arg2;
+    signal = arg3;
+  } else {
+    proxyKey = arg1;
+    if (arg2 instanceof AbortSignal) signal = arg2;
+  }
+
   const response = await fetch("/api/proxies/check", {
     method: "POST",
     cache: "no-store",
     signal,
+    credentials: "same-origin",
     headers: authHeaders(password),
     body: JSON.stringify({ proxyKey }),
   });
@@ -298,14 +516,28 @@ export async function checkProxyValidity(
 }
 
 export async function fetchProxyHistory(
-  password: string,
-  proxyKey: string,
-  signal?: AbortSignal
+  arg1: string,
+  arg2?: string | AbortSignal,
+  arg3?: AbortSignal
 ): Promise<{ history: UnifiedProxyHistoryEntry[] }> {
+  let proxyKey: string;
+  let signal: AbortSignal | undefined;
+  let password: string | undefined;
+
+  if (typeof arg2 === "string") {
+    password = arg1;
+    proxyKey = arg2;
+    signal = arg3;
+  } else {
+    proxyKey = arg1;
+    if (arg2 instanceof AbortSignal) signal = arg2;
+  }
+
   const query = new URLSearchParams({ key: proxyKey });
   const response = await fetch(`/api/proxies/history?${query.toString()}`, {
     cache: "no-store",
     signal,
+    credentials: "same-origin",
     headers: authHeaders(password),
   });
   if (response.status === 401) throw new Error("Wrong control password");

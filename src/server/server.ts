@@ -21,6 +21,13 @@ import { createProxyIntelligenceJobManager } from "./proxy-intelligence-jobs.js"
 import { checkProxy } from "../auditor/index.js";
 import { createFleetRepository } from "../proxyfleet/db.js";
 import { createFleetApiHandler } from "../proxyfleet/api-router.js";
+import {
+  createSession,
+  revokeSession,
+  sessionCookie,
+  clearSessionCookie,
+  requireDashboardAuth,
+} from "./session-auth.js";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "../..");
 
@@ -50,33 +57,12 @@ const diagnostics = createDiagnosticRunner({ inputDir, dataDir });
 const auditorJobs = createAuditorJobManager({ dataDir });
 
 function auth(request: http.IncomingMessage): boolean {
-  const header = request.headers.authorization;
-  if (header?.startsWith("Basic ")) {
-    const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
-    const colon = decoded.indexOf(":");
-    if (colon >= 0 && decoded.slice(0, colon) === "admin") {
-      if (verifyControlPassword(decoded.slice(colon + 1))) return true;
-    }
-  }
-  if (header?.startsWith("Bearer ")) {
-    if (verifyControlPassword(header.slice(7).trim())) return true;
-  }
-
-  const cookieHeader = request.headers.cookie;
-  if (cookieHeader) {
-    const match = cookieHeader.split("; ").find((c) => c.startsWith("minhmiceproxy-auth="));
-    if (match) {
-      const cookiePass = decodeURIComponent(match.slice("minhmiceproxy-auth=".length));
-      if (verifyControlPassword(cookiePass)) return true;
-    }
-  }
-
+  if (requireDashboardAuth(request).authenticated) return true;
   const parsedUrl = new URL(request.url ?? "/", "http://localhost");
   const queryAuth = parsedUrl.searchParams.get("password") || parsedUrl.searchParams.get("auth") || parsedUrl.searchParams.get("token");
   if (queryAuth && verifyControlPassword(queryAuth)) {
     return true;
   }
-
   return false;
 }
 
@@ -305,6 +291,9 @@ async function handleDiagnostics(request: http.IncomingMessage, response: http.S
 }
 
 async function handleAuditor(request: http.IncomingMessage, response: http.ServerResponse, pathname: string) {
+  if (!requireDashboardAuth(request).authenticated) {
+    return json(response, { error: "Unauthorized" }, 401);
+  }
   try {
     if (request.method === "POST" && pathname === "/api/auditor/jobs") {
       const body = await readBody(request, 5_100_000);
@@ -382,6 +371,9 @@ async function handleAuditor(request: http.IncomingMessage, response: http.Serve
 }
 
 async function handleSettings(request: http.IncomingMessage, response: http.ServerResponse, pathname: string) {
+  if (!requireDashboardAuth(request).authenticated) {
+    return json(response, { error: "Unauthorized" }, 401);
+  }
   if (request.method === "GET" && pathname === "/api/settings") {
     return json(response, getSettingsPublic());
   }
@@ -507,6 +499,9 @@ onSettingsChange((_settings, changed) => {
   }
 });
 async function handleIntelligence(request: http.IncomingMessage, response: http.ServerResponse, pathname: string) {
+  if (!requireDashboardAuth(request).authenticated) {
+    return json(response, { error: "Unauthorized" }, 401);
+  }
   const parsedUrl = new URL(request.url ?? "/", "http://localhost");
 
   if (request.method === "GET" && pathname === "/api/intelligence/proxies") {
@@ -588,6 +583,9 @@ async function handleIntelligence(request: http.IncomingMessage, response: http.
   return json(response, { error: "not found" }, 404);
 }
 async function handleProxiesUnified(request: http.IncomingMessage, response: http.ServerResponse, pathname: string) {
+  if (!requireDashboardAuth(request).authenticated) {
+    return json(response, { error: "Unauthorized" }, 401);
+  }
   const parsedUrl = new URL(request.url ?? "/", "http://localhost");
 
   if (request.method === "GET" && pathname === "/api/proxies/unified") {
@@ -787,6 +785,33 @@ async function main() {
       const handled = await handleFleetApi(request, response, pathname);
       if (handled) return;
     }
+    if (request.method === "POST" && pathname === "/api/auth/login") {
+      try {
+        const body = await readBody(request, 10_000);
+        const password = typeof body.password === "string" ? body.password : "";
+        if (!password || !verifyControlPassword(password)) {
+          return json(response, { error: "Invalid control password" }, 401);
+        }
+        const session = createSession();
+        const isSecure = request.headers["x-forwarded-proto"] === "https" || (request.socket as any).encrypted === true;
+        response.setHeader("Set-Cookie", sessionCookie(session.token, isSecure));
+        return json(response, { authenticated: true, expiresAt: session.expiresAt });
+      } catch (err) {
+        return json(response, { error: (err as Error).message }, 400);
+      }
+    }
+
+    if (request.method === "POST" && pathname === "/api/auth/logout") {
+      revokeSession(request.headers.cookie);
+      response.setHeader("Set-Cookie", clearSessionCookie());
+      return json(response, { authenticated: false });
+    }
+
+    if (request.method === "GET" && pathname === "/api/auth/session") {
+      const authResult = requireDashboardAuth(request);
+      return json(response, { authenticated: authResult.authenticated });
+    }
+
     if (!auth(request)) return json(response, { error: "Invalid control password" }, 401);
 
     if (pathname.startsWith("/api/ninerouter/")) return handleNineRouter(request, response, pathname);

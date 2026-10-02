@@ -1,40 +1,65 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { clearStoredPassword, getStoredPassword, storePassword } from "@/lib/api";
+import { checkSession, logout as apiLogout } from "@/lib/api";
 
-interface AuthContextValue {
+export interface AuthContextValue {
+  authenticated: boolean;
+  setAuthenticated: (value: boolean) => void;
+  clearSession: () => void;
+  // Compatibility fields
   password: string;
   setPassword: (value: string) => void;
   clearPassword: () => void;
-  authenticated: boolean;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [password, setPasswordState] = useState("");
+  const [authenticated, setAuthenticated] = useState(false);
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    const saved = getStoredPassword();
-    if (saved) setPasswordState(saved);
-    setHydrated(true);
+    const controller = new AbortController();
+    checkSession(controller.signal)
+      .then((ok) => {
+        if (!controller.signal.aborted) {
+          setAuthenticated(ok);
+        }
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setAuthenticated(false);
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setHydrated(true);
+        }
+      });
+
+    return () => {
+      controller.abort();
+    };
   }, []);
 
-  const setPassword = useCallback((value: string) => {
-    setPasswordState(value);
-    if (value) storePassword(value);
-  }, []);
-
-  const clearPassword = useCallback(() => {
-    setPasswordState("");
-    clearStoredPassword();
+  const clearSession = useCallback(() => {
+    setAuthenticated(false);
+    void apiLogout();
   }, []);
 
   const value = useMemo(
-    () => ({ password, setPassword, clearPassword, authenticated: Boolean(password) }),
-    [password, setPassword, clearPassword]
+    () => ({
+      authenticated,
+      setAuthenticated,
+      clearSession,
+      password: "",
+      setPassword: (val: string) => {
+        if (val) setAuthenticated(true);
+      },
+      clearPassword: clearSession,
+    }),
+    [authenticated, clearSession]
   );
 
   if (!hydrated) {
