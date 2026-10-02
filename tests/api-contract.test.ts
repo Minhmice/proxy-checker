@@ -1,6 +1,7 @@
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
+  downloadProxyExport,
   removePool,
   renamePool,
   runDiagnostics,
@@ -75,4 +76,12 @@ test("diagnostics sends exactly the selected scope", async () => {
   const request = recordFetch({ started: true }, 202);
   await runDiagnostics("secret", { file: "sample.txt", sampleCount: 25 });
   assert.deepEqual(JSON.parse(String(request.init.body)), { file: "sample.txt", sampleCount: 25 });
+});
+
+test("downloadProxyExport sends GET with auth headers and query params", async () => {
+  const request = recordFetch("http://user:pass@1.1.1.1:8080");
+  const result = await downloadProxyExport("secret", "txt", true);
+  assert.equal(request.url, "/api/settings/proxy-export?format=txt&includeCredentials=true&confirmCredentials=yes");
+  assert.equal((request.init.headers as Record<string, string>)["Authorization"], `Basic ${btoa("admin:secret")}`);
+  assert.ok(result.blob);
 });

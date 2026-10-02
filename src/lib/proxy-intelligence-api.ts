@@ -4,6 +4,7 @@ import type {
   ProxyInventoryPage,
   ProxyInventoryDetail,
   ProxyImportSummary,
+  ProxyImportPreview,
 } from "./types";
 import type {
   IntelligenceJob,
@@ -115,6 +116,28 @@ export async function importIntelligenceProxies(
   }
 
   return data as ProxyImportSummary;
+}
+
+export async function previewIntelligenceImport(
+  arg1: string | ProxyImportPayload,
+  arg2?: ProxyImportPayload
+): Promise<ProxyImportPreview> {
+  const payload = typeof arg1 === "object" ? arg1 : arg2!;
+  const password = typeof arg1 === "string" ? arg1 : undefined;
+
+  const response = await fetch("/api/intelligence/import/preview", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: authHeaders(password),
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || "Failed to preview import");
+  }
+
+  return data.preview as ProxyImportPreview;
 }
 
 export interface SyncWorkingPayload {

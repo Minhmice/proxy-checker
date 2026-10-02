@@ -398,6 +398,9 @@ export async function downloadProxyExport(
     format,
     includeCredentials: String(includeCredentials),
   });
+  if (includeCredentials) {
+    query.set("confirmCredentials", "yes");
+  }
   const response = await fetch(`/api/settings/proxy-export?${query.toString()}`, {
     credentials: "same-origin",
     headers: authHeaders(password),

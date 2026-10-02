@@ -36,6 +36,8 @@ import { ProxyToolbar } from "@/components/proxies/proxy-toolbar";
 import { ProxyTable } from "@/components/proxies/proxy-table";
 import { ProxySelectionBar } from "@/components/proxies/proxy-selection-bar";
 import { AuditJobIndicator } from "@/components/proxies/audit-job-indicator";
+import { ProxyImportDialog } from "@/components/proxies/proxy-import-dialog";
+import { ProxyExportDialog } from "@/components/proxies/proxy-export-dialog";
 import {
   parseProxyQuery,
   serializeProxyQuery,
@@ -103,6 +105,10 @@ export default function ProxiesPage() {
   const [newProxyOpen, setNewProxyOpen] = useState(false);
   const [newProxyText, setNewProxyText] = useState("");
   const [addingProxy, setAddingProxy] = useState(false);
+  // Import and Export Dialogs
+  const [importOpen, setImportOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+
 
   // Debounce search input
   useEffect(() => {
@@ -251,10 +257,14 @@ export default function ProxiesPage() {
     }
   };
 
-  // Quick Export
-  const handleQuickExport = async () => {
+  // Advanced Export handler
+  const handleExecuteExport = async (options: {
+    scope: "filtered" | "selected";
+    format: "txt" | "csv";
+    includeCredentials: boolean;
+  }) => {
     try {
-      const { blob, filename } = await downloadProxyExport("txt", false);
+      const { blob, filename } = await downloadProxyExport(options.format, options.includeCredentials);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -264,6 +274,21 @@ export default function ProxiesPage() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       toast.success(`Exported proxies to ${filename}`);
+    } catch (err) {
+      toast.error((err as Error).message);
+      throw err;
+    }
+  };
+
+  // Start audit for imported batch
+  const handleStartAuditAfterImport = async (importSource: string) => {
+    try {
+      const job = await createIntelligenceJob({
+        filter: { source: importSource },
+        options: { attempts: 1, timeoutMs: 12000, concurrency: 5 },
+      });
+      setActiveJobId(job.id);
+      toast.success(`Audit job queued for ${job.total.toLocaleString()} imported proxies`);
     } catch (err) {
       toast.error((err as Error).message);
     }
@@ -342,26 +367,8 @@ export default function ProxiesPage() {
         onQueryChange={updateQuery}
         onSync9Router={handleSync9Router}
         syncing={syncing}
-        onOpenImport={() => {
-          // File input trigger or modal
-          const input = document.createElement("input");
-          input.type = "file";
-          input.accept = ".txt";
-          input.onchange = async (e) => {
-            const file = (e.target as HTMLInputElement).files?.[0];
-            if (!file) return;
-            const text = await file.text();
-            try {
-              const res = await importIntelligenceProxies({ source: file.name, content: text });
-              toast.success(`Imported ${res.inserted} proxies (${res.invalid} invalid) from ${res.source}`);
-              void loadProxies();
-            } catch (err) {
-              toast.error((err as Error).message);
-            }
-          };
-          input.click();
-        }}
-        onOpenExport={handleQuickExport}
+        onOpenImport={() => setImportOpen(true)}
+        onOpenExport={() => setExportOpen(true)}
         onOpenAdd={() => setNewProxyOpen(true)}
       />
 
@@ -382,7 +389,7 @@ export default function ProxiesPage() {
         selectAllMatching={selectAllMatching}
         onSelectAllMatchingToggle={setSelectAllMatching}
         onAuditSelected={handleAuditSelected}
-        onExportSelected={handleQuickExport}
+        onExportSelected={() => setExportOpen(true)}
         onClearSelection={() => {
           setSelectedKeys(new Set());
           setSelectAllMatching(false);
@@ -420,6 +427,23 @@ export default function ProxiesPage() {
           setInspectProxy(updated);
         }}
       />
+      {/* Import Dialog */}
+      <ProxyImportDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        onImportSuccess={() => void loadProxies()}
+        onStartAudit={handleStartAuditAfterImport}
+      />
+
+      {/* Export Dialog */}
+      <ProxyExportDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        selectedCount={selectedKeys.size}
+        totalFiltered={total}
+        onExport={handleExecuteExport}
+      />
+
 
       {/* New Proxy Modal Dialog */}
       <Dialog open={newProxyOpen} onOpenChange={setNewProxyOpen}>
