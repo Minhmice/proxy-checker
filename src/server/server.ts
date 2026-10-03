@@ -19,10 +19,12 @@ import { createProxyIntelligenceRepository } from "./proxy-intelligence-reposito
 import { createProxyIntelligenceJobManager } from "./proxy-intelligence-jobs.js";
 
 import { checkProxy } from "../auditor/index.js";
+import type { ProxyInput, ProxyProtocol } from "../auditor/types.js";
 import { createFleetRepository } from "../proxyfleet/db.js";
 import { createFleetApiHandler } from "../proxyfleet/api-router.js";
 import {
   createSession,
+  readSession,
   revokeSession,
   sessionCookie,
   clearSessionCookie,
@@ -42,7 +44,18 @@ const proxyIntelligenceJobs = createProxyIntelligenceJobManager({
 });
 
 const fleetRepo = createFleetRepository({ sqlitePath: path.join(dataDir, "fleet.sqlite3") });
-void fleetRepo.migrate().catch((err) => console.error("Fleet DB migration failed:", err));
+void fleetRepo
+  .migrate()
+  .then(() =>
+    fleetRepo.bootstrapControllerNode({
+      name: "controller-001",
+      wireguardIp: "10.77.0.1",
+      os: process.platform,
+      arch: process.arch,
+      agentVersion: "0.1.0",
+    })
+  )
+  .catch((err) => console.error("Fleet DB migration/bootstrap failed:", err));
 const handleFleetApi = createFleetApiHandler({
   repo: fleetRepo,
   verifyAuth: verifyControlPassword,
@@ -663,8 +676,29 @@ async function handleProxiesUnified(request: http.IncomingMessage, response: htt
     const proxyKey = typeof body.proxyKey === "string" ? body.proxyKey : "";
     if (!proxyKey) return json(response, { error: "proxyKey is required" }, 400);
 
+    const proxyRow = proxyIntelligenceDb.get<{
+      proxy_key: string;
+      protocol: string;
+      endpoint: string;
+      host: string | null;
+      port: number | null;
+      username?: string;
+      password?: string;
+    }>("SELECT proxy_key, protocol, endpoint, host, port, username, password FROM proxies WHERE proxy_key = ?", [proxyKey]);
+
+    if (!proxyRow) return json(response, { error: "Proxy not found" }, 404);
+
+    const lastColon = proxyRow.endpoint.lastIndexOf(":");
+    const proxyInput: ProxyInput = {
+      protocol: proxyRow.protocol as ProxyProtocol,
+      host: (proxyRow.host || proxyRow.endpoint.slice(0, lastColon)).replace(/^\[|\]$/g, ""),
+      port: proxyRow.port || Number(proxyRow.endpoint.slice(lastColon + 1)),
+      username: proxyRow.username,
+      password: proxyRow.password,
+    };
+
     try {
-      const auditResult = await checkProxy(proxyKey, { attempts: 1, timeoutMs: 10000 });
+      const auditResult = await checkProxy(proxyInput, { attempts: 1, timeoutMs: 10000 });
       const auditId = crypto.randomUUID();
       const finishedTime = Date.now();
 
@@ -676,8 +710,9 @@ async function handleProxiesUnified(request: http.IncomingMessage, response: htt
       });
 
       const auditDetail = await proxyIntelligenceRepo.getAuditDetail(proxyKey, auditId);
-      const updated = await proxyIntelligenceRepo.getUnifiedProxies({ search: proxyKey, pageSize: 1 });
-      const item = updated.items.find((i) => i.key === proxyKey || i.proxyKey === proxyKey) || updated.items[0];
+      const updated = await proxyIntelligenceRepo.getUnifiedProxies({ proxyKey, pageSize: 1 });
+      const item = updated.items[0];
+      if (!item) return json(response, { error: "Proxy no longer exists" }, 404);
       return json(response, { proxy: item, auditDetail, auditResult });
     } catch (err) {
       return json(response, { error: (err as Error).message }, 500);
@@ -786,7 +821,7 @@ async function main() {
           return json(response, { error: "Invalid control password" }, 401);
         }
         const session = createSession();
-        const isSecure = request.headers["x-forwarded-proto"] === "https" || (request.socket as any).encrypted === true;
+        const isSecure = request.headers["x-forwarded-proto"] === "https" || Boolean("encrypted" in request.socket && request.socket.encrypted);
         response.setHeader("Set-Cookie", sessionCookie(session.token, isSecure));
         return json(response, { authenticated: true, expiresAt: session.expiresAt });
       } catch (err) {
@@ -802,6 +837,11 @@ async function main() {
 
     if (request.method === "GET" && pathname === "/api/auth/session") {
       const authResult = requireDashboardAuth(request);
+      if (authResult.authenticated && !readSession(request.headers.cookie)) {
+        const session = createSession();
+        const isSecure = request.headers["x-forwarded-proto"] === "https" || Boolean("encrypted" in request.socket && request.socket.encrypted);
+        response.setHeader("Set-Cookie", sessionCookie(session.token, isSecure));
+      }
       return json(response, { authenticated: authResult.authenticated });
     }
 
