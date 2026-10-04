@@ -177,6 +177,10 @@ export interface AppSettingsPublic {
   checkConcurrency: number;
   checkTimeoutMs: number;
   proxyTtlMinutes: number;
+  antigravityRotatorEnabled: boolean;
+  antigravityActiveLimit: number;
+  antigravityRotateMinutes: number;
+  antigravitySessionThreshold: number;
 }
 
 export interface SettingsMeta {
@@ -201,12 +205,41 @@ export interface SettingsUpdatePayload {
   checkConcurrency?: number;
   checkTimeoutMs?: number;
   proxyTtlMinutes?: number;
+  antigravityRotatorEnabled?: boolean;
+  antigravityActiveLimit?: number;
+  antigravityRotateMinutes?: number;
+  antigravitySessionThreshold?: number;
 }
 
 export interface NineRouterTestResult {
   ok: boolean;
   poolCount?: number;
   error?: string;
+}
+
+export interface AntigravityAccountState {
+  id: string;
+  email: string;
+  name: string;
+  isActive: boolean;
+  sessionPercentage: number;
+  weeklyPercentage: number;
+  resetAt: string | null;
+  proxyPoolId: string | null;
+  proxyName?: string | null;
+  proxyHealthy: boolean;
+  lastError?: string | null;
+  lastCheckedAt: number;
+}
+
+export interface AntigravityRotatorSnapshot {
+  lastRunAt: number | null;
+  running: boolean;
+  totalAccounts: number;
+  activeCount: number;
+  totalSessionQuotaPercentage: number;
+  maxPossiblePercentage: number;
+  accounts: AntigravityAccountState[];
 }
 
 export interface DetailedDiagnosticResult {

@@ -61,6 +61,12 @@ async function buildHeaders(config: ReturnType<typeof readConfig>, cookieRef: { 
   throw new Error("9Router password or API key is required");
 }
 
+function isReportedTransportFailure(body: Record<string, unknown>): boolean {
+  if (body.failureKind === "transport") return true;
+  const error = typeof body.error === "string" ? body.error : "";
+  return error.startsWith("fetch failed:") && error.includes("ECONNRESET");
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {},
@@ -84,11 +90,11 @@ async function request<T>(
   if (response.status === 401 && config.password && retry) {
     cookieRef.value = null;
     await loginWithConfig(config, cookieRef);
-    return request<T>(path, options, false, overrides, cookieRef);
+    return request<T>(path, options, false, overrides, cookieRef, clientOptions);
   }
   if (!response.ok) {
     if (clientOptions?.acceptStructuredError && typeof body.ok === "boolean") {
-      return body as T;
+      return (isReportedTransportFailure(body) ? { ...body, failureKind: "transport" } : body) as T;
     }
     const message = (body.error as string) || (body.message as string) || `9Router API ${response.status}`;
     const error = new Error(message) as Error & { status?: number };
@@ -145,6 +151,7 @@ export async function listPools(): Promise<NineRouterPool[]> {
 }
 export interface NineRouterTestResult {
   ok: boolean;
+  failureKind?: "transport";
   status?: number;
   statusText?: string | null;
   error?: string | null;
@@ -163,7 +170,9 @@ export async function testPool(id: string): Promise<NineRouterTestResult> {
     undefined,
     { acceptStructuredError: true }
   );
-  return body;
+  return !body.ok && isReportedTransportFailure(body as unknown as Record<string, unknown>)
+    ? { ...body, failureKind: "transport" }
+    : body;
 }
 
 export async function setPoolActive(id: string, isActive: boolean) {
@@ -211,4 +220,56 @@ export async function createPool(input: { name: string; proxyUrl: string; type: 
     }
   );
   return body.proxyPool;
+}
+
+export interface NineRouterConnectionItem {
+  id: string;
+  provider: string;
+  name?: string;
+  email?: string;
+  isActive?: boolean;
+  testStatus?: string;
+  lastError?: string | null;
+  errorCode?: number | null;
+  expiresAt?: string;
+  lastUsedAt?: string;
+  providerSpecificData?: {
+    proxyPoolId?: string;
+    [key: string]: unknown;
+  };
+}
+
+export async function listAntigravityConnections(overrides?: { url?: string; password?: string; apiKey?: string }): Promise<NineRouterConnectionItem[]> {
+  const body = await request<{ connections?: NineRouterConnectionItem[] }>(
+    "/api/providers/client?pageSize=50&provider=antigravity",
+    {},
+    true,
+    overrides
+  );
+  return body.connections ?? [];
+}
+
+export async function getAccountUsage(id: string, overrides?: { url?: string; password?: string; apiKey?: string }): Promise<Record<string, unknown>> {
+  return await request<Record<string, unknown>>(
+    `/api/usage/${encodeURIComponent(id)}`,
+    {},
+    true,
+    overrides
+  );
+}
+
+export async function updateConnection(
+  id: string,
+  patch: { isActive?: boolean; providerSpecificData?: Record<string, unknown> },
+  overrides?: { url?: string; password?: string; apiKey?: string }
+): Promise<{ connection?: unknown }> {
+  return await request<{ connection?: unknown }>(
+    `/api/providers/${encodeURIComponent(id)}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(patch),
+    },
+    true,
+    overrides
+  );
 }

@@ -11,11 +11,16 @@ export interface AppSettings {
   nineRouterUrl: string;
   nineRouterPassword: string;
   nineRouterApiKey: string;
+  nineRouterAutoSync: boolean;
   activePoolLimit: number;
   nineRouterSyncMinutes: number;
   checkConcurrency: number;
   checkTimeoutMs: number;
   proxyTtlMinutes: number;
+  antigravityRotatorEnabled: boolean;
+  antigravityActiveLimit: number;
+  antigravityRotateMinutes: number;
+  antigravitySessionThreshold: number;
 }
 
 export interface AppSettingsPublic {
@@ -23,11 +28,16 @@ export interface AppSettingsPublic {
   controlPasswordSet: boolean;
   nineRouterPasswordSet: boolean;
   nineRouterApiKeySet: boolean;
+  nineRouterAutoSync: boolean;
   activePoolLimit: number;
   nineRouterSyncMinutes: number;
   checkConcurrency: number;
   checkTimeoutMs: number;
   proxyTtlMinutes: number;
+  antigravityRotatorEnabled: boolean;
+  antigravityActiveLimit: number;
+  antigravityRotateMinutes: number;
+  antigravitySessionThreshold: number;
 }
 
 export interface SettingsMeta {
@@ -41,11 +51,16 @@ export interface SettingsUpdatePatch {
   nineRouterUrl?: string;
   nineRouterPassword?: string;
   nineRouterApiKey?: string;
+  nineRouterAutoSync?: boolean;
   activePoolLimit?: number;
   nineRouterSyncMinutes?: number;
   checkConcurrency?: number;
   checkTimeoutMs?: number;
   proxyTtlMinutes?: number;
+  antigravityRotatorEnabled?: boolean;
+  antigravityActiveLimit?: number;
+  antigravityRotateMinutes?: number;
+  antigravitySessionThreshold?: number;
 }
 
 type ChangeListener = (settings: AppSettings, changed: string[]) => void;
@@ -61,6 +76,12 @@ function envNumber(key: string, fallback: number): number {
   const value = Number(process.env[key]);
   return Number.isFinite(value) ? value : fallback;
 }
+function envBoolean(key: string, fallback: boolean): boolean {
+  const value = process.env[key];
+  if (value === undefined) return fallback;
+  return value === "true" || value === "1";
+}
+
 
 function defaultsFromEnv(): AppSettings {
   return {
@@ -68,11 +89,16 @@ function defaultsFromEnv(): AppSettings {
     nineRouterUrl: envString("NINEROUTER_URL", "https://9router.minhmice.com").replace(/\/$/, ""),
     nineRouterPassword: envString("NINEROUTER_PASSWORD") || envString("9ROUTER_PASSWORD"),
     nineRouterApiKey: envString("NINEROUTER_API_KEY") || envString("9ROUTER_API_KEY"),
+    nineRouterAutoSync: envBoolean("NINEROUTER_AUTO_SYNC", true),
     activePoolLimit: envNumber("ACTIVE_POOL_LIMIT", 20),
     nineRouterSyncMinutes: envNumber("NINEROUTER_SYNC_MINUTES", 360),
     checkConcurrency: envNumber("CHECK_CONCURRENCY", 10),
     checkTimeoutMs: envNumber("CHECK_TIMEOUT_MS", 6000),
     proxyTtlMinutes: envNumber("PROXY_TTL_MINUTES", 15),
+    antigravityRotatorEnabled: envBoolean("ANTIGRAVITY_ROTATOR_ENABLED", true),
+    antigravityActiveLimit: envNumber("ANTIGRAVITY_ACTIVE_LIMIT", 3),
+    antigravityRotateMinutes: envNumber("ANTIGRAVITY_ROTATE_MINUTES", 10),
+    antigravitySessionThreshold: envNumber("ANTIGRAVITY_SESSION_THRESHOLD", 20),
   };
 }
 
@@ -95,11 +121,16 @@ function normalize(settingsValue: AppSettings): AppSettings {
     nineRouterUrl: settingsValue.nineRouterUrl.replace(/\/$/, ""),
     nineRouterPassword: settingsValue.nineRouterPassword,
     nineRouterApiKey: settingsValue.nineRouterApiKey,
+    nineRouterAutoSync: settingsValue.nineRouterAutoSync !== false,
     activePoolLimit: clamp(Math.round(settingsValue.activePoolLimit), 1, 200),
-    nineRouterSyncMinutes: clamp(Math.round(settingsValue.nineRouterSyncMinutes), 360, 1440),
+    nineRouterSyncMinutes: clamp(Math.round(settingsValue.nineRouterSyncMinutes), 1, 1440),
     checkConcurrency: clamp(Math.round(settingsValue.checkConcurrency), 1, 50),
     checkTimeoutMs: clamp(Math.round(settingsValue.checkTimeoutMs), 2000, 30000),
     proxyTtlMinutes: clamp(Math.round(settingsValue.proxyTtlMinutes), 1, 1440),
+    antigravityRotatorEnabled: settingsValue.antigravityRotatorEnabled !== false,
+    antigravityActiveLimit: clamp(Math.round(settingsValue.antigravityActiveLimit ?? 3), 1, 10),
+    antigravityRotateMinutes: clamp(Math.round(settingsValue.antigravityRotateMinutes ?? 10), 1, 60),
+    antigravitySessionThreshold: clamp(Math.round(settingsValue.antigravitySessionThreshold ?? 20), 5, 50),
   };
 }
 
@@ -108,11 +139,16 @@ function syncProcessEnv(next: AppSettings) {
   process.env.NINEROUTER_URL = next.nineRouterUrl;
   process.env.NINEROUTER_PASSWORD = next.nineRouterPassword;
   process.env.NINEROUTER_API_KEY = next.nineRouterApiKey;
+  process.env.NINEROUTER_AUTO_SYNC = String(next.nineRouterAutoSync);
   process.env.ACTIVE_POOL_LIMIT = String(next.activePoolLimit);
   process.env.NINEROUTER_SYNC_MINUTES = String(next.nineRouterSyncMinutes);
   process.env.CHECK_CONCURRENCY = String(next.checkConcurrency);
   process.env.CHECK_TIMEOUT_MS = String(next.checkTimeoutMs);
   process.env.PROXY_TTL_MINUTES = String(next.proxyTtlMinutes);
+  process.env.ANTIGRAVITY_ROTATOR_ENABLED = String(next.antigravityRotatorEnabled);
+  process.env.ANTIGRAVITY_ACTIVE_LIMIT = String(next.antigravityActiveLimit);
+  process.env.ANTIGRAVITY_ROTATE_MINUTES = String(next.antigravityRotateMinutes);
+  process.env.ANTIGRAVITY_SESSION_THRESHOLD = String(next.antigravitySessionThreshold);
 }
 
 function writeSettingsFile(next: AppSettings) {
@@ -164,11 +200,16 @@ export function getSettingsPublic(): { settings: AppSettingsPublic; meta: Settin
       controlPasswordSet: Boolean(settings.controlPassword),
       nineRouterPasswordSet: Boolean(settings.nineRouterPassword),
       nineRouterApiKeySet: Boolean(settings.nineRouterApiKey),
+      nineRouterAutoSync: settings.nineRouterAutoSync,
       activePoolLimit: settings.activePoolLimit,
       nineRouterSyncMinutes: settings.nineRouterSyncMinutes,
       checkConcurrency: settings.checkConcurrency,
       checkTimeoutMs: settings.checkTimeoutMs,
       proxyTtlMinutes: settings.proxyTtlMinutes,
+      antigravityRotatorEnabled: settings.antigravityRotatorEnabled,
+      antigravityActiveLimit: settings.antigravityActiveLimit,
+      antigravityRotateMinutes: settings.antigravityRotateMinutes,
+      antigravitySessionThreshold: settings.antigravitySessionThreshold,
     },
     meta: {
       restartRequired: [],
@@ -212,16 +253,20 @@ export function updateSettings(patch: SettingsUpdatePatch) {
     changed.push("nineRouterApiKey");
   }
 
+  if (patch.nineRouterAutoSync !== undefined) {
+    next.nineRouterAutoSync = Boolean(patch.nineRouterAutoSync);
+    changed.push("nineRouterAutoSync");
+  }
+
   if (patch.activePoolLimit !== undefined) {
     next.activePoolLimit = patch.activePoolLimit;
     changed.push("activePoolLimit");
   }
 
   if (patch.nineRouterSyncMinutes !== undefined) {
-    next.nineRouterSyncMinutes = clamp(Math.round(patch.nineRouterSyncMinutes), 360, 1440);
+    next.nineRouterSyncMinutes = clamp(Math.round(patch.nineRouterSyncMinutes), 1, 1440);
     changed.push("nineRouterSyncMinutes");
   }
-
   if (patch.checkConcurrency !== undefined) {
     next.checkConcurrency = patch.checkConcurrency;
     changed.push("checkConcurrency");
@@ -237,6 +282,25 @@ export function updateSettings(patch: SettingsUpdatePatch) {
     changed.push("proxyTtlMinutes");
   }
 
+  if (patch.antigravityRotatorEnabled !== undefined) {
+    next.antigravityRotatorEnabled = Boolean(patch.antigravityRotatorEnabled);
+    changed.push("antigravityRotatorEnabled");
+  }
+
+  if (patch.antigravityActiveLimit !== undefined) {
+    next.antigravityActiveLimit = patch.antigravityActiveLimit;
+    changed.push("antigravityActiveLimit");
+  }
+
+  if (patch.antigravityRotateMinutes !== undefined) {
+    next.antigravityRotateMinutes = patch.antigravityRotateMinutes;
+    changed.push("antigravityRotateMinutes");
+  }
+
+  if (patch.antigravitySessionThreshold !== undefined) {
+    next.antigravitySessionThreshold = patch.antigravitySessionThreshold;
+    changed.push("antigravitySessionThreshold");
+  }
 
   if (!changed.length) return getSettingsPublic();
 

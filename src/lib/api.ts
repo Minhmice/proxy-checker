@@ -12,7 +12,7 @@ import type {
   UnifiedProxyHistoryEntry,
   ProxyAuditDetail,
 } from "./types";
-
+import { isAbortError } from "./request-lifecycle";
 export function jsonHeaders(customHeaders?: HeadersInit): HeadersInit {
   return {
     "Content-Type": "application/json",
@@ -72,12 +72,48 @@ export async function checkSession(signal?: AbortSignal): Promise<boolean> {
   }
 }
 
-// Deprecated compatibility stubs for stored password
+const STORAGE_KEY = "minhmiceproxy-password";
+const STORAGE_DATE_KEY = "minhmiceproxy-password-date";
+const COOKIE_NAME = "minhmiceproxy-auth";
 export function getStoredPassword(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const now = new Date();
+    const today = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
+    if (sessionStorage.getItem(STORAGE_DATE_KEY) === today) {
+      const pass = sessionStorage.getItem(STORAGE_KEY);
+      if (pass) return pass;
+    }
+    const match = document.cookie.split("; ").find((c) => c.startsWith(`${COOKIE_NAME}=`));
+    if (match) {
+      const cookiePass = decodeURIComponent(match.slice(COOKIE_NAME.length + 1));
+      sessionStorage.setItem(STORAGE_KEY, cookiePass);
+      sessionStorage.setItem(STORAGE_DATE_KEY, today);
+      return cookiePass;
+    }
+  } catch {}
   return null;
 }
-export function storePassword(_password: string): void {}
+
+export function storePassword(password: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    const now = new Date();
+    const today = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
+    sessionStorage.setItem(STORAGE_KEY, password);
+    sessionStorage.setItem(STORAGE_DATE_KEY, today);
+    document.cookie = `${COOKIE_NAME}=${encodeURIComponent(password)}; path=/; max-age=86400; SameSite=Lax`;
+  } catch {}
+}
+
 export async function clearStoredPassword(): Promise<void> {
+  if (typeof window !== "undefined") {
+    try {
+      sessionStorage.removeItem(STORAGE_KEY);
+      sessionStorage.removeItem(STORAGE_DATE_KEY);
+      document.cookie = `${COOKIE_NAME}=; path=/; max-age=0; SameSite=Lax`;
+    } catch {}
+  }
   await logout();
 }
 
@@ -90,12 +126,25 @@ export async function fetchStatus(arg1?: string | AbortSignal, arg2?: AbortSigna
     signal,
     credentials: "same-origin",
     headers: authHeaders(password),
+  }).catch((err) => {
+    if (isAbortError(err)) return null;
+    throw err;
   });
+  if (!response) {
+    return {
+      running: false,
+      configured: false,
+      lastSyncAt: null,
+      lastError: "",
+      stats: { total: 0, active: 0, reserve: 0, dead: 0 },
+      syncIntervalMinutes: 15,
+      activeLimit: 20,
+    };
+  }
   if (response.status === 401) throw new Error("Wrong control password");
   if (!response.ok) throw new Error("Control service is unavailable");
   return response.json();
 }
-
 export async function fetchPools(arg1?: string | AbortSignal, arg2?: string | AbortSignal, arg3?: AbortSignal): Promise<PoolRecord[]> {
   let tier: string | undefined;
   let signal: AbortSignal | undefined;
@@ -122,7 +171,11 @@ export async function fetchPools(arg1?: string | AbortSignal, arg2?: string | Ab
     headers: authHeaders(password),
     credentials: "same-origin",
     signal,
+  }).catch((err) => {
+    if (isAbortError(err)) return null;
+    throw err;
   });
+  if (!response) return [];
   if (response.status === 401) throw new Error("Wrong control password");
   if (!response.ok) throw new Error("Control service is unavailable");
   const body = await response.json();
@@ -150,13 +203,16 @@ export async function fetchMetrics(arg1?: number | string | AbortSignal, arg2?: 
     headers: authHeaders(password),
     credentials: "same-origin",
     signal,
+  }).catch((err) => {
+    if (isAbortError(err)) return null;
+    throw err;
   });
+  if (!response) return [];
   if (response.status === 401) throw new Error("Wrong control password");
   if (!response.ok) throw new Error("Metrics unavailable");
   const body = await response.json();
   return body.snapshots ?? [];
 }
-
 export async function syncPools(password?: string) {
   const response = await fetch("/api/ninerouter/sync", {
     method: "POST",
@@ -212,7 +268,11 @@ export async function fetchDiagnosticJob(arg1?: string | AbortSignal, arg2?: Abo
     signal,
     credentials: "same-origin",
     headers: authHeaders(password),
+  }).catch((err) => {
+    if (isAbortError(err)) return null;
+    throw err;
   });
+  if (!response) return null;
   if (!response.ok) throw new Error(response.status === 401 ? "Wrong control password" : "Diagnostic job unavailable");
   return (await response.json()).job as DiagnosticJob;
 }
@@ -336,7 +396,31 @@ export async function fetchSettings(arg1?: string | AbortSignal, arg2?: AbortSig
     signal,
     credentials: "same-origin",
     headers: authHeaders(password),
+  }).catch((err) => {
+    if (isAbortError(err)) return null;
+    throw err;
   });
+  if (!response) {
+    return {
+      settings: {
+        controlPasswordSet: false,
+        nineRouterPasswordSet: false,
+        nineRouterApiKeySet: false,
+        nineRouterUrl: "",
+        nineRouterAutoSync: false,
+        activePoolLimit: 20,
+        nineRouterSyncMinutes: 15,
+        checkConcurrency: 20,
+        checkTimeoutMs: 5000,
+        proxyTtlMinutes: 60,
+        antigravityRotatorEnabled: true,
+        antigravityActiveLimit: 3,
+        antigravityRotateMinutes: 10,
+        antigravitySessionThreshold: 20,
+      },
+      meta: { restartRequired: [], source: "settings" as const },
+    };
+  }
   if (response.status === 401) throw new Error("Wrong control password");
   if (!response.ok) throw new Error("Settings unavailable");
   return response.json() as Promise<SettingsResponse>;
@@ -489,7 +573,20 @@ export async function fetchUnifiedProxies(
     signal,
     credentials: "same-origin",
     headers: authHeaders(password),
+  }).catch((err) => {
+    if (isAbortError(err)) return null;
+    throw err;
   });
+  if (!response) {
+    return {
+      items: [],
+      counts: { all: 0, working: 0, regressed: 0, dead: 0 },
+      total: 0,
+      facets: { all: 0, working: 0, regressed: 0, dead: 0, protocols: {} },
+      pagination: { page: 1, pageSize: 50, total: 0 },
+      meta: { generatedAt: new Date().toISOString() },
+    };
+  }
   if (response.status === 401) throw new Error("Wrong control password");
   if (!response.ok) {
     let msg = "Failed to fetch proxies";
@@ -564,7 +661,11 @@ export async function fetchProxyHistory(
     signal,
     credentials: "same-origin",
     headers: authHeaders(password),
+  }).catch((err) => {
+    if (isAbortError(err)) return null;
+    throw err;
   });
+  if (!response) return { history: [] };
   if (response.status === 401) throw new Error("Wrong control password");
   if (!response.ok) {
     let msg = "Failed to fetch proxy history";
@@ -589,7 +690,11 @@ export async function fetchProxyAuditDetail(
     cache: "no-store",
     signal,
     credentials: "same-origin",
+  }).catch((err) => {
+    if (isAbortError(err)) return null;
+    throw err;
   });
+  if (!response) return { auditDetail: null };
   if (response.status === 401) throw new Error("Wrong control password");
   if (!response.ok) {
     let msg = "Failed to fetch audit detail";
