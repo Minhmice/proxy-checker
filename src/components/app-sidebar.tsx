@@ -16,6 +16,7 @@ import {
   Bell,
 } from "lucide-react";
 import { useAuth } from "./auth-provider";
+import { AntigravityQuotaWidget } from "./antigravity-quota-widget";
 import {
   Sidebar,
   SidebarContent,
@@ -169,7 +170,8 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
         </SidebarGroup>
       </SidebarContent>
 
-      <SidebarFooter className="border-t border-sidebar-border p-2 pb-16 md:pb-4">
+      <SidebarFooter className="border-t border-sidebar-border p-2 pb-16 md:pb-4 space-y-2">
+        <AntigravityQuotaWidget />
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
