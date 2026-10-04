@@ -8,6 +8,7 @@ import { getSettingsSecrets, getSettingsPublic, onSettingsChange, updateSettings
 import { createInputChecker } from "./checker.js";
 import { logActivity, logActivityThrottled } from "./activity-log.js";
 import { createPoolRanker, PoolConflictError } from "./pool-ranker.js";
+import { createAntigravityRotator } from "./antigravity-rotator.js";
 import { clearNineRouterSession, nineRouterConfigured, testNineRouterConnection } from "./nine-router-client.js";
 import { bulkSetActive, listPools } from "./nine-router-client.js";
 import { parseProxy, proxyUrl } from "./proxy-core.js";
@@ -68,6 +69,13 @@ const inputChecker = createInputChecker({
 const poolRanker = createPoolRanker({ dataDir });
 const diagnostics = createDiagnosticRunner({ inputDir, dataDir });
 const auditorJobs = createAuditorJobManager({ dataDir });
+const antigravityRotator = createAntigravityRotator({
+  dataDir,
+  getUsableProxies: () =>
+    Object.values(poolRanker.readState().pools)
+      .filter((p) => p.status === "usable" && Boolean(p.remoteId))
+      .map((p) => ({ remoteId: p.remoteId!, name: p.name })),
+});
 
 function auth(request: http.IncomingMessage): boolean {
   if (requireDashboardAuth(request).authenticated) return true;
@@ -224,6 +232,21 @@ async function handleNineRouter(request: http.IncomingMessage, response: http.Se
 
   }
 
+  return json(response, { error: "not found" }, 404);
+}
+
+async function handleAntigravity(request: http.IncomingMessage, response: http.ServerResponse, pathname: string) {
+  if (request.method === "GET" && pathname === "/api/antigravity/status") {
+    return json(response, antigravityRotator.getSnapshot());
+  }
+  if (request.method === "POST" && pathname === "/api/antigravity/refresh") {
+    try {
+      const snapshot = await antigravityRotator.runRotation({ force: true });
+      return json(response, { started: true, snapshot });
+    } catch (err) {
+      return json(response, { started: false, error: (err as Error).message }, 500);
+    }
+  }
   return json(response, { error: "not found" }, 404);
 }
 async function handleDiagnostics(request: http.IncomingMessage, response: http.ServerResponse, pathname: string) {
@@ -508,12 +531,33 @@ function scheduleNineRouterSync() {
   }
 }
 
+let antigravityIntervalId: NodeJS.Timeout | null = null;
+
+function scheduleAntigravityRotator() {
+  if (antigravityIntervalId) {
+    clearInterval(antigravityIntervalId);
+    antigravityIntervalId = null;
+  }
+  const secrets = getSettingsSecrets();
+  if (!nineRouterConfigured() || secrets.antigravityRotatorEnabled === false) return;
+
+  const intervalMs = Math.max(1, secrets.antigravityRotateMinutes) * 60_000;
+  antigravityIntervalId = setInterval(() => {
+    antigravityRotator.runRotation().catch((err) => {
+      logActivity("error", `Antigravity scheduled rotation failed: ${(err as Error).message}`);
+    });
+  }, intervalMs);
+}
+
 onSettingsChange((_settings, changed) => {
   if (changed.some((key) => ["nineRouterUrl", "nineRouterPassword", "nineRouterApiKey"].includes(key))) {
     clearNineRouterSession();
   }
   if (changed.includes("nineRouterSyncMinutes") || changed.includes("nineRouterAutoSync")) {
     scheduleNineRouterSync();
+  }
+  if (changed.includes("antigravityRotateMinutes") || changed.includes("antigravityRotatorEnabled")) {
+    scheduleAntigravityRotator();
   }
 });
 async function handleIntelligence(request: http.IncomingMessage, response: http.ServerResponse, pathname: string) {
@@ -848,6 +892,7 @@ async function main() {
     if (!auth(request)) return json(response, { error: "Invalid control password" }, 401);
 
     if (pathname.startsWith("/api/ninerouter/")) return handleNineRouter(request, response, pathname);
+    if (pathname.startsWith("/api/antigravity/")) return handleAntigravity(request, response, pathname);
     if (pathname.startsWith("/api/diagnostics/")) return handleDiagnostics(request, response, pathname);
     if (pathname.startsWith("/api/auditor/")) return handleAuditor(request, response, pathname);
     if (pathname.startsWith("/api/settings")) return handleSettings(request, response, pathname);
@@ -897,6 +942,7 @@ async function main() {
       void poolRanker.refreshRemoteTracking();
     }, 60_000);
     scheduleNineRouterSync();
+    scheduleAntigravityRotator();
   });
 }
 

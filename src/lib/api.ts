@@ -11,6 +11,7 @@ import type {
   UnifiedProxyResponse,
   UnifiedProxyHistoryEntry,
   ProxyAuditDetail,
+  AntigravityRotatorSnapshot,
 } from "./types";
 import { isAbortError } from "./request-lifecycle";
 export function jsonHeaders(customHeaders?: HeadersInit): HeadersInit {
@@ -704,5 +705,33 @@ export async function fetchProxyAuditDetail(
     } catch {}
     throw new Error(msg);
   }
+  return response.json();
+}
+
+export async function fetchAntigravityStatus(arg1?: string | AbortSignal, arg2?: AbortSignal): Promise<AntigravityRotatorSnapshot | null> {
+  const signal = arg1 instanceof AbortSignal ? arg1 : (arg2 instanceof AbortSignal ? arg2 : undefined);
+  const password = typeof arg1 === "string" ? arg1 : undefined;
+
+  const response = await fetch("/api/antigravity/status", {
+    cache: "no-store",
+    signal,
+    credentials: "same-origin",
+    headers: authHeaders(password),
+  }).catch((err) => {
+    if (isAbortError(err)) return null;
+    throw err;
+  });
+  if (!response || !response.ok) return null;
+  return response.json();
+}
+
+export async function refreshAntigravityQuota(password?: string): Promise<{ started: boolean; snapshot?: AntigravityRotatorSnapshot }> {
+  const response = await fetch("/api/antigravity/refresh", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: authHeaders(password),
+  });
+  if (response.status === 401) throw new Error("Wrong control password");
+  if (!response.ok) throw new Error("Failed to refresh Antigravity quotas");
   return response.json();
 }
