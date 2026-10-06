@@ -17,7 +17,9 @@ export interface SyncProgress {
   remoteTotal: number;
 }
 
-const MAX_ENTRIES = 40;
+// 40 was too small: bulk audit progress (started/periodic/finished) pushed sync
+// entries out within a single run. 200 keeps sync + audit visible together.
+const MAX_ENTRIES = 200;
 const entries: ActivityEntry[] = [];
 let progress: SyncProgress = { phase: "idle", checked: 0, total: 0, remoteTotal: 0 };
 const throttleKeys = new Map<string, number>();

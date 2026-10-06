@@ -1,23 +1,68 @@
-import type {
-  AuditVerdict,
-  ProxyAuditResult,
-  ProxyInput,
-  ProxyAuditDetail,
-  AuditProbe,
-  AuditReason,
-  AuditProvenance,
-  ProbeStatus,
-} from "../auditor/types.js";
-export type {
-  AuditVerdict,
-  ProxyAuditResult,
-  ProxyInput,
-  ProxyAuditDetail,
-  AuditProbe,
-  AuditReason,
-  AuditProvenance,
-  ProbeStatus,
-};
+export type AuditVerdict = "PASS" | "WARN" | "FAIL" | "UNKNOWN";
+export type ProbeStatus = "PASS" | "WARN" | "FAIL" | "UNKNOWN" | "UNSUPPORTED" | "SKIPPED" | "ERROR";
+
+export interface AuditReason {
+  code: string;
+  severity: "critical" | "warn" | "info" | "warning";
+  title?: string;
+  summary?: string;
+  message?: string;
+  remediation?: string;
+}
+
+export interface AuditProbe {
+  name: string;
+  status: ProbeStatus;
+  latencyMs?: number;
+  message?: string;
+  summary?: string;
+}
+
+export interface ProxyAuditDetail {
+  proxyKey: string;
+  verdict: AuditVerdict;
+  scores?: {
+    overallSafety?: number;
+    transportSecurity?: number;
+    privacy?: number;
+    reputation?: number;
+    reliability?: number;
+  };
+  exit?: {
+    ip?: string;
+    isp?: string;
+    asn?: string;
+    country?: string;
+    city?: string;
+  };
+  checkedAt?: number;
+  reasons?: AuditReason[];
+  probes?: AuditProbe[];
+}
+
+export interface ProxyAuditResult {
+  proxy?: { protocol: string; host: string; port: number; username?: string };
+  verdict: AuditVerdict;
+  overallScore?: number;
+  scores?: {
+    overallSafety?: number;
+    transportSecurity?: number;
+    privacy?: number;
+    reputation?: number;
+    reliability?: number;
+  };
+  security?: {
+    inputValidation?: { valid: boolean };
+    ssrfProtection?: { passed: boolean; resolvedIps?: string[] };
+  };
+  connectivity?: { reachable: boolean; latencyMs?: number };
+  exitIp?: { ip: string; isp?: string };
+  riskFactors?: Array<{ code: string; severity: string; title?: string; description?: string; id?: string; message?: string }>;
+  recommendations?: string[];
+  metadata?: Record<string, unknown>;
+}
+
+export type ProxyInput = string | { protocol: string; host: string; port: number; username?: string; password?: string };
 import type {
   ProxyLifecycleState,
   ProxyInventoryItem,

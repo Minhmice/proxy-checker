@@ -5,17 +5,19 @@ import {
   Area,
   AreaChart,
   CartesianGrid,
-  Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
+import { Activity, BarChart3 } from "lucide-react";
 import type { MetricsSnapshot } from "@/lib/types";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Badge } from "@/components/ui/badge";
 
 const chartConfig = {
-  active: { label: "Active pools", color: "var(--primary)" },
+  active: { label: "Active routes", color: "var(--primary)" },
+  reserve: { label: "Reserve pool", color: "var(--accent-violet)" },
 } satisfies ChartConfig;
 
 interface TrafficChartProps {
@@ -25,7 +27,8 @@ interface TrafficChartProps {
 }
 
 export function TrafficChart({ snapshots, hours, onHoursChange }: TrafficChartProps) {
-  const [activePoint, setActivePoint] = useState<number | null>(null);
+  const [, setActivePoint] = useState<number | null>(null);
+
   const data = useMemo(
     () =>
       snapshots.map((s) => ({
@@ -33,6 +36,7 @@ export function TrafficChart({ snapshots, hours, onHoursChange }: TrafficChartPr
           month: "short",
           day: "numeric",
           hour: "2-digit",
+          minute: "2-digit",
         }),
         active: s.active,
         reserve: s.reserve,
@@ -41,34 +45,97 @@ export function TrafficChart({ snapshots, hours, onHoursChange }: TrafficChartPr
     [snapshots]
   );
 
+  const latestActive = data.length > 0 ? data[data.length - 1].active : null;
+
   return (
-    <Card className={`chart-card chart-card--bold ${activePoint !== null ? "chart-card--focused" : ""}`}>
-      <div className="chart-signal" aria-hidden="true"><span /><span /><span /></div>
-      <CardHeader className="chart-card-header">
-        <CardTitle>Pool Traffic Overview</CardTitle>
-        <ToggleGroup type="single" value={String(hours)} onValueChange={(value) => value && onHoursChange(Number(value))} aria-label="Metrics time range">
-          <ToggleGroupItem value="24">24 Hours</ToggleGroupItem>
-          <ToggleGroupItem value="168">7 Days</ToggleGroupItem>
-          <ToggleGroupItem value="720">30 Days</ToggleGroupItem>
+    <Card className="border-border bg-card/90 shadow-sm backdrop-blur-xs transition-all duration-200">
+      <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between pb-4 border-b border-border-subtle/60">
+        <div>
+          <div className="flex items-center gap-2">
+            <div className="flex size-7 items-center justify-center rounded-md border border-border-subtle bg-surface-raised/70 text-primary">
+              <Activity className="size-4" />
+            </div>
+            <CardTitle className="text-base font-semibold text-ink">
+              Pool Traffic & Capacity
+            </CardTitle>
+            {latestActive != null && (
+              <Badge variant="outline" className="font-mono text-xs border-primary/30 text-primary bg-primary/5">
+                {latestActive} active now
+              </Badge>
+            )}
+          </div>
+          <CardDescription className="text-xs text-muted-foreground mt-1">
+            Historical proxy allocation and fleet stability across time windows.
+          </CardDescription>
+        </div>
+
+        <ToggleGroup
+          type="single"
+          value={String(hours)}
+          onValueChange={(val) => val && onHoursChange(Number(val))}
+          className="bg-surface-raised/80 p-0.5 rounded-lg border border-border-subtle self-start sm:self-auto"
+          aria-label="Metrics time range"
+        >
+          <ToggleGroupItem value="24" className="text-xs px-2.5 py-1 h-7 data-[state=on]:bg-primary data-[state=on]:text-white data-[state=on]:font-medium">
+            24 Hours
+          </ToggleGroupItem>
+          <ToggleGroupItem value="168" className="text-xs px-2.5 py-1 h-7 data-[state=on]:bg-primary data-[state=on]:text-white data-[state=on]:font-medium">
+            7 Days
+          </ToggleGroupItem>
+          <ToggleGroupItem value="720" className="text-xs px-2.5 py-1 h-7 data-[state=on]:bg-primary data-[state=on]:text-white data-[state=on]:font-medium">
+            30 Days
+          </ToggleGroupItem>
         </ToggleGroup>
       </CardHeader>
-      <CardContent>
+
+      <CardContent className="pt-6">
         {data.length < 2 ? (
-          <p className="table-empty">Sync pools to start recording metrics history.</p>
+          <div className="flex flex-col items-center justify-center py-14 text-center">
+            <div className="flex size-12 items-center justify-center rounded-full bg-surface-raised border border-border-subtle text-muted-foreground mb-3">
+              <BarChart3 className="size-6 opacity-60" />
+            </div>
+            <p className="text-sm font-medium text-ink">No metrics history recorded yet</p>
+            <p className="text-xs text-muted-foreground mt-1 max-w-sm">
+              Trigger a pool sync or wait for automated interval checks to start charting route health and density.
+            </p>
+          </div>
         ) : (
-          <ChartContainer config={chartConfig} className="h-70 w-full">
-            <AreaChart accessibilityLayer data={data} onMouseMove={(state) => setActivePoint(typeof state.activeTooltipIndex === "number" ? state.activeTooltipIndex : null)} onMouseLeave={() => setActivePoint(null)} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+          <ChartContainer config={chartConfig} className="h-68 w-full">
+            <AreaChart
+              accessibilityLayer
+              data={data}
+              onMouseMove={(state) => setActivePoint(typeof state.activeTooltipIndex === "number" ? state.activeTooltipIndex : null)}
+              onMouseLeave={() => setActivePoint(null)}
+              margin={{ top: 8, right: 8, left: -16, bottom: 0 }}
+            >
               <defs>
                 <linearGradient id="activeGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="var(--color-active)" stopOpacity={0.4} />
-                <stop offset="100%" stopColor="var(--color-active)" stopOpacity={0} />
+                  <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.45} />
+                  <stop offset="90%" stopColor="var(--primary)" stopOpacity={0.02} />
                 </linearGradient>
               </defs>
-              <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="time" tick={{ fill: "var(--muted)", fontSize: 11 }} tickLine={false} axisLine={false} />
-              <YAxis tick={{ fill: "var(--muted)", fontSize: 11 }} tickLine={false} axisLine={false} width={36} />
+              <CartesianGrid stroke="var(--border-subtle)" strokeDasharray="3 3" vertical={false} />
+              <XAxis
+                dataKey="time"
+                tick={{ fill: "var(--muted-foreground)", fontSize: 11 }}
+                tickLine={false}
+                axisLine={false}
+              />
+              <YAxis
+                tick={{ fill: "var(--muted-foreground)", fontSize: 11 }}
+                tickLine={false}
+                axisLine={false}
+                width={40}
+              />
               <ChartTooltip content={<ChartTooltipContent />} />
-              <Area type="monotone" dataKey="active" stroke="var(--color-active)" strokeWidth={2} fill="url(#activeGrad)" name="Active pools" />
+              <Area
+                type="monotone"
+                dataKey="active"
+                stroke="var(--primary)"
+                strokeWidth={2}
+                fill="url(#activeGrad)"
+                name="Active routes"
+              />
             </AreaChart>
           </ChartContainer>
         )}

@@ -215,16 +215,16 @@ export function ProxyDetailDrawer({
     { label: "Reliability", value: scores.reliability },
   ];
 
-  const exitIp = auditDetail?.exit.ip || proxy.exitIp || proxy.host;
+  const exitIp = auditDetail?.exit?.ip || proxy.exitIp || proxy.host;
   const locationText = [
-    auditDetail?.exit.city || proxy.geo?.city,
-    auditDetail?.exit.country || proxy.geo?.country,
+    auditDetail?.exit?.city || proxy.geo?.city,
+    auditDetail?.exit?.country || proxy.geo?.country,
   ]
     .filter(Boolean)
     .join(", ") || "Unknown Location";
 
-  const ispText = auditDetail?.exit.isp || proxy.isp || "Unknown ISP";
-  const asnText = auditDetail?.exit.asn ? ` • ${auditDetail.exit.asn}` : "";
+  const ispText = auditDetail?.exit?.isp || proxy.isp || "Unknown ISP";
+  const asnText = auditDetail?.exit?.asn ? ` • ${auditDetail.exit.asn}` : "";
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>

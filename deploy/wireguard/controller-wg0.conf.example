@@ -1,0 +1,18 @@
+# WireGuard Hub Configuration (Controller - VPS #1)
+# Location: /etc/wireguard/wg0.conf
+# Mode: 0600
+
+[Interface]
+Address = 10.77.0.1/24
+ListenPort = 51820
+PrivateKey = CONTROLLER_PRIVATE_KEY_REPLACE_ME
+
+# Peer: worker-001 (VPS #2)
+[Peer]
+PublicKey = WORKER_001_PUBLIC_KEY_REPLACE_ME
+AllowedIPs = 10.77.0.11/32
+
+# Additional worker peers can be appended below:
+# [Peer]
+# PublicKey = WORKER_002_PUBLIC_KEY
+# AllowedIPs = 10.77.0.12/32

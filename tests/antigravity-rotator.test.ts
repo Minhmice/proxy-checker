@@ -135,3 +135,37 @@ test("computeRotationPlan replaces dead proxy with usable proxy without exceedin
   // acc1 had dead proxy. px1 is full (2 accounts). It must be assigned px2!
   assert.equal(plan.proxyReassignments["acc1"], "px2");
 });
+
+test("computeRotationPlan deduplicates surviving active accounts that share the same proxy", () => {
+  const accounts = [
+    {
+      id: "acc1",
+      email: "a@x.com",
+      isActive: true,
+      sessionPercentage: 80,
+      weeklyPercentage: 80,
+      resetAt: null,
+      proxyPoolId: "px1",
+    },
+    {
+      id: "acc2",
+      email: "b@x.com",
+      isActive: true,
+      sessionPercentage: 70,
+      weeklyPercentage: 70,
+      resetAt: null,
+      proxyPoolId: "px1",
+    },
+  ];
+  const usableProxies = [{ remoteId: "px1", name: "Proxy 1" }];
+
+  const plan = computeRotationPlan(accounts, usableProxies, {
+    activeLimit: 2,
+    sessionThreshold: 20,
+  });
+
+  assert.equal(plan.deactivations.includes("acc2"), true);
+  assert.equal(plan.activeIds.includes("acc1"), true);
+  assert.equal(plan.activeIds.includes("acc2"), false);
+  assert.equal(plan.activeIds.length, 1);
+});

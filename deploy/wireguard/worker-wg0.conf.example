@@ -1,0 +1,13 @@
+# WireGuard Peer Configuration (Worker - VPS #2)
+# Location: /etc/wireguard/wg0.conf
+# Mode: 0600
+
+[Interface]
+Address = 10.77.0.11/24
+PrivateKey = WORKER_PRIVATE_KEY_REPLACE_ME
+
+[Peer]
+PublicKey = CONTROLLER_PUBLIC_KEY_REPLACE_ME
+Endpoint = CONTROLLER_PUBLIC_IP:51820
+AllowedIPs = 10.77.0.0/24
+PersistentKeepalive = 25

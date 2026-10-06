@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { openProxyIntelligenceDb } from "../src/server/proxy-intelligence-db.js";
 import { createProxyIntelligenceRepository } from "../src/server/proxy-intelligence-repository.js";
-import type { ProxyAuditResult } from "../src/auditor/types.js";
+import type { ProxyAuditResult } from "../src/lib/types.js";
 
 test("exportWorkingProxies strictly redacts credentials by default", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-export-test-"));

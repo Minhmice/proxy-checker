@@ -66,3 +66,53 @@ test("listPools preserves remote metadata and testPool parses structured error o
     clearNineRouterSession();
   }
 });
+
+test("testPool marks reported 9Router fetch ECONNRESET as transport failure", async () => {
+  clearNineRouterSession();
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes("/api/auth/login")) {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json", "set-cookie": "auth_token=mock-token; Path=/" },
+      });
+    }
+    return new Response(JSON.stringify({
+      ok: false,
+      error: "fetch failed: Client network socket disconnected before secure TLS connection established (ECONNRESET)",
+    }), { status: 500, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+
+  try {
+    const result = await testPool("remote-transport");
+    assert.equal(result.ok, false);
+    assert.equal(result.failureKind, "transport");
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearNineRouterSession();
+  }
+});
+
+test("testPool preserves thrown transport errors for caller infrastructure handling", async () => {
+  clearNineRouterSession();
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes("/api/auth/login")) {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json", "set-cookie": "auth_token=mock-token; Path=/" },
+      });
+    }
+    throw new Error("fetch failed: Client network socket disconnected before secure TLS connection established (ECONNRESET)");
+  }) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      () => testPool("remote-transport"),
+      /ECONNRESET/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearNineRouterSession();
+  }
+});

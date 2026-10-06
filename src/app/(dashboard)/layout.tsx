@@ -31,8 +31,8 @@ function DashboardRedirect() {
 }
 
 function DashboardRedirectBoundary({ children }: { children: React.ReactNode }) {
-  const { authenticated } = useAuth();
-  return authenticated ? children : <DashboardRedirect />;
+  const { authenticated, password } = useAuth();
+  return authenticated || Boolean(password) ? children : <DashboardRedirect />;
 }
 
 function DashboardFrame({

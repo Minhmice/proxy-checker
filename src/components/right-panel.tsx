@@ -22,6 +22,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "./auth-provider";
 import { fetchMetrics, fetchStatus, formatTime, syncPools } from "@/lib/api";
+import { isAbortError } from "@/lib/request-lifecycle";
 import type { ActivityEntry, MetricsSnapshot, PoolStatus } from "@/lib/types";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -138,7 +139,7 @@ export function RightPanel({ open = false, onOpenChange = () => {} }: RightPanel
       setMetrics(metricData);
       setMessage((current) => current?.tone === "success" ? current : null);
     } catch (error) {
-      if ((error as Error).name === "AbortError") return;
+      if (signal?.aborted || isAbortError(error)) return;
       setMessage({ tone: "error", text: (error as Error).message });
     } finally {
       setInitialLoading(false);
@@ -148,11 +149,13 @@ export function RightPanel({ open = false, onOpenChange = () => {} }: RightPanel
 
   useEffect(() => {
     const controller = new AbortController();
-    load(controller.signal);
+    void load(controller.signal).catch(() => {});
     if (!password) return () => controller.abort();
 
     const intervalMs = status?.running ? 3000 : 15000;
-    const timer = window.setInterval(() => load(controller.signal), intervalMs);
+    const timer = window.setInterval(() => {
+      void load(controller.signal).catch(() => {});
+    }, intervalMs);
     return () => {
       controller.abort();
       window.clearInterval(timer);
@@ -389,7 +392,7 @@ function OperationsContent({
                 </div>
                 <div className="flex items-center justify-between gap-3">
                   <span className="flex items-center gap-1.5 text-muted-foreground"><Activity className="size-3.5" /> Interval</span>
-                  <span className="font-medium tabular-nums">Every {status?.syncIntervalMinutes ?? 360} min</span>
+                  <span className="font-medium tabular-nums">{status?.autoSync === false ? "Paused" : `Every ${status?.syncIntervalMinutes ?? 360} min`}</span>
                 </div>
               </div>
 

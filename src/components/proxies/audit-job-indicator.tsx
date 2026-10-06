@@ -48,6 +48,8 @@ export function AuditJobIndicator({ activeJobId, onJobFinished, onDismiss }: Aud
       }
     }
 
+    void poll();
+
     return () => {
       controller.abort();
       clearTimeout(timer ?? undefined);

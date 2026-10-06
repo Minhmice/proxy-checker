@@ -1,4 +1,5 @@
 import { authHeaders } from "./api";
+import { isAbortError } from "./request-lifecycle";
 import type {
   ProxyInventoryFilter,
   ProxyInventoryPage,
@@ -6,13 +7,25 @@ import type {
   ProxyImportSummary,
   ProxyImportPreview,
 } from "./types";
-import type {
-  IntelligenceJob,
-  CreateIntelligenceJobPayload,
-} from "../server/proxy-intelligence-jobs";
+export interface CreateIntelligenceJobPayload {
+  proxyKeys?: string[];
+  filter?: ProxyInventoryFilter;
+  options?: Record<string, unknown>;
+}
 
-export type { IntelligenceJob, CreateIntelligenceJobPayload };
-
+export interface IntelligenceJob {
+  id: string;
+  status: string;
+  total: number;
+  checked: number;
+  passCount: number;
+  warnCount: number;
+  failCount: number;
+  unknownCount: number;
+  startedAt: number | null;
+  finishedAt: number | null;
+  error?: string;
+}
 export interface ProxyImportPayload {
   source: string;
   content: string;
@@ -53,7 +66,19 @@ export async function fetchIntelligenceProxies(
     signal,
     credentials: "same-origin",
     headers: authHeaders(password),
+  }).catch((err) => {
+    if (isAbortError(err)) return null;
+    throw err;
   });
+
+  if (!response) {
+    return {
+      items: [],
+      page: 1,
+      pageSize: 50,
+      total: 0,
+    };
+  }
 
   if (!response.ok) {
     throw new Error(response.status === 401 ? "Wrong control password" : "Failed to load proxies");
@@ -217,7 +242,25 @@ export async function fetchIntelligenceJob(
     signal,
     credentials: "same-origin",
     headers: authHeaders(password),
+  }).catch((err) => {
+    if (isAbortError(err)) return null;
+    throw err;
   });
+
+  if (!response) {
+    return {
+      id,
+      status: "cancelled",
+      total: 0,
+      checked: 0,
+      passCount: 0,
+      warnCount: 0,
+      failCount: 0,
+      unknownCount: 0,
+      startedAt: null,
+      finishedAt: null,
+    };
+  }
 
   const data = await response.json();
   if (!response.ok) {
@@ -226,7 +269,6 @@ export async function fetchIntelligenceJob(
 
   return data.job as IntelligenceJob;
 }
-
 export async function cancelIntelligenceJob(
   arg1: string,
   arg2?: string
@@ -260,8 +302,12 @@ export async function fetchIntelligenceJobs(
     signal,
     credentials: "same-origin",
     headers: authHeaders(password),
+  }).catch((err) => {
+    if (isAbortError(err)) return null;
+    throw err;
   });
 
+  if (!response) return [];
   const data = await response.json();
   if (!response.ok) {
     throw new Error(data.error || "Jobs unavailable");

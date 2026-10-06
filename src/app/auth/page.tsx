@@ -68,7 +68,7 @@ const LOG_ENTRIES = [
 
 export default function AuthPage() {
   const router = useRouter();
-  const { authenticated, setAuthenticated } = useAuth();
+  const { authenticated, setAuthenticated, setPassword } = useAuth();
   const [value, setValue] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [audioEnabled, setAudioEnabled] = useState(false);
@@ -149,6 +149,7 @@ export default function AuthPage() {
 
     try {
       await login(value);
+      setPassword(value);
       setAuthenticated(true);
 
       const isReduced = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;

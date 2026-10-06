@@ -18,9 +18,9 @@ test("migrates a fresh database with inventory and audit tables", () => {
     assert.ok(names.includes("password"));
     assert.ok(names.includes("created_at"));
     assert.ok(names.includes("updated_at"));
-    assert.equal(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM proxy_audits")?.count, 0);
-    assert.equal(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM proxy_diagnostics")?.count, 0);
-    assert.equal(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM proxy_audit_risks")?.count, 0);
+    assert.equal(db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name='proxy_audits'").length, 0);
+    assert.equal(db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name='proxy_diagnostics'").length, 0);
+    assert.equal(db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name='proxy_audit_risks'").length, 0);
 
     // Idempotency: migrate again without throwing
     assert.doesNotThrow(() => {
@@ -76,7 +76,7 @@ test("preserves legacy rows and is idempotent across reopen", () => {
     const reopened = openProxyIntelligenceDb(dir);
     try {
       assert.equal(reopened.get<{ count: number }>("SELECT COUNT(*) AS count FROM proxies")?.count, countBefore);
-      assert.equal(reopened.get<{ count: number }>("SELECT COUNT(*) AS count FROM proxy_audits")?.count, 0);
+      assert.equal(reopened.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name='proxy_audits'").length, 0);
     } finally {
       reopened.close();
     }

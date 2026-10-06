@@ -73,6 +73,15 @@
 *::after {
   box-sizing: border-box;
 }
+nextjs-portal,
+[data-nextjs-toast],
+div[data-nextjs-dialog-overlay] {
+  opacity: 0.15;
+  transition: opacity 150ms ease;
+}
+nextjs-portal:hover {
+  opacity: 1;
+}
 
 html,
 body {

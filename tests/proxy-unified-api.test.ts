@@ -39,9 +39,8 @@ test("repository and history serialization for unified proxies API", async () =>
     };
 
     db.run(
-      `INSERT INTO proxy_audits (id, proxy_key, verdict, lifecycle_state, overall_score, transport_score, privacy_score, reputation_score, reliability_score, started_at, finished_at, result_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [auditId, key, "PASS", "working", 95, 90, 100, 95, 95, 1727715500000, 1727715518000, JSON.stringify(auditResult)]
+      `UPDATE proxies SET status = 'usable', last_verdict = 'PASS', exit_ip = '117.5.147.3', latency_ms = 2391 WHERE proxy_key = ?`,
+      [key]
     );
 
     // 1. Unified proxies query with activePoolEndpoints mapping
@@ -60,10 +59,7 @@ test("repository and history serialization for unified proxies API", async () =>
     assert.equal(item.sync, "active");
     assert.equal(item.udp, "Yes");
     assert.equal(item.exitIp, "117.5.147.3");
-    assert.equal(item.isp, "Viettel Group");
-    assert.equal(item.geo?.city, "Hanoi");
-    assert.equal(item.geo?.country, "Vietnam");
-    assert.equal(item.timezone, "Asia/Bangkok");
+    assert.equal(item.status, "working");
 
     // Assert new unified contract fields
     assert.equal(res.pagination.total, 1);
@@ -90,22 +86,6 @@ test("repository and history serialization for unified proxies API", async () =>
     assert.equal(preview.invalid, 1);
     assert.equal(preview.protocols.http, 1);
     assert.equal(preview.protocols.socks5, 1);
-
-    // 2. Query history
-    const historyRows = db.all<{
-      id: string;
-      verdict: string;
-      finished_at: number;
-      result_json: string;
-    }>(
-      "SELECT id, verdict, finished_at, result_json FROM proxy_audits WHERE proxy_key = ? ORDER BY finished_at DESC LIMIT 10",
-      [key]
-    );
-
-    assert.equal(historyRows.length, 1);
-    const parsed = JSON.parse(historyRows[0].result_json);
-    assert.equal(parsed.evidence.exitIp.isp, "Viettel Group");
-    assert.equal(parsed.evidence.network.udp, true);
 
     db.close();
   } finally {

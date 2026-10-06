@@ -464,19 +464,25 @@ export async function testNineRouterConnection(
 export async function downloadProxyExport(
   arg1: string | ("txt" | "csv"),
   arg2?: ("txt" | "csv") | boolean,
-  arg3 = false
+  arg3: boolean | { scope?: string } = false,
+  arg4?: { scope?: string }
 ): Promise<{ blob: Blob; filename: string }> {
   let format: "txt" | "csv" = "txt";
   let includeCredentials = false;
   let password: string | undefined;
+  let scope: string | undefined;
 
   if (typeof arg1 === "string" && (arg1 === "txt" || arg1 === "csv")) {
     format = arg1;
     includeCredentials = Boolean(arg2);
+    if (typeof arg3 === "object" && arg3 !== null) {
+      scope = arg3.scope;
+    }
   } else if (typeof arg1 === "string") {
     password = arg1;
     format = (arg2 === "csv" ? "csv" : "txt");
     includeCredentials = Boolean(arg3);
+    if (arg4) scope = arg4.scope;
   }
 
   const query = new URLSearchParams({
@@ -485,6 +491,9 @@ export async function downloadProxyExport(
   });
   if (includeCredentials) {
     query.set("confirmCredentials", "yes");
+  }
+  if (scope) {
+    query.set("scope", scope);
   }
   const response = await fetch(`/api/settings/proxy-export?${query.toString()}`, {
     credentials: "same-origin",

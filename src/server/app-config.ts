@@ -4,7 +4,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const settingsFile = path.join(root, "data", "settings.json");
+function getSettingsFilePath(): string {
+  return process.env.APP_CONFIG_PATH || path.join(root, "data", "settings.json");
+}
 
 export interface AppSettings {
   controlPassword: string;
@@ -152,15 +154,17 @@ function syncProcessEnv(next: AppSettings) {
 }
 
 function writeSettingsFile(next: AppSettings) {
-  fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
-  const temp = `${settingsFile}.tmp`;
+  const file = getSettingsFilePath();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const temp = `${file}.tmp`;
   fs.writeFileSync(temp, JSON.stringify(next, null, 2));
-  fs.renameSync(temp, settingsFile);
+  fs.renameSync(temp, file);
 }
 
 function loadFromDisk(): AppSettings | null {
   try {
-    const raw = JSON.parse(fs.readFileSync(settingsFile, "utf8")) as Partial<AppSettings>;
+    const file = getSettingsFilePath();
+    const raw = JSON.parse(fs.readFileSync(file, "utf8")) as Partial<AppSettings>;
     return normalize({ ...defaultsFromEnv(), ...raw });
   } catch {
     return null;
@@ -213,7 +217,7 @@ export function getSettingsPublic(): { settings: AppSettingsPublic; meta: Settin
     },
     meta: {
       restartRequired: [],
-      source: fs.existsSync(settingsFile) ? "settings" : "env",
+      source: fs.existsSync(getSettingsFilePath()) ? "settings" : "env",
     },
   };
 }
@@ -243,8 +247,8 @@ export function updateSettings(patch: SettingsUpdatePatch) {
     changed.push("nineRouterUrl");
   }
 
-  if (patch.nineRouterPassword !== undefined && patch.nineRouterPassword.trim()) {
-    next.nineRouterPassword = patch.nineRouterPassword;
+  if (patch.nineRouterPassword !== undefined) {
+    next.nineRouterPassword = patch.nineRouterPassword.trim();
     changed.push("nineRouterPassword");
   }
 

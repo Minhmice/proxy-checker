@@ -235,3 +235,64 @@ test("refreshRemoteTracking marks missing remote linked pool as removed locally"
   assert.equal(pool.tier, "removed");
   assert.equal(pool.isActiveOnRouter, false);
 });
+
+test("exportActiveProxies formats active proxies as txt and csv with credentials toggled", () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "pool-ranker-export-"));
+  const pool1: PoolRecord = {
+    localId: "p1",
+    remoteId: "p1",
+    remoteState: "linked",
+    testState: "idle",
+    name: "1",
+    proxyUrl: "socks5://user:pass@127.0.0.1:1080",
+    type: "http",
+    status: "usable",
+    tier: "active",
+    healthStatus: "done",
+    latency_ms: 10,
+    exit_ip: "203.0.113.1",
+    checked_at: Date.now(),
+    isActiveOnRouter: true,
+    successes: 1,
+    failures: 0,
+  };
+  const pool2: PoolRecord = {
+    localId: "p2",
+    remoteId: "p2",
+    remoteState: "linked",
+    testState: "idle",
+    name: "2",
+    proxyUrl: "http://127.0.0.1:8080",
+    type: "http",
+    status: "usable",
+    tier: "reserve",
+    healthStatus: "done",
+    latency_ms: 20,
+    exit_ip: "203.0.113.2",
+    checked_at: Date.now(),
+    isActiveOnRouter: false,
+    successes: 1,
+    failures: 0,
+  };
+  fs.writeFileSync(
+    path.join(dataDir, "pool-state.json"),
+    JSON.stringify({ pools: { p1: pool1, p2: pool2 }, lastSyncAt: null, stats: { total: 2, active: 1, reserve: 1, dead: 0 }, lastError: "" })
+  );
+
+  const ranker = createPoolRanker({ dataDir }, {} as unknown as Partial<PoolRankerDeps>);
+
+  const txtWithCreds = ranker.exportActiveProxies({ format: "txt", includeCredentials: true });
+  assert.equal(txtWithCreds.count, 1);
+  assert.equal(txtWithCreds.body, "socks5://user:pass@127.0.0.1:1080");
+
+  const txtNoCreds = ranker.exportActiveProxies({ format: "txt", includeCredentials: false });
+  assert.equal(txtNoCreds.count, 1);
+  assert.equal(txtNoCreds.body, "socks5://127.0.0.1:1080");
+
+  const csvWithCreds = ranker.exportActiveProxies({ format: "csv", includeCredentials: true });
+  assert.equal(csvWithCreds.count, 1);
+  assert.match(csvWithCreds.body, /"socks5","127\.0\.0\.1",1080,"user","pass"/);
+
+  const usableTxt = ranker.exportActiveProxies({ format: "txt", scope: "usable" });
+  assert.equal(usableTxt.count, 2);
+});

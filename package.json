@@ -4,9 +4,6 @@
   "engines": {
     "node": ">=22.0.0"
   },
-  "bin": {
-    "proxy-audit": "scripts/proxy-audit.mjs"
-  },
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:stop": "node scripts/dev-stop.mjs",
@@ -14,13 +11,14 @@
     "build": "next build",
     "start": "node --import tsx src/server/server.ts",
     "test": "node --import tsx --test tests/**/*.test.ts",
-    "test:auditor": "node --import tsx --test tests/auditor/*.test.ts",
-    "test:integration": "node --import tsx --test tests/auditor/transport.test.ts tests/auditor/probes.test.ts tests/auditor/api.test.ts tests/auditor/cli.test.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src/auditor scripts/proxy-audit.mjs",
-    "proxy-audit": "node scripts/proxy-audit.mjs"
+    "lint": "eslint src/",
+    "healthcheck:9router": "node --import tsx scripts/9router-healthcheck.ts",
+    "test:fleet": "node --import tsx --test tests/fleet-*.test.ts",
+    "acceptance": "node --import tsx scripts/proxyfleet-acceptance.mjs"
   },
   "dependencies": {
+    "@tanstack/react-table": "^9.2.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",

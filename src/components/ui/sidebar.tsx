@@ -69,9 +69,21 @@ function SidebarProvider({
   const isMobile = useIsMobile()
   const [openMobile, setOpenMobile] = React.useState(false)
 
-  // This is the internal state of the sidebar.
-  // We use openProp and setOpenProp for control from outside the component.
+  // Read initial state from cookie or defaultOpen
   const [_open, _setOpen] = React.useState(defaultOpen)
+
+  React.useEffect(() => {
+    const match = document.cookie
+      .split("; ")
+      .find((row) => row.startsWith(`${SIDEBAR_COOKIE_NAME}=`))
+    if (match) {
+      const val = match.split("=")[1]
+      if (val === "true" || val === "false") {
+        _setOpen(val === "true")
+      }
+    }
+  }, [])
+
   const open = openProp ?? _open
   const setOpen = React.useCallback(
     (value: boolean | ((value: boolean) => boolean)) => {
@@ -258,7 +270,9 @@ function SidebarTrigger({
   onClick,
   ...props
 }: React.ComponentProps<typeof Button>) {
-  const { toggleSidebar } = useSidebar()
+  const { toggleSidebar, state } = useSidebar()
+
+  const label = state === "expanded" ? "Collapse Sidebar" : "Expand Sidebar"
 
   return (
     <Button
@@ -267,6 +281,8 @@ function SidebarTrigger({
       variant="ghost"
       size="icon"
       className={cn("size-7", className)}
+      aria-label={label}
+      title={label}
       onClick={(event) => {
         onClick?.(event)
         toggleSidebar()
@@ -274,7 +290,7 @@ function SidebarTrigger({
       {...props}
     >
       <PanelLeftIcon />
-      <span className="sr-only">Toggle Sidebar</span>
+      <span className="sr-only">{label}</span>
     </Button>
   )
 }
@@ -362,7 +378,7 @@ function SidebarSeparator({
     <Separator
       data-slot="sidebar-separator"
       data-sidebar="separator"
-      className={cn("mx-2 w-auto bg-sidebar-border", className)}
+      className={cn("mx-2 w-auto max-w-[calc(100%-1rem)] bg-sidebar-border", className)}
       {...props}
     />
   )

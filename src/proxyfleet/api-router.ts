@@ -153,6 +153,11 @@ export function createFleetApiHandler(options: FleetApiHandlerOptions) {
           sendJson(res, 400, { error: "nodeId is required" });
           return true;
         }
+        const node = await repo.getNode(nodeId);
+        if (!node) {
+          sendJson(res, 404, { error: "Node not found" });
+          return true;
+        }
 
         const endpoints = await repo.listEndpoints({ nodeId, enabled: true });
         const proxies = await Promise.all(
@@ -172,8 +177,12 @@ export function createFleetApiHandler(options: FleetApiHandlerOptions) {
           })
         );
 
+        const revision = endpoints.length > 0
+          ? endpoints.reduce((max, ep) => Math.max(max, ep.updated_at, ep.current_revision), 1)
+          : (node.updated_at || 1);
+
         sendJson(res, 200, {
-          revision: Date.now(),
+          revision,
           proxies,
         });
       } catch (err) {

@@ -280,7 +280,7 @@ export function ProxyTable({
 
                     {/* Latency */}
                     <TableCell className="text-right font-mono text-xs">
-                      {item.latencyMs !== null ? (
+                      {item.latencyMs !== null && item.health !== "dead" ? (
                         <span
                           className={cn(
                             item.latencyMs < 300

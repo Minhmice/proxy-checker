@@ -81,78 +81,21 @@ export function migrateProxyIntelligence(db: ProxyIntelligenceDb): void {
     }
 
 
-    // 3. Create proxy_diagnostics table
+    // 3. Drop legacy auditor tables
     db.exec(`
-      CREATE TABLE IF NOT EXISTS proxy_diagnostics (
-        id TEXT PRIMARY KEY,
-        proxy_key TEXT NOT NULL REFERENCES proxies(proxy_key) ON DELETE CASCADE,
-        status TEXT NOT NULL,
-        latency_ms INTEGER,
-        error_code TEXT,
-        error_message TEXT,
-        checked_at INTEGER NOT NULL
-      );
+      DROP TABLE IF EXISTS proxy_audit_risks;
+      DROP TABLE IF EXISTS proxy_audits;
+      DROP TABLE IF EXISTS audit_jobs;
+      DROP TABLE IF EXISTS proxy_diagnostics;
     `);
 
-    // 4. Create proxy_audits table
+    // 4. Create indexes on proxies
     db.exec(`
-      CREATE TABLE IF NOT EXISTS proxy_audits (
-        id TEXT PRIMARY KEY,
-        proxy_key TEXT NOT NULL REFERENCES proxies(proxy_key) ON DELETE CASCADE,
-        verdict TEXT NOT NULL,
-        lifecycle_state TEXT NOT NULL,
-        overall_score REAL,
-        transport_score REAL,
-        privacy_score REAL,
-        reputation_score REAL,
-        reliability_score REAL,
-        started_at INTEGER NOT NULL,
-        finished_at INTEGER,
-        result_json TEXT NOT NULL
-      );
-    `);
-
-    // 5. Create proxy_audit_risks table
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS proxy_audit_risks (
-        id TEXT PRIMARY KEY,
-        audit_id TEXT NOT NULL REFERENCES proxy_audits(id) ON DELETE CASCADE,
-        risk_code TEXT NOT NULL,
-        severity TEXT NOT NULL,
-        title TEXT NOT NULL,
-        explanation TEXT NOT NULL
-      );
-    `);
-    // 6. Create audit_jobs table
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS audit_jobs (
-        id TEXT PRIMARY KEY,
-        state TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        started_at INTEGER,
-        finished_at INTEGER,
-        total INTEGER NOT NULL,
-        completed INTEGER NOT NULL DEFAULT 0,
-        passed INTEGER NOT NULL DEFAULT 0,
-        warned INTEGER NOT NULL DEFAULT 0,
-        failed INTEGER NOT NULL DEFAULT 0,
-        cancelled INTEGER NOT NULL DEFAULT 0,
-        options_json TEXT
-      );
-    `);
-
-
-    // 7. Create indexes
-    db.exec(`
-      CREATE INDEX IF NOT EXISTS proxy_diagnostics_proxy_checked_idx ON proxy_diagnostics(proxy_key, checked_at DESC);
-      CREATE INDEX IF NOT EXISTS proxy_audits_proxy_finished_idx ON proxy_audits(proxy_key, finished_at DESC);
-      CREATE INDEX IF NOT EXISTS proxy_audits_verdict_idx ON proxy_audits(verdict, lifecycle_state);
       CREATE INDEX IF NOT EXISTS proxies_lifecycle_idx ON proxies(lifecycle_state);
       CREATE INDEX IF NOT EXISTS proxies_source_idx ON proxies(source);
       CREATE INDEX IF NOT EXISTS proxies_protocol_lifecycle_idx ON proxies(protocol, lifecycle_state);
       CREATE INDEX IF NOT EXISTS proxies_source_lifecycle_idx ON proxies(source, lifecycle_state);
       CREATE INDEX IF NOT EXISTS proxies_last_checked_idx ON proxies(last_checked_at DESC);
-      CREATE INDEX IF NOT EXISTS audit_jobs_created_idx ON audit_jobs(created_at DESC);
     `);
   });
 }

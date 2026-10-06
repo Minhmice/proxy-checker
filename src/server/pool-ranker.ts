@@ -3,7 +3,6 @@ import path from "node:path";
 import type { DetailedDiagnosticResult, ParsedProxy, PoolRecord, PoolStats, RemoteState, TestState } from "../lib/types.js";
 import { getSettingsSecrets } from "./app-config.js";
 import { getActivitySnapshot, logActivity, logActivityThrottled, resetSyncProgress, setSyncProgress } from "./activity-log.js";
-import { checkMany, checkProxy as defaultCheckProxy } from "./checker.js";
 import { createMetricsHistory } from "./metrics-history.js";
 import {
   bulkSetActive as defaultBulkSetActive,
@@ -33,8 +32,8 @@ export interface PoolRankerDeps {
   deletePool: typeof defaultDeletePool;
   createPool: typeof defaultCreatePool;
   updatePool: typeof defaultUpdatePool;
-  checkProxy: typeof defaultCheckProxy;
   testPool: typeof defaultTestPool;
+  checkProxy?: unknown;
 }
 
 const defaultDeps: PoolRankerDeps = {
@@ -44,7 +43,6 @@ const defaultDeps: PoolRankerDeps = {
   deletePool: defaultDeletePool,
   createPool: defaultCreatePool,
   updatePool: defaultUpdatePool,
-  checkProxy: defaultCheckProxy,
   testPool: defaultTestPool,
 };
 
@@ -122,7 +120,6 @@ export function createPoolRanker(
   let lastAutoSyncAttemptAt = 0;
   let syncing = false;
   let lastError = "";
-  const busyIds = new Set<string>();
 
   function emptyState(): PoolState {
     return { pools: {}, lastSyncAt: null, stats: { total: 0, active: 0, reserve: 0, dead: 0 }, lastError: "" };
@@ -304,36 +301,6 @@ export function createPoolRanker(
     }
   }
 
-  function assignTiers(checkedPools: PoolRecord[]) {
-    const activeLimit = getSettingsSecrets().activePoolLimit;
-    const eligibleUsable = checkedPools.filter(
-      (pool) => pool.status === "usable" && pool.remoteState === "linked"
-    );
-    const ranked = rankUsable(eligibleUsable);
-    const activeIds = new Set(ranked.slice(0, activeLimit).map((p) => p.localId));
-    const usableIds = new Set(ranked.map((p) => p.localId));
-
-    for (const pool of checkedPools) {
-      if (pool.remoteState === "removed" || pool.remoteState === "delete_failed" || pool.remoteState === "revived") {
-        pool.tier = "removed";
-        pool.isActiveOnRouter = false;
-        continue;
-      }
-      if (!usableIds.has(pool.localId)) {
-        pool.tier = "dead";
-        pool.isActiveOnRouter = false;
-        continue;
-      }
-      if (activeIds.has(pool.localId)) {
-        pool.tier = "active";
-        pool.isActiveOnRouter = true;
-      } else {
-        pool.tier = "reserve";
-        pool.isActiveOnRouter = false;
-      }
-    }
-    return checkedPools;
-  }
 
 
   async function syncPools(options: { force?: boolean } = {}) {
@@ -344,7 +311,7 @@ export function createPoolRanker(
     if (!nineRouterConfigured()) throw new Error("9Router password is not configured in Settings");
 
     const force = options.force === true;
-    const intervalMs = Math.max(360, getSettingsSecrets().nineRouterSyncMinutes) * 60_000;
+    const intervalMs = Math.max(1, getSettingsSecrets().nineRouterSyncMinutes) * 60_000;
     const currentForCheck = readState();
     if (!force && typeof currentForCheck.lastSyncAt === "number" && Date.now() - currentForCheck.lastSyncAt < intervalMs) {
       await refreshRemoteTracking();
@@ -487,6 +454,16 @@ export function createPoolRanker(
                 t.successes += 1;
               });
             } else {
+              if (res.failureKind === "transport") {
+                const errMsg = res.error || "9Router transport failure";
+                logActivity("error", `Infrastructure test error for ${pool.name} (${localId}): ${errMsg}`);
+                mutatePool(localId, (t) => {
+                  t.testState = "idle";
+                  t.healthStatus = "done";
+                  t.last_error = errMsg;
+                });
+                continue;
+              }
               // Explicit 9Router test failure: deactivate, then delete from 9Router
               const errMsg = res.error || `HTTP ${res.status || "FAIL"}`;
               logActivity("warn", `9Router health check failed for ${pool.name} (${localId}): ${errMsg} — removing from 9Router…`);
@@ -655,7 +632,12 @@ export function createPoolRanker(
   async function startSyncIfStale(): Promise<{ started: boolean; running: boolean; stale: boolean; tracked: boolean }> {
     if (syncing) return { started: false, running: true, stale: false, tracked: false };
 
-    const intervalMs = Math.max(360, getSettingsSecrets().nineRouterSyncMinutes) * 60_000;
+    const { nineRouterAutoSync, nineRouterSyncMinutes } = getSettingsSecrets();
+    if (nineRouterAutoSync === false) {
+      return { started: false, running: false, stale: false, tracked: false };
+    }
+
+    const intervalMs = Math.max(1, nineRouterSyncMinutes) * 60_000;
     const currentState = readState();
     const lastSyncAt = currentState.lastSyncAt;
     const automaticReference = Math.max(lastSyncAt ?? 0, lastAutoSyncAttemptAt ?? 0);
@@ -689,7 +671,7 @@ export function createPoolRanker(
 
   function getStatus() {
     const state = readState();
-    const { nineRouterSyncMinutes, activePoolLimit } = getSettingsSecrets();
+    const { nineRouterAutoSync, nineRouterSyncMinutes, activePoolLimit } = getSettingsSecrets();
     const { entries, progress } = getActivitySnapshot();
     return {
       running: syncing,
@@ -698,6 +680,7 @@ export function createPoolRanker(
       lastSyncAt: state.lastSyncAt,
       lastError: state.lastError || lastError,
       stats: state.stats,
+      autoSync: nineRouterAutoSync !== false,
       syncIntervalMinutes: nineRouterSyncMinutes,
       activeLimit: activePoolLimit,
       activity: entries.slice(0, 20),
@@ -884,6 +867,68 @@ export function createPoolRanker(
   function getMetrics(sinceMs?: number) {
     return metrics.list(sinceMs);
   }
+  function exportActiveProxies(options: {
+    format?: "txt" | "csv";
+    includeCredentials?: boolean;
+    scope?: "active" | "usable" | "all";
+  } = {}) {
+    const format = options.format ?? "txt";
+    const includeCreds = Boolean(options.includeCredentials);
+    const scope = options.scope ?? "active";
+
+    let pools = listByTier(scope === "all" ? "all" : scope === "usable" ? null : "active");
+    if (scope === "active") {
+      pools = pools.filter((p) => p.isActiveOnRouter && p.status === "usable");
+    }
+
+    pools.sort((a, b) => (a.latency_ms ?? Number.MAX_SAFE_INTEGER) - (b.latency_ms ?? Number.MAX_SAFE_INTEGER));
+
+    const dateStr = new Date().toISOString().slice(0, 10);
+
+    if (format === "csv") {
+      const header = "protocol,host,port,username,password\n";
+      const rows = pools.map((p) => {
+        try {
+          const url = new URL(p.proxyUrl);
+          const proto = url.protocol.replace(/:$/, "");
+          const host = url.hostname;
+          const port = url.port || (proto === "http" ? "80" : proto === "https" ? "443" : "1080");
+          const u = includeCreds ? decodeURIComponent(url.username || "") : "";
+          const pass = includeCreds ? decodeURIComponent(url.password || "") : "";
+          return `"${proto}","${host}",${port},"${u}","${pass}"`;
+        } catch {
+          return `"${p.type || "http"}","${p.proxyUrl}",,"",""`;
+        }
+      });
+      return {
+        filename: `active-proxies-${dateStr}.csv`,
+        contentType: "text/csv; charset=utf-8",
+        body: header + rows.join("\n"),
+        count: rows.length,
+      };
+    }
+
+    const lines = pools.map((p) => {
+      try {
+        const url = new URL(p.proxyUrl);
+        if (!includeCreds) {
+          url.username = "";
+          url.password = "";
+        }
+        return url.toString().replace(/\/$/, "");
+      } catch {
+        return p.proxyUrl;
+      }
+    });
+
+    return {
+      filename: `active-proxies-${dateStr}.txt`,
+      contentType: "text/plain; charset=utf-8",
+      body: lines.join("\n"),
+      count: lines.length,
+    };
+  }
+
   return {
     syncPools,
     listByTier,
@@ -897,6 +942,7 @@ export function createPoolRanker(
     promoteDiagnostics,
     refreshRemoteTracking,
     startSyncIfStale,
+    exportActiveProxies,
   };
 }
 

@@ -1,8 +1,7 @@
 import crypto from "node:crypto";
 import type { ProxyIntelligenceDb, SqlParam } from "./proxy-intelligence-db.js";
-import { parseProxyInput } from "../auditor/parser.js";
-import { serializeAuditDetail } from "../auditor/detail.js";
-import type { ParsedProxyInput, ProxyAuditDetail, ProxyAuditResult } from "../auditor/types.js";
+import { parseProxyInput, type ParsedProxyInput } from "../lib/proxy-parser.js";
+import type { ProxyAuditDetail, ProxyAuditResult } from "../lib/types.js";
 
 export type ProxyLifecycleState = "working" | "unstable" | "dead" | "dangerous" | "unknown";
 
@@ -49,10 +48,15 @@ export interface ProxyInventoryDetail extends ProxyInventoryItem {
 }
 
 export interface ProxyInventoryFilter {
+  proxyKey?: string;
   search?: string;
   source?: string;
   protocol?: string;
   lifecycle?: ProxyLifecycleState | "all";
+  health?: "all" | "working" | "regressed" | "dead" | string;
+  status?: "all" | "working" | "regressed" | "dead" | string;
+  sort?: "health" | "lastChecked" | "latency" | "endpoint";
+  direction?: "asc" | "desc";
   verdict?: string | "all";
   country?: string;
   asn?: string;
@@ -177,6 +181,7 @@ export interface UnifiedProxyResponse {
 }
 
 export interface UnifiedProxyFilter {
+  proxyKey?: string;
   status?: "all" | "working" | "regressed" | "dead" | string;
   health?: "all" | "working" | "regressed" | "dead" | string;
   search?: string;
@@ -342,7 +347,7 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
       }
 
       if (filter.verdict && filter.verdict !== "all") {
-        whereClauses.push("latest_a.verdict = ?");
+        whereClauses.push("p.last_verdict = ?");
         params.push(filter.verdict);
       }
 
@@ -351,12 +356,6 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
       const countRow = db.get<{ total: number }>(
         `SELECT COUNT(*) AS total
          FROM proxies p
-         LEFT JOIN proxy_audits latest_a ON latest_a.rowid = (
-           SELECT a2.rowid FROM proxy_audits a2
-           WHERE a2.proxy_key = p.proxy_key
-           ORDER BY a2.finished_at DESC
-           LIMIT 1
-         )
          WHERE ${whereSql}`,
         params
       );
@@ -368,6 +367,8 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
            p.proxy_key,
            p.endpoint,
            p.protocol,
+           p.host,
+           p.port,
            p.status,
            p.exit_ip,
            p.latency_ms,
@@ -381,27 +382,44 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
            CASE WHEN p.password IS NOT NULL AND p.password != '' THEN 1 ELSE 0 END AS has_password,
            p.created_at,
            p.updated_at,
-           latest_a.verdict AS latest_verdict,
-           latest_a.overall_score AS latest_score,
-           latest_a.finished_at AS latest_audit_at
+           p.last_verdict AS latest_verdict,
+           NULL AS latest_score,
+           p.last_checked_at AS latest_audit_at
          FROM proxies p
-         LEFT JOIN proxy_audits latest_a ON latest_a.rowid = (
-           SELECT a2.rowid FROM proxy_audits a2
-           WHERE a2.proxy_key = p.proxy_key
-           ORDER BY a2.finished_at DESC
-           LIMIT 1
-         )
          WHERE ${whereSql}
-         ORDER BY COALESCE(p.updated_at, p.created_at, 0) DESC
+         ORDER BY
+           CASE WHEN (p.status = 'dead' OR p.lifecycle_state = 'dead') THEN 1 ELSE 0 END ASC,
+           CASE WHEN (p.status = 'dead' OR p.lifecycle_state = 'dead') AND COALESCE(p.checked_at, 0) = 0 THEN 0
+                WHEN (p.status = 'dead' OR p.lifecycle_state = 'dead') THEN 1
+                ELSE 0 END ASC,
+           CASE WHEN (p.status = 'dead' OR p.lifecycle_state = 'dead') THEN p.checked_at ELSE NULL END ASC NULLS FIRST,
+           COALESCE(p.updated_at, p.created_at, 0) DESC,
+           p.proxy_key ASC
          LIMIT ? OFFSET ?`,
         [...params, pageSize, offset]
       );
 
       const items: ProxyInventoryItem[] = rows.map((r) => {
         const endpoint = String(r.endpoint ?? "");
-        const parts = endpoint.split(":");
-        const host = parts[0] ?? "";
-        const port = Number(parts[1] ?? 0);
+        let host = String(r.host ?? "").trim().replace(/^\[|\]$/g, "");
+        let port = Number(r.port ?? 0);
+        if (!host || !port) {
+          try {
+            const rawTarget = endpoint.includes("://") ? endpoint : `${r.protocol}://${endpoint}`;
+            const parsed = parseProxyInput(rawTarget);
+            host = parsed.parsed.host;
+            port = parsed.parsed.port;
+          } catch {
+            const lastColon = endpoint.lastIndexOf(":");
+            if (lastColon > 0) {
+              host = endpoint.slice(0, lastColon).replace(/^\[|\]$/g, "");
+              port = Number(endpoint.slice(lastColon + 1)) || 0;
+            } else {
+              host = endpoint;
+              port = 0;
+            }
+          }
+        }
 
         return {
           proxyKey: String(r.proxy_key),
@@ -442,6 +460,8 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
            p.proxy_key,
            p.endpoint,
            p.protocol,
+           p.host,
+           p.port,
            p.status,
            p.exit_ip,
            p.latency_ms,
@@ -463,61 +483,40 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
       if (!row) return null;
 
       const endpoint = String(row.endpoint ?? "");
-      const parts = endpoint.split(":");
-      const host = parts[0] ?? "";
-      const port = Number(parts[1] ?? 0);
-
-      // Latest audit with full result JSON
-      const latestAuditRow = db.get<{ result_json: string }>(
-        `SELECT result_json FROM proxy_audits WHERE proxy_key = ? ORDER BY finished_at DESC LIMIT 1`,
-        [proxyKey]
-      );
-
-      let latestAudit: ProxyAuditResult | null = null;
-      if (latestAuditRow?.result_json) {
+      let host = String(row.host ?? "").trim().replace(/^\[|\]$/g, "");
+      let port = Number(row.port ?? 0);
+      if (!host || !port) {
         try {
-          latestAudit = JSON.parse(latestAuditRow.result_json) as ProxyAuditResult;
+          const rawTarget = endpoint.includes("://") ? endpoint : `${row.protocol}://${endpoint}`;
+          const parsed = parseProxyInput(rawTarget);
+          host = parsed.parsed.host;
+          port = parsed.parsed.port;
         } catch {
-          // ignore corrupted json
+          const lastColon = endpoint.lastIndexOf(":");
+          if (lastColon > 0) {
+            host = endpoint.slice(0, lastColon).replace(/^\[|\]$/g, "");
+            port = Number(endpoint.slice(lastColon + 1)) || 0;
+          } else {
+            host = endpoint;
+            port = 0;
+          }
         }
       }
-
-      // Recent audit snapshots (summary only)
-      const auditRows = db.all<Record<string, unknown>>(
-        `SELECT id, verdict, lifecycle_state, overall_score, finished_at
-         FROM proxy_audits
-         WHERE proxy_key = ?
-         ORDER BY finished_at DESC
-         LIMIT 10`,
-        [proxyKey]
-      );
-
-      const auditHistory = auditRows.map((a) => ({
-        id: String(a.id),
-        verdict: String(a.verdict),
-        lifecycleState: (a.lifecycle_state as ProxyLifecycleState) ?? "unknown",
-        overallScore: a.overall_score !== null ? Number(a.overall_score) : null,
-        finishedAt: a.finished_at ? Number(a.finished_at) : null,
-      }));
-
-      // Recent diagnostics
-      const diagRows = db.all<Record<string, unknown>>(
-        `SELECT id, status, latency_ms, checked_at, error_message
-         FROM proxy_diagnostics
-         WHERE proxy_key = ?
-         ORDER BY checked_at DESC
-         LIMIT 10`,
-        [proxyKey]
-      );
-
-      const diagnosticHistory = diagRows.map((d) => ({
-        id: String(d.id),
-        status: String(d.status),
-        latencyMs: d.latency_ms !== null ? Number(d.latency_ms) : null,
-        checkedAt: Number(d.checked_at),
-        errorMessage: d.error_message ? String(d.error_message) : null,
-      }));
-
+      const latestAudit: ProxyAuditResult | null = null;
+      const auditHistory: Array<{
+        id: string;
+        verdict: string;
+        lifecycleState: ProxyLifecycleState;
+        overallScore: number | null;
+        finishedAt: number | null;
+      }> = [];
+      const diagnosticHistory: Array<{
+        id: string;
+        status: string;
+        latencyMs: number | null;
+        checkedAt: number;
+        errorMessage: string | null;
+      }> = [];
       return {
         proxyKey: String(row.proxy_key),
         endpoint,
@@ -547,10 +546,15 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
       const whereClauses: string[] = ["1 = 1"];
       const params: SqlParam[] = [];
 
+      if (filter.proxyKey?.trim()) {
+        whereClauses.push("p.proxy_key = ?");
+        params.push(filter.proxyKey.trim());
+      }
+
       if (filter.search?.trim()) {
         const term = `%${filter.search.trim().toLowerCase()}%`;
-        whereClauses.push("(LOWER(p.proxy_key) LIKE ? OR LOWER(p.endpoint) LIKE ? OR LOWER(COALESCE(p.exit_ip, '')) LIKE ?)");
-        params.push(term, term, term);
+        whereClauses.push("(LOWER(p.proxy_key) LIKE ? OR LOWER(p.endpoint) LIKE ? OR LOWER(COALESCE(p.exit_ip, '')) LIKE ? OR LOWER(COALESCE(p.host, '')) LIKE ?)");
+        params.push(term, term, term, term);
       }
 
       if (filter.source && filter.source !== "all") {
@@ -559,7 +563,7 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
       }
 
       if (filter.protocol && filter.protocol !== "all") {
-        whereClauses.push("p.protocol = ?");
+        whereClauses.push("LOWER(p.protocol) = ?");
         params.push(filter.protocol.toLowerCase());
       }
 
@@ -568,8 +572,32 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
         params.push(filter.lifecycle);
       }
 
+      const healthFilter = filter.health || filter.status;
+      if (healthFilter === "working") {
+        whereClauses.push("(p.status = 'usable' OR p.last_verdict = 'PASS')");
+      } else if (healthFilter === "regressed") {
+        whereClauses.push("NOT (p.status = 'usable' OR p.last_verdict = 'PASS') AND (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1)");
+      } else if (healthFilter === "dead") {
+        whereClauses.push("NOT (p.status = 'usable' OR p.last_verdict = 'PASS') AND NOT (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1)");
+      }
+
       const rows = db.all<{ proxy_key: string }>(
-        `SELECT p.proxy_key FROM proxies p WHERE ${whereClauses.join(" AND ")}`,
+        `SELECT p.proxy_key
+         FROM proxies p
+         WHERE ${whereClauses.join(" AND ")}
+         ORDER BY
+           CASE WHEN (p.status = 'usable' OR p.last_verdict = 'PASS') THEN 0
+                WHEN (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1) THEN 1
+                ELSE 2
+           END ASC,
+           CASE WHEN (p.status = 'usable' OR p.last_verdict = 'PASS') THEN p.latency_ms ELSE NULL END ASC NULLS LAST,
+           CASE WHEN NOT (p.status = 'usable' OR p.last_verdict = 'PASS') AND COALESCE(p.checked_at, 0) = 0 THEN 0
+                WHEN NOT (p.status = 'usable' OR p.last_verdict = 'PASS') THEN 1
+                ELSE NULL
+           END ASC NULLS LAST,
+           CASE WHEN NOT (p.status = 'usable' OR p.last_verdict = 'PASS') THEN p.checked_at ELSE NULL END ASC NULLS LAST,
+           CASE WHEN (p.status = 'usable' OR p.last_verdict = 'PASS') THEN p.checked_at ELSE NULL END DESC NULLS LAST,
+           p.proxy_key ASC`,
         params
       );
 
@@ -586,33 +614,32 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
         `SELECT
            p.protocol,
            p.endpoint,
+           p.host,
+           p.port,
            p.username,
            p.password
          FROM proxies p
-         JOIN proxy_audits a ON a.rowid = (
-           SELECT a2.rowid FROM proxy_audits a2
-           WHERE a2.proxy_key = p.proxy_key
-           ORDER BY a2.finished_at DESC
-           LIMIT 1
-         )
-         WHERE a.verdict = 'PASS'
-           AND COALESCE(a.reliability_score, 0) >= ?
-           AND a.finished_at >= ?
-           AND NOT EXISTS (
-             SELECT 1 FROM proxy_audit_risks r
-             WHERE r.audit_id = a.id AND r.severity = 'critical'
-           )
-         ORDER BY a.reliability_score DESC`,
-        [minRel, minTime]
+         WHERE p.status = 'usable' OR p.last_verdict = 'PASS'
+         ORDER BY p.latency_ms ASC NULLS LAST`,
+        []
       );
 
       const dateStr = new Date().toISOString().slice(0, 10);
       if (format === "csv") {
         const header = "protocol,host,port,username,password\n";
         const lines = rows.map((r) => {
-          const parts = String(r.endpoint ?? "").split(":");
-          const host = parts[0] ?? "";
-          const port = parts[1] ?? "";
+          let host = String(r.host ?? "").trim().replace(/^\[|\]$/g, "");
+          let port = String(r.port ?? "");
+          if (!host || !port) {
+            const lastColon = String(r.endpoint ?? "").lastIndexOf(":");
+            if (lastColon > 0) {
+              host = String(r.endpoint ?? "").slice(0, lastColon).replace(/^\[|\]$/g, "");
+              port = String(r.endpoint ?? "").slice(lastColon + 1);
+            } else {
+              host = String(r.endpoint ?? "");
+              port = "";
+            }
+          }
           const u = includeCreds && r.username ? String(r.username) : "";
           const p = includeCreds && r.password ? String(r.password) : "";
           return `"${r.protocol}","${host}",${port},"${u}","${p}"`;
@@ -715,6 +742,16 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
       const baseWhere: string[] = ["1 = 1"];
       const baseParams: SqlParam[] = [];
 
+      if (filter.proxyKey?.trim()) {
+        baseWhere.push("p.proxy_key = ?");
+        baseParams.push(filter.proxyKey.trim());
+      }
+
+      if (filter.source && filter.source !== "all") {
+        baseWhere.push("p.source = ?");
+        baseParams.push(filter.source);
+      }
+
       if (filter.search?.trim()) {
         const term = `%${filter.search.trim().toLowerCase()}%`;
         baseWhere.push("(LOWER(p.proxy_key) LIKE ? OR LOWER(p.endpoint) LIKE ? OR LOWER(COALESCE(p.exit_ip, '')) LIKE ? OR LOWER(COALESCE(p.host, '')) LIKE ?)");
@@ -737,19 +774,10 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
       }>(
         `SELECT
            COUNT(*) AS total_all,
-           SUM(CASE WHEN (p.status = 'usable' OR COALESCE(p.last_verdict, latest_a.verdict, '') = 'PASS') THEN 1 ELSE 0 END) AS total_working,
-           SUM(CASE WHEN NOT (p.status = 'usable' OR COALESCE(p.last_verdict, latest_a.verdict, '') = 'PASS') AND (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1 OR COALESCE(audit_pass.has_pass, 0) = 1) THEN 1 ELSE 0 END) AS total_regressed,
-           SUM(CASE WHEN NOT (p.status = 'usable' OR COALESCE(p.last_verdict, latest_a.verdict, '') = 'PASS') AND NOT (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1 OR COALESCE(audit_pass.has_pass, 0) = 1) THEN 1 ELSE 0 END) AS total_dead
+           SUM(CASE WHEN (p.status = 'usable' OR COALESCE(p.last_verdict, '') = 'PASS') THEN 1 ELSE 0 END) AS total_working,
+           SUM(CASE WHEN NOT (p.status = 'usable' OR COALESCE(p.last_verdict, '') = 'PASS') AND (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1) THEN 1 ELSE 0 END) AS total_regressed,
+           SUM(CASE WHEN NOT (p.status = 'usable' OR COALESCE(p.last_verdict, '') = 'PASS') AND NOT (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1) THEN 1 ELSE 0 END) AS total_dead
          FROM proxies p
-         LEFT JOIN proxy_audits latest_a ON latest_a.rowid = (
-           SELECT a2.rowid FROM proxy_audits a2
-           WHERE a2.proxy_key = p.proxy_key
-           ORDER BY a2.finished_at DESC
-           LIMIT 1
-         )
-         LEFT JOIN (
-           SELECT proxy_key, 1 AS has_pass FROM proxy_audits WHERE verdict = 'PASS' GROUP BY proxy_key
-         ) audit_pass ON audit_pass.proxy_key = p.proxy_key
          WHERE ${baseWhereSql}`,
         baseParams
       );
@@ -767,11 +795,11 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
 
       const statusFilter = filter.health || filter.status;
       if (statusFilter === "working") {
-        statusWhere.push("(p.status = 'usable' OR COALESCE(p.last_verdict, latest_a.verdict, '') = 'PASS')");
+        statusWhere.push("(p.status = 'usable' OR COALESCE(p.last_verdict, '') = 'PASS')");
       } else if (statusFilter === "regressed") {
-        statusWhere.push("NOT (p.status = 'usable' OR COALESCE(p.last_verdict, latest_a.verdict, '') = 'PASS') AND (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1 OR COALESCE(audit_pass.has_pass, 0) = 1)");
+        statusWhere.push("NOT (p.status = 'usable' OR COALESCE(p.last_verdict, '') = 'PASS') AND (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1)");
       } else if (statusFilter === "dead") {
-        statusWhere.push("NOT (p.status = 'usable' OR COALESCE(p.last_verdict, latest_a.verdict, '') = 'PASS') AND NOT (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1 OR COALESCE(audit_pass.has_pass, 0) = 1)");
+        statusWhere.push("NOT (p.status = 'usable' OR COALESCE(p.last_verdict, '') = 'PASS') AND NOT (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1)");
       }
 
       const statusWhereSql = statusWhere.join(" AND ");
@@ -779,20 +807,47 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
       const countFilteredRow = db.get<{ total: number }>(
         `SELECT COUNT(*) AS total
          FROM proxies p
-         LEFT JOIN proxy_audits latest_a ON latest_a.rowid = (
-           SELECT a2.rowid FROM proxy_audits a2
-           WHERE a2.proxy_key = p.proxy_key
-           ORDER BY a2.finished_at DESC
-           LIMIT 1
-         )
-         LEFT JOIN (
-           SELECT proxy_key, 1 AS has_pass FROM proxy_audits WHERE verdict = 'PASS' GROUP BY proxy_key
-         ) audit_pass ON audit_pass.proxy_key = p.proxy_key
          WHERE ${statusWhereSql}`,
         statusParams
       );
 
       const total = Number(countFilteredRow?.total ?? 0);
+
+      let orderBySql: string;
+      const direction = filter.direction?.toLowerCase() === "desc" ? "DESC" : "ASC";
+      if (filter.sort === "latency") {
+        orderBySql = `p.latency_ms ${direction} NULLS LAST, p.proxy_key ASC`;
+      } else if (filter.sort === "lastChecked") {
+        const checkDir = filter.direction?.toLowerCase() === "asc" ? "ASC" : "DESC";
+        orderBySql = `p.checked_at ${checkDir} NULLS LAST, p.proxy_key ASC`;
+      } else if (filter.sort === "endpoint") {
+        orderBySql = `p.endpoint ${direction}, p.proxy_key ASC`;
+      } else {
+        orderBySql = `
+          CASE
+            WHEN (p.status = 'usable' OR COALESCE(p.last_verdict, '') = 'PASS') THEN 0
+            WHEN (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1) THEN 1
+            ELSE 2
+          END ASC,
+          CASE
+            WHEN (p.status = 'usable' OR COALESCE(p.last_verdict, '') = 'PASS') THEN p.latency_ms
+            ELSE NULL
+          END ASC NULLS LAST,
+          CASE
+            WHEN NOT (p.status = 'usable' OR COALESCE(p.last_verdict, '') = 'PASS') AND COALESCE(p.checked_at, 0) = 0 THEN 0
+            WHEN NOT (p.status = 'usable' OR COALESCE(p.last_verdict, '') = 'PASS') THEN 1
+            ELSE NULL
+          END ASC NULLS LAST,
+          CASE
+            WHEN NOT (p.status = 'usable' OR COALESCE(p.last_verdict, '') = 'PASS') THEN p.checked_at
+            ELSE NULL
+          END ASC NULLS LAST,
+          CASE
+            WHEN (p.status = 'usable' OR COALESCE(p.last_verdict, '') = 'PASS') THEN p.checked_at
+            ELSE NULL
+          END DESC NULLS LAST,
+          p.proxy_key ASC`;
+      }
 
       const rows = db.all<Record<string, unknown>>(
         `SELECT
@@ -811,32 +866,20 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
            p.ever_passed,
            p.last_verdict,
            p.last_failure_code,
-           latest_a.id AS latest_audit_id,
-           latest_a.verdict AS latest_verdict,
-           latest_a.finished_at AS latest_finished_at,
-           latest_a.overall_score,
-           latest_a.result_json,
-           audit_pass.has_pass,
+           NULL AS latest_audit_id,
+           p.last_verdict AS latest_verdict,
+           p.last_checked_at AS latest_finished_at,
+           NULL AS overall_score,
+           NULL AS result_json,
+           p.ever_passed AS has_pass,
            CASE
-             WHEN (p.status = 'usable' OR COALESCE(p.last_verdict, latest_a.verdict, '') = 'PASS') THEN 'working'
-             WHEN (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1 OR COALESCE(audit_pass.has_pass, 0) = 1) THEN 'regressed'
+             WHEN (p.status = 'usable' OR COALESCE(p.last_verdict, '') = 'PASS') THEN 'working'
+             WHEN (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1) THEN 'regressed'
              ELSE 'dead'
            END AS computed_status
          FROM proxies p
-         LEFT JOIN proxy_audits latest_a ON latest_a.rowid = (
-           SELECT a2.rowid FROM proxy_audits a2
-           WHERE a2.proxy_key = p.proxy_key
-           ORDER BY a2.finished_at DESC
-           LIMIT 1
-         )
-         LEFT JOIN (
-           SELECT proxy_key, 1 AS has_pass FROM proxy_audits WHERE verdict = 'PASS' GROUP BY proxy_key
-         ) audit_pass ON audit_pass.proxy_key = p.proxy_key
          WHERE ${statusWhereSql}
-         ORDER BY
-           CASE WHEN (p.status = 'usable' OR COALESCE(p.last_verdict, latest_a.verdict, '') = 'PASS') THEN 0 WHEN (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1 OR COALESCE(audit_pass.has_pass, 0) = 1) THEN 1 ELSE 2 END ASC,
-           p.latency_ms ASC NULLS LAST,
-           p.checked_at DESC NULLS LAST
+         ORDER BY ${orderBySql}
          LIMIT ? OFFSET ?`,
         [...statusParams, pageSize, offset]
       );
@@ -854,24 +897,59 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
         let isp: string | undefined;
         let timezone: string | undefined;
         let udpVal: "Yes" | "No" | "Unknown" = String(r.protocol).toLowerCase() === "socks5" ? "Yes" : "No";
+        let parsedAuditResult: Record<string, unknown> | null = null;
 
         if (typeof r.result_json === "string") {
           try {
             const parsed = JSON.parse(r.result_json);
-            const exitIpObj = parsed.exitIp || parsed.evidence?.exitIp;
-            if (exitIpObj) {
-              geo = exitIpObj.geo;
-              isp = exitIpObj.isp;
-              timezone = exitIpObj.timezone;
-            }
-            const netObj = parsed.network || parsed.evidence?.network;
-            if (netObj?.udp !== undefined) {
-              udpVal = netObj.udp ? "Yes" : "No";
+            if (parsed && typeof parsed === "object") {
+              parsedAuditResult = parsed as Record<string, unknown>;
+              const evidenceObj = parsedAuditResult.evidence && typeof parsedAuditResult.evidence === "object"
+                ? (parsedAuditResult.evidence as Record<string, unknown>)
+                : null;
+              const exitIpObj = (parsedAuditResult.exitIp && typeof parsedAuditResult.exitIp === "object"
+                ? parsedAuditResult.exitIp
+                : evidenceObj?.exitIp && typeof evidenceObj.exitIp === "object"
+                  ? evidenceObj.exitIp
+                  : null) as Record<string, unknown> | null;
+              if (exitIpObj) {
+                geo = exitIpObj.geo as { city?: string; country?: string } | undefined;
+                isp = typeof exitIpObj.isp === "string" ? exitIpObj.isp : undefined;
+                timezone = typeof exitIpObj.timezone === "string" ? exitIpObj.timezone : undefined;
+              }
+              const netObj = (parsedAuditResult.network && typeof parsedAuditResult.network === "object"
+                ? parsedAuditResult.network
+                : evidenceObj?.network && typeof evidenceObj.network === "object"
+                  ? evidenceObj.network
+                  : null) as Record<string, unknown> | null;
+              if (netObj && netObj.udp !== undefined) {
+                udpVal = netObj.udp ? "Yes" : "No";
+              }
             }
           } catch {}
         }
 
         const endpoint = String(r.endpoint ?? "");
+        let itemHost = String(r.host ?? "").trim().replace(/^\[|\]$/g, "");
+        let itemPort = Number(r.port ?? 0);
+        if (!itemHost || !itemPort) {
+          try {
+            const rawTarget = endpoint.includes("://") ? endpoint : `${r.protocol}://${endpoint}`;
+            const parsed = parseProxyInput(rawTarget);
+            itemHost = parsed.parsed.host;
+            itemPort = parsed.parsed.port;
+          } catch {
+            const lastColon = endpoint.lastIndexOf(":");
+            if (lastColon > 0) {
+              itemHost = endpoint.slice(0, lastColon).replace(/^\[|\]$/g, "");
+              itemPort = Number(endpoint.slice(lastColon + 1)) || 0;
+            } else {
+              itemHost = endpoint;
+              itemPort = 0;
+            }
+          }
+        }
+
         let syncStatus: "active" | "reserve" | "unsynced" = "unsynced";
         if (filter.activePoolEndpoints?.has(endpoint)) {
           syncStatus = "active";
@@ -879,9 +957,22 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
           syncStatus = "reserve";
         }
 
+        const computedStatus = r.computed_status as "working" | "dead" | "regressed";
+        const isWorking = computedStatus === "working";
+        const currentLatency = isWorking && r.latency_ms !== null && r.latency_ms !== undefined ? Number(r.latency_ms) : null;
+
         const effectiveVerdict = (r.last_verdict || r.latest_verdict) as "PASS" | "WARN" | "FAIL" | undefined;
         let lastAudit = null;
         if (effectiveVerdict) {
+          let auditLatency: number | undefined;
+          const connObj = parsedAuditResult?.connectivity && typeof parsedAuditResult.connectivity === "object"
+            ? (parsedAuditResult.connectivity as Record<string, unknown>)
+            : null;
+          if (connObj && connObj.latencyMs !== undefined && connObj.latencyMs !== null) {
+            auditLatency = Number(connObj.latencyMs);
+          } else if (isWorking && r.latency_ms !== null && r.latency_ms !== undefined) {
+            auditLatency = Number(r.latency_ms);
+          }
           lastAudit = {
             id: String(r.latest_audit_id || "audit-latest"),
             verdict: effectiveVerdict,
@@ -889,21 +980,23 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
             exitIp: r.exit_ip ? String(r.exit_ip) : undefined,
             country: geo?.country,
             isp,
-            latencyMs: r.latency_ms !== null && r.latency_ms !== undefined ? Number(r.latency_ms) : undefined,
+            latencyMs: auditLatency,
             overallSafety: r.overall_score !== null && r.overall_score !== undefined ? Number(r.overall_score) : undefined,
             primaryReasonCode: r.last_failure_code ? String(r.last_failure_code) : undefined,
           };
         }
 
         const key = String(r.proxy_key);
-        const computedStatus = r.computed_status as "working" | "dead" | "regressed";
         const poolTier = syncStatus === "unsynced" ? null : (syncStatus as "active" | "reserve");
+        const protoStr = String(r.protocol).toLowerCase();
+        const protocol: "http" | "https" | "socks4" | "socks5" =
+          protoStr === "socks4" || protoStr === "socks5" || protoStr === "https" ? protoStr : "http";
 
         return {
           proxyKey: key,
-          host: String(r.host || endpoint.split(":")[0]),
-          port: Number(r.port || endpoint.split(":")[1] || 0),
-          protocol: String(r.protocol).toLowerCase() as any,
+          host: itemHost,
+          port: itemPort,
+          protocol,
           source: r.source ? String(r.source) : null,
           poolTier,
           health: computedStatus,
@@ -915,7 +1008,7 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
           status: computedStatus,
           udp: udpVal,
           sync: syncStatus,
-          latencyMs: r.latency_ms !== null && r.latency_ms !== undefined ? Number(r.latency_ms) : null,
+          latencyMs: currentLatency,
           exitIp: r.exit_ip ? String(r.exit_ip) : null,
           geo,
           isp,
@@ -963,60 +1056,17 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
       }
 
       db.transaction(() => {
-        // 1. Insert audit record
-        db.run(
-          `INSERT INTO proxy_audits (
-            id, proxy_key, verdict, lifecycle_state, overall_score,
-            transport_score, privacy_score, reputation_score, reliability_score,
-            started_at, finished_at, result_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            auditId,
-            input.proxyKey,
-            verdict,
-            lifecycle,
-            input.result.scores?.overallSafety ?? null,
-            input.result.scores?.transportSecurity ?? null,
-            input.result.scores?.privacy ?? null,
-            input.result.scores?.reputation ?? null,
-            input.result.scores?.reliability ?? null,
-            startedTime,
-            finishedTime,
-            JSON.stringify(input.result),
-          ]
-        );
-
-        // 2. Insert typed risks
-        if (Array.isArray(input.result.riskFactors)) {
-          for (const r of input.result.riskFactors) {
-            db.run(
-              `INSERT INTO proxy_audit_risks (
-                id, audit_id, risk_code, severity, title, explanation
-              ) VALUES (?, ?, ?, ?, ?, ?)`,
-              [
-                crypto.randomUUID(),
-                auditId,
-                r.code ?? r.id,
-                r.severity,
-                r.title ?? r.id,
-                r.description ?? r.message ?? "",
-              ]
-            );
-          }
-        }
-
-        // 3. Update proxy snapshot
         db.run(
           `UPDATE proxies SET
             last_verdict = ?,
             last_checked_at = ?,
-            last_latency_ms = COALESCE(?, last_latency_ms),
+            last_latency_ms = CASE WHEN ? = 'FAIL' THEN NULL ELSE COALESCE(?, last_latency_ms) END,
             last_exit_ip = COALESCE(?, last_exit_ip),
             last_failure_code = ?,
             ever_passed = CASE WHEN ? = 'PASS' THEN 1 ELSE ever_passed END,
             status = CASE WHEN ? = 'FAIL' THEN 'dead' ELSE 'usable' END,
             lifecycle_state = ?,
-            latency_ms = COALESCE(?, latency_ms),
+            latency_ms = CASE WHEN ? = 'FAIL' THEN NULL ELSE COALESCE(?, latency_ms) END,
             exit_ip = COALESCE(?, exit_ip),
             checked_at = ?,
             updated_at = ?
@@ -1024,12 +1074,14 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
           [
             verdict,
             finishedTime,
+            verdict,
             latency,
             exitIp,
             failureCode,
             verdict,
             verdict,
             lifecycle,
+            verdict,
             latency,
             exitIp,
             finishedTime,
@@ -1037,19 +1089,6 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
             input.proxyKey,
           ]
         );
-
-        // 4. Update audit job counters if jobId is provided
-        if (input.jobId) {
-          db.run(
-            `UPDATE audit_jobs SET
-              completed = completed + 1,
-              passed = passed + CASE WHEN ? = 'PASS' THEN 1 ELSE 0 END,
-              warned = warned + CASE WHEN ? = 'WARN' THEN 1 ELSE 0 END,
-              failed = failed + CASE WHEN ? = 'FAIL' THEN 1 ELSE 0 END
-            WHERE id = ?`,
-            [verdict, verdict, verdict, input.jobId]
-          );
-        }
       });
     },
     async previewImport(input: ProxyImportInput): Promise<ProxyImportPreview> {
@@ -1103,29 +1142,19 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
         sampleValid,
       };
     },
-    async getAuditDetail(proxyKey: string, auditId?: string): Promise<ProxyAuditDetail | null> {
-      let row: { id: string; proxy_key: string; verdict: string; finished_at: number; result_json: string } | undefined;
-      if (auditId) {
-        row = db.get<{ id: string; proxy_key: string; verdict: string; finished_at: number; result_json: string }>(
-          "SELECT id, proxy_key, verdict, finished_at, result_json FROM proxy_audits WHERE id = ? AND proxy_key = ?",
-          [auditId, proxyKey]
-        );
-      } else {
-        row = db.get<{ id: string; proxy_key: string; verdict: string; finished_at: number; result_json: string }>(
-          "SELECT id, proxy_key, verdict, finished_at, result_json FROM proxy_audits WHERE proxy_key = ? ORDER BY finished_at DESC LIMIT 1",
-          [proxyKey]
-        );
-      }
-      if (!row || !row.result_json) return null;
-      try {
-        const parsed = JSON.parse(row.result_json);
-        if (!parsed.verdict && row.verdict) {
-          parsed.verdict = row.verdict;
-        }
-        return serializeAuditDetail(parsed, proxyKey, row.id);
-      } catch {
-        return null;
-      }
+    async getAuditDetail(proxyKey: string): Promise<ProxyAuditDetail | null> {
+      const row = db.get<{ proxy_key: string; status: string; last_verdict?: string; last_latency_ms?: number }>(
+        "SELECT proxy_key, status, last_verdict, last_latency_ms FROM proxies WHERE proxy_key = ?",
+        [proxyKey]
+      );
+      if (!row) return null;
+      const verdict = (row.last_verdict === "PASS" || row.last_verdict === "WARN" || row.last_verdict === "FAIL")
+        ? row.last_verdict
+        : (row.status === "usable" ? "PASS" : "FAIL");
+      return {
+        proxyKey: row.proxy_key,
+        verdict,
+      };
     },
   };
 

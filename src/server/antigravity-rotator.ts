@@ -162,24 +162,40 @@ export function computeRotationPlan(
     }
   }
 
-  // If survivingActive exceeds activeLimit, trim excess based on lowest quota
-  if (survivingActive.length > activeLimit) {
-    survivingActive.sort((a, b) => b.sessionPercentage - a.sessionPercentage);
-    const excess = survivingActive.splice(activeLimit);
+  // Deduplicate surviving active accounts sharing the same proxy (no two active accounts can share the same proxy)
+  survivingActive.sort((a, b) => {
+    if (b.sessionPercentage !== a.sessionPercentage) {
+      return b.sessionPercentage - a.sessionPercentage;
+    }
+    const timeA = a.resetAt ? new Date(a.resetAt).getTime() : Number.MAX_SAFE_INTEGER;
+    const timeB = b.resetAt ? new Date(b.resetAt).getTime() : Number.MAX_SAFE_INTEGER;
+    return timeA - timeB;
+  });
+
+  const dedupedActive: AntigravityAccountInput[] = [];
+  const occupiedProxies = new Set<string>();
+
+  for (const acc of survivingActive) {
+    const proxyId = effectiveProxyMap.get(acc.id);
+    if (proxyId && occupiedProxies.has(proxyId)) {
+      plan.deactivations.push(acc.id);
+    } else {
+      dedupedActive.push(acc);
+      if (proxyId) occupiedProxies.add(proxyId);
+    }
+  }
+
+  // If dedupedActive exceeds activeLimit, trim excess based on lowest quota
+  if (dedupedActive.length > activeLimit) {
+    dedupedActive.sort((a, b) => b.sessionPercentage - a.sessionPercentage);
+    const excess = dedupedActive.splice(activeLimit);
     for (const ex of excess) {
       plan.deactivations.push(ex.id);
     }
   }
 
-  // Record occupied proxies among surviving active accounts
-  const occupiedProxies = new Set<string>();
-  for (const acc of survivingActive) {
-    const proxyId = effectiveProxyMap.get(acc.id);
-    if (proxyId) occupiedProxies.add(proxyId);
-  }
-
   // Step C: Promote candidates with lowest resetAt
-  let availableSlots = activeLimit - survivingActive.length;
+  let availableSlots = activeLimit - dedupedActive.length;
 
   if (availableSlots > 0) {
     const candidates = accounts.filter(
@@ -209,7 +225,7 @@ export function computeRotationPlan(
     }
   }
 
-  plan.activeIds = [...survivingActive.map((a) => a.id), ...plan.activations];
+  plan.activeIds = [...dedupedActive.map((a) => a.id), ...plan.activations];
   return plan;
 }
 

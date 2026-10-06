@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import type { PoolRecord } from "../src/lib/types.js";
-import { initAppConfig } from "../src/server/app-config.js";
+import { initAppConfig, updateSettings } from "../src/server/app-config.js";
 import { createPoolRanker, type PoolRankerDeps } from "../src/server/pool-ranker.js";
 
 initAppConfig();
@@ -81,6 +81,38 @@ test("sync uses 9Router testPool, deactivates then deletes on explicit failure, 
   assert.equal(state.pools["local-a"].remoteId, null);
   assert.equal(state.pools["local-a"].tier, "removed");
   assert.equal(state.pools["local-a"].isActiveOnRouter, false);
+});
+
+test("sync preserves remote pool and active truth on reported 9Router transport failure", async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "sync-transport-failure-"));
+  const pool = record("local-transport", 8002);
+  fs.writeFileSync(path.join(dataDir, "pool-state.json"), JSON.stringify({
+    pools: { [pool.localId]: pool }, lastSyncAt: null,
+    stats: { total: 1, active: 1, reserve: 0, dead: 0 }, lastError: "",
+  }));
+  const deleted: string[] = [];
+  const deactivated: string[] = [];
+  const ranker = createPoolRanker({ dataDir }, {
+    listPools: async () => [{ id: pool.remoteId!, name: pool.name, proxyUrl: pool.proxyUrl, type: "http", isActive: true }],
+    testPool: async () => ({
+      ok: false,
+      failureKind: "transport",
+      error: "fetch failed: Client network socket disconnected before secure TLS connection established (ECONNRESET)",
+    }),
+    setPoolActive: async (id: string, active: boolean) => { if (!active) deactivated.push(id); return {}; },
+    deletePool: async (id: string) => { deleted.push(id); },
+    bulkSetActive: async () => [],
+    checkProxy: async () => { throw new Error("local checker must not be called during sync"); },
+  } as unknown as Partial<PoolRankerDeps>);
+
+  await ranker.syncPools({ force: true });
+  const state = ranker.readState().pools[pool.localId];
+  assert.deepEqual(deleted, []);
+  assert.deepEqual(deactivated, []);
+  assert.equal(state.remoteId, pool.remoteId);
+  assert.equal(state.remoteState, "linked");
+  assert.equal(state.isActiveOnRouter, true);
+  assert.equal(state.status, "usable");
 });
 
 test("sync renames usable pools by ascending latency and keeps going after one rename fails", async () => {
@@ -169,4 +201,39 @@ test("sync reconciles tier to remote truth on activation failure and renames hig
     { id: "remote-b", name: "2" },
     { id: "remote-a", name: "1" },
   ]);
+});
+
+test("startSyncIfStale respects nineRouterAutoSync false and does not run sync", async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "sync-lifecycle-disabled-"));
+  fs.writeFileSync(
+    path.join(dataDir, "pool-state.json"),
+    JSON.stringify({
+      pools: {},
+      lastSyncAt: 0,
+      stats: { total: 0, active: 0, reserve: 0, dead: 0 },
+      lastError: "",
+    })
+  );
+
+  updateSettings({ nineRouterAutoSync: false });
+
+  let calledList = false;
+  const ranker = createPoolRanker(
+    { dataDir },
+    {
+      listPools: async () => {
+        calledList = true;
+        return [];
+      },
+    } as unknown as Partial<PoolRankerDeps>
+  );
+
+  try {
+    const result = await ranker.startSyncIfStale();
+    assert.equal(result.started, false);
+    assert.equal(result.stale, false);
+    assert.equal(calledList, false);
+  } finally {
+    updateSettings({ nineRouterAutoSync: true });
+  }
 });

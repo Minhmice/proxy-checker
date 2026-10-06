@@ -1,7 +1,8 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { checkSession, logout as apiLogout } from "@/lib/api";
+import { checkSession, clearStoredPassword, getStoredPassword, storePassword } from "@/lib/api";
+import { isAbortError } from "@/lib/request-lifecycle";
 
 export interface AuthContextValue {
   authenticated: boolean;
@@ -17,19 +18,26 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [authenticated, setAuthenticated] = useState(false);
+  const [password, setPasswordState] = useState("");
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
+    const saved = getStoredPassword();
+    if (saved) {
+      setPasswordState(saved);
+      setAuthenticated(true);
+    }
+
     const controller = new AbortController();
     checkSession(controller.signal)
       .then((ok) => {
         if (!controller.signal.aborted) {
-          setAuthenticated(ok);
+          setAuthenticated(ok || Boolean(saved));
         }
       })
       .catch(() => {
         if (!controller.signal.aborted) {
-          setAuthenticated(false);
+          setAuthenticated(Boolean(saved));
         }
       })
       .finally(() => {
@@ -42,10 +50,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       controller.abort();
     };
   }, []);
+  useEffect(() => {
+    const handleRejection = (event: PromiseRejectionEvent) => {
+      if (isAbortError(event.reason)) {
+        event.preventDefault();
+      }
+    };
+    window.addEventListener("unhandledrejection", handleRejection);
+    return () => window.removeEventListener("unhandledrejection", handleRejection);
+  }, []);
+
+
+  const setPassword = useCallback((val: string) => {
+    setPasswordState(val);
+    if (val) {
+      storePassword(val);
+      setAuthenticated(true);
+    }
+  }, []);
 
   const clearSession = useCallback(() => {
+    setPasswordState("");
     setAuthenticated(false);
-    void apiLogout();
+    void clearStoredPassword();
   }, []);
 
   const value = useMemo(
@@ -53,13 +80,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       authenticated,
       setAuthenticated,
       clearSession,
-      password: "",
-      setPassword: (val: string) => {
-        if (val) setAuthenticated(true);
-      },
+      password,
+      setPassword,
       clearPassword: clearSession,
     }),
-    [authenticated, clearSession]
+    [authenticated, password, setPassword, clearSession]
   );
 
   if (!hydrated) {

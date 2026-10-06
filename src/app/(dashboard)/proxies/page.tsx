@@ -58,19 +58,31 @@ export default function ProxiesPage() {
   // Sync state if URL changes externally
   useEffect(() => {
     const parsed = parseProxyQuery(searchParams);
-    setQuery(parsed);
+    setQuery((prev) => {
+      if (
+        prev.q === parsed.q &&
+        prev.health === parsed.health &&
+        prev.protocol === parsed.protocol &&
+        prev.source === parsed.source &&
+        prev.sort === parsed.sort &&
+        prev.direction === parsed.direction &&
+        prev.page === parsed.page &&
+        prev.pageSize === parsed.pageSize
+      ) {
+        return prev;
+      }
+      return parsed;
+    });
   }, [searchParams]);
 
   const updateQuery = useCallback(
     (patch: Partial<ProxyWorkspaceQuery>) => {
-      setQuery((prev) => {
-        const next = { ...prev, ...patch };
-        const serialized = serializeProxyQuery(next);
-        router.replace(`${pathname}${serialized ? `?${serialized}` : ""}`, { scroll: false });
-        return next;
-      });
+      const next = { ...query, ...patch };
+      setQuery(next);
+      const serialized = serializeProxyQuery(next);
+      router.replace(`${pathname}${serialized ? `?${serialized}` : ""}`, { scroll: false });
     },
-    [pathname, router]
+    [pathname, router, query]
   );
 
   // Data
@@ -157,10 +169,15 @@ export default function ProxiesPage() {
 
   useEffect(() => {
     const controller = new AbortController();
-    void loadProxies(controller.signal);
+    void loadProxies(controller.signal).catch(() => {});
     return () => {
       controller.abort();
     };
+  }, [loadProxies]);
+
+  const handleJobFinished = useCallback(() => {
+    toast.success("Audit completed");
+    void loadProxies();
   }, [loadProxies]);
 
   // Sync 9Router
@@ -214,7 +231,7 @@ export default function ProxiesPage() {
       const res = await checkProxyValidity(key);
       const verdict = res.proxy.health?.toUpperCase() || res.proxy.status.toUpperCase();
       toast.success(`Check completed for ${proxy.name || key}: ${verdict}`);
-      setItems((prev) => prev.map((item) => ((item.key || item.proxyKey) === key ? res.proxy : item)));
+      await loadProxies();
       if ((inspectProxy?.key || inspectProxy?.proxyKey) === key) {
         setInspectProxy(res.proxy);
       }
@@ -235,8 +252,11 @@ export default function ProxiesPage() {
         job = await createIntelligenceJob({
           filter: {
             search: debouncedSearch.trim() || undefined,
-            lifecycle: query.health !== "all" ? (query.health as any) : undefined,
+            health: query.health,
             protocol: query.protocol !== "all" ? query.protocol : undefined,
+            source: query.source || undefined,
+            sort: query.sort,
+            direction: query.direction,
           },
           options: { attempts: 1, timeoutMs: 12000, concurrency: 5 },
         });
@@ -264,7 +284,9 @@ export default function ProxiesPage() {
     includeCredentials: boolean;
   }) => {
     try {
-      const { blob, filename } = await downloadProxyExport(options.format, options.includeCredentials);
+      const { blob, filename } = await downloadProxyExport(options.format, options.includeCredentials, {
+        scope: options.scope === "selected" ? "all" : "usable",
+      });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -375,10 +397,7 @@ export default function ProxiesPage() {
       {/* Active / Recent Audit Job Indicator */}
       <AuditJobIndicator
         activeJobId={activeJobId}
-        onJobFinished={() => {
-          toast.success("Audit completed");
-          void loadProxies();
-        }}
+        onJobFinished={handleJobFinished}
         onDismiss={() => setActiveJobId(null)}
       />
 

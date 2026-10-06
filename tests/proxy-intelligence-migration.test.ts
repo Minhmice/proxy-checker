@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { openProxyIntelligenceDb, migrateProxyIntelligence } from "../src/server/proxy-intelligence-db.js";
 import { createProxyIntelligenceRepository } from "../src/server/proxy-intelligence-repository.js";
-import type { ProxyAuditResult } from "../src/auditor/types.js";
+import type { ProxyAuditResult } from "../src/lib/types.js";
 
 test("migration is idempotent and adds snapshot columns and audit_jobs table", () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-mig-test-"));
@@ -24,13 +24,9 @@ test("migration is idempotent and adds snapshot columns and audit_jobs table", (
     assert.ok(columns.includes("last_failure_code"), "has last_failure_code");
     assert.ok(columns.includes("ever_passed"), "has ever_passed");
 
-    // Verify audit_jobs table exists
-    const jobCols = db.all<{ name: string }>("PRAGMA table_info(audit_jobs)").map((c) => c.name);
-    assert.ok(jobCols.includes("id"), "audit_jobs has id");
-    assert.ok(jobCols.includes("state"), "audit_jobs has state");
-    assert.ok(jobCols.includes("total"), "audit_jobs has total");
-    assert.ok(jobCols.includes("completed"), "audit_jobs has completed");
-
+    // Verify legacy audit tables are dropped
+    const auditJobs = db.all<{ name: string }>("PRAGMA table_info(audit_jobs)");
+    assert.equal(auditJobs.length, 0, "audit_jobs table is dropped");
     db.close();
   } finally {
     try {

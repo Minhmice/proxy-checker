@@ -5,6 +5,7 @@ input/
 output/
 node_modules/
 .next/
+.next-build/
 *.tsbuildinfo
 runtime/
 .impeccable/
