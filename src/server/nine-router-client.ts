@@ -205,6 +205,10 @@ export async function updatePool(id: string, patch: { name?: string; isActive?: 
   return body.proxyPool ?? body;
 }
 
+export async function renamePool(id: string, name: string) {
+  return updatePool(id, { name });
+}
+
 export async function deletePool(id: string) {
   await request<unknown>(`/api/proxy-pools/${encodeURIComponent(id)}`, {
     method: "DELETE",

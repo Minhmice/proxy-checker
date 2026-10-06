@@ -14,6 +14,7 @@ import {
   setPoolActive as defaultSetPoolActive,
   testPool as defaultTestPool,
   updatePool as defaultUpdatePool,
+  renamePool as defaultRenamePool,
 } from "./nine-router-client.js";
 import { parseProxy } from "./proxy-core.js";
 
@@ -33,6 +34,9 @@ export interface PoolRankerDeps {
   createPool: typeof defaultCreatePool;
   updatePool: typeof defaultUpdatePool;
   testPool: typeof defaultTestPool;
+  renamePool?: (id: string, name: string) => Promise<unknown> | unknown;
+  onSoftDelete?: (proxyKey: string, error?: string) => Promise<void> | void;
+  onTestResult?: (proxyKey: string, ok: boolean, latencyMs?: number, error?: string) => Promise<void> | void;
   checkProxy?: unknown;
 }
 
@@ -109,10 +113,20 @@ function validatePoolName(name: string): string {
 }
 
 export function createPoolRanker(
-  { dataDir }: { dataDir: string },
+  options: { dataDir?: string; repo?: unknown; onSoftDelete?: (key: string, err?: string) => Promise<void> | void; onTestResult?: (key: string, ok: boolean, latencyMs?: number, err?: string) => Promise<void> | void } | Partial<PoolRankerDeps> = {},
   injectedDeps: Partial<PoolRankerDeps> = {}
 ) {
-  const deps: PoolRankerDeps = { ...defaultDeps, ...injectedDeps };
+  let dataDir = path.resolve(process.cwd(), "data");
+  let combinedDeps: Partial<PoolRankerDeps> = {};
+  if (options && typeof options === "object" && "dataDir" in options && typeof options.dataDir === "string") {
+    dataDir = options.dataDir;
+    if (options.onSoftDelete) combinedDeps.onSoftDelete = options.onSoftDelete;
+    if (options.onTestResult) combinedDeps.onTestResult = options.onTestResult;
+    combinedDeps = { ...combinedDeps, ...injectedDeps };
+  } else {
+    combinedDeps = { ...(options as Partial<PoolRankerDeps>), ...injectedDeps };
+  }
+  const deps: PoolRankerDeps = { ...defaultDeps, ...combinedDeps };
   const stateFile = path.join(dataDir, "pool-state.json");
   const metrics = createMetricsHistory({ dataDir });
   let lastRemoteRefreshAt = 0;
@@ -453,6 +467,11 @@ export function createPoolRanker(
                 t.remoteLastError = null;
                 t.successes += 1;
               });
+              if (deps.onTestResult) {
+                try {
+                  await deps.onTestResult(pool.proxyUrl || localId, true, res.elapsedMs);
+                } catch {}
+              }
             } else {
               if (res.failureKind === "transport") {
                 const errMsg = res.error || "9Router transport failure";
@@ -486,9 +505,19 @@ export function createPoolRanker(
                   t.remoteTestStatus = "failed";
                   t.failures += 1;
                 });
+                if (deps.onSoftDelete) {
+                  try {
+                    await deps.onSoftDelete(pool.proxyUrl || localId, errMsg);
+                  } catch {}
+                }
+                if (deps.onTestResult) {
+                  try {
+                    await deps.onTestResult(pool.proxyUrl || localId, false, undefined, errMsg);
+                  } catch {}
+                }
                 logActivity("info", `Removed dead proxy ${pool.name} (${localId}) from 9Router; kept locally`);
               } catch (delErr) {
-                const status = (delErr as { status?: number }).status;
+                const status = delErr && typeof delErr === "object" && "status" in delErr ? delErr.status : undefined;
                 if (status === 404) {
                   mutatePool(localId, (t) => {
                     t.remoteId = null;
@@ -721,7 +750,11 @@ export function createPoolRanker(
 
     if ((pool.remoteState === "linked" || pool.remoteState === "delete_failed") && pool.remoteId) {
       try {
-        await deps.updatePool(pool.remoteId, { name: validName });
+        if (deps.renamePool) {
+          await deps.renamePool(pool.remoteId, validName);
+        } else {
+          await deps.updatePool(pool.remoteId, { name: validName });
+        }
       } catch (error) {
         const status = (error as { status?: number }).status;
         if (status === 404) {
