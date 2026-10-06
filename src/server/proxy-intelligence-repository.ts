@@ -27,8 +27,13 @@ export interface ProxyInventoryItem {
   latestVerdict?: string | null;
   latestScore?: number | null;
   latestAuditAt?: number | null;
+  isPinned?: boolean;
+  tags?: string[];
+  remoteId?: string | null;
+  routerState?: string;
+  removedAt?: number | null;
+  lastLatencyMs?: number | null;
 }
-
 export interface ProxyInventoryDetail extends ProxyInventoryItem {
   latestAudit?: ProxyAuditResult | null;
   auditHistory?: Array<{
@@ -156,8 +161,13 @@ export interface UnifiedProxyItem {
   isp?: string;
   timezone?: string;
   lastCheckedAt: number | null;
+  isPinned: boolean;
+  tags: string[];
+  remoteId: string | null;
+  routerState: "active" | "reserve" | "removed" | "unmanaged";
+  removedAt: number | null;
+  lastLatencyMs: number | null;
 }
-
 export interface UnifiedProxyCounts {
   all: number;
   working: number;
@@ -215,6 +225,11 @@ export interface ProxyIntelligenceRepository {
   persistAuditSnapshot(input: PersistAuditSnapshotInput): Promise<void>;
   previewImport(input: ProxyImportInput): Promise<ProxyImportPreview>;
   getAuditDetail(proxyKey: string, auditId?: string): Promise<ProxyAuditDetail | null>;
+  setPin(proxyKey: string, isPinned: boolean): Promise<boolean>;
+  updateTags(proxyKey: string, tags: string[]): Promise<void>;
+  recordTestResult(proxyKey: string, ok: boolean, latencyMs?: number, errorMessage?: string): Promise<void>;
+  softDeleteFromRouter(proxyKey: string, errorMessage?: string): Promise<void>;
+  hardDeleteProxy(proxyKey: string, force?: boolean): Promise<{ deleted: boolean; remoteId: string | null }>;
 }
 
 function computeProxyKey(protocol: string, host: string, port: number, username?: string | null): string {
@@ -474,7 +489,13 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
            p.username,
            CASE WHEN p.password IS NOT NULL AND p.password != '' THEN 1 ELSE 0 END AS has_password,
            p.created_at,
-           p.updated_at
+           p.updated_at,
+           p.is_pinned,
+           p.tags,
+           p.remote_id,
+           p.router_state,
+           p.removed_at,
+           p.last_latency_ms
          FROM proxies p
          WHERE p.proxy_key = ?`,
         [proxyKey]
@@ -536,6 +557,12 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
         checkedAt: row.checked_at ? Number(row.checked_at) : null,
         createdAt: row.created_at ? Number(row.created_at) : null,
         updatedAt: row.updated_at ? Number(row.updated_at) : null,
+        isPinned: Boolean(row.is_pinned),
+        tags: typeof row.tags === "string" && row.tags ? row.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
+        remoteId: row.remote_id ? String(row.remote_id) : null,
+        routerState: (row.router_state as string) || "unmanaged",
+        removedAt: row.removed_at ? Number(row.removed_at) : null,
+        lastLatencyMs: row.last_latency_ms !== null && row.last_latency_ms !== undefined ? Number(row.last_latency_ms) : null,
         latestAudit,
         auditHistory,
         diagnosticHistory,
@@ -866,6 +893,12 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
            p.ever_passed,
            p.last_verdict,
            p.last_failure_code,
+           p.is_pinned,
+           p.tags,
+           p.remote_id,
+           p.router_state,
+           p.removed_at,
+           p.last_latency_ms,
            NULL AS latest_audit_id,
            p.last_verdict AS latest_verdict,
            p.last_checked_at AS latest_finished_at,
@@ -1014,6 +1047,12 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
           isp,
           timezone,
           lastCheckedAt: r.checked_at ? Number(r.checked_at) : null,
+          isPinned: Boolean(r.is_pinned),
+          tags: typeof r.tags === "string" && r.tags ? r.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
+          remoteId: r.remote_id ? String(r.remote_id) : null,
+          routerState: (r.router_state as "active" | "reserve" | "removed" | "unmanaged") || "unmanaged",
+          removedAt: r.removed_at ? Number(r.removed_at) : null,
+          lastLatencyMs: r.last_latency_ms !== null && r.last_latency_ms !== undefined ? Number(r.last_latency_ms) : null,
         };
       });
 
@@ -1155,6 +1194,83 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
         proxyKey: row.proxy_key,
         verdict,
       };
+    },
+    async setPin(proxyKey: string, isPinned: boolean): Promise<boolean> {
+      const pinVal = isPinned ? 1 : 0;
+      db.run("UPDATE proxies SET is_pinned = ?, updated_at = ? WHERE proxy_key = ?", [pinVal, Date.now(), proxyKey]);
+      return isPinned;
+    },
+    async updateTags(proxyKey: string, tags: string[]): Promise<void> {
+      const serialized = tags.map((t) => t.trim()).filter(Boolean).join(",");
+      db.run("UPDATE proxies SET tags = ?, updated_at = ? WHERE proxy_key = ?", [serialized, Date.now(), proxyKey]);
+    },
+    async recordTestResult(proxyKey: string, ok: boolean, latencyMs?: number, errorMessage?: string): Promise<void> {
+      const testedAt = Date.now();
+      db.transaction(() => {
+        db.run(
+          `INSERT INTO proxy_test_history (proxy_key, tested_at, ok, latency_ms, error_message)
+           VALUES (?, ?, ?, ?, ?)`,
+          [proxyKey, testedAt, ok ? 1 : 0, latencyMs ?? null, errorMessage ?? null]
+        );
+        if (ok) {
+          db.run(
+            `UPDATE proxies SET
+              status = 'usable',
+              last_verdict = 'PASS',
+              last_latency_ms = ?,
+              latency_ms = ?,
+              successes = successes + 1,
+              ever_passed = 1,
+              checked_at = ?,
+              updated_at = ?
+             WHERE proxy_key = ?`,
+            [latencyMs ?? null, latencyMs ?? null, testedAt, testedAt, proxyKey]
+          );
+        } else {
+          db.run(
+            `UPDATE proxies SET
+              status = 'dead',
+              last_verdict = 'FAIL',
+              last_error = ?,
+              failures = failures + 1,
+              checked_at = ?,
+              updated_at = ?
+             WHERE proxy_key = ?`,
+            [errorMessage ?? null, testedAt, testedAt, proxyKey]
+          );
+        }
+      });
+    },
+    async softDeleteFromRouter(proxyKey: string, errorMessage?: string): Promise<void> {
+      const now = Date.now();
+      db.run(
+        `UPDATE proxies SET
+          status = 'dead',
+          router_state = 'removed',
+          remote_id = NULL,
+          removed_at = ?,
+          last_error = COALESCE(?, last_error),
+          updated_at = ?
+         WHERE proxy_key = ?`,
+        [now, errorMessage ?? null, now, proxyKey]
+      );
+    },
+    async hardDeleteProxy(proxyKey: string, force?: boolean): Promise<{ deleted: boolean; remoteId: string | null }> {
+      const row = db.get<{ is_pinned: number; remote_id: string | null }>(
+        "SELECT is_pinned, remote_id FROM proxies WHERE proxy_key = ?",
+        [proxyKey]
+      );
+      if (!row) {
+        return { deleted: false, remoteId: null };
+      }
+      if (row.is_pinned === 1 && !force) {
+        throw new Error(`Proxy ${proxyKey} is pinned. Unpin or use force to delete.`);
+      }
+      db.transaction(() => {
+        db.run("DELETE FROM proxy_test_history WHERE proxy_key = ?", [proxyKey]);
+        db.run("DELETE FROM proxies WHERE proxy_key = ?", [proxyKey]);
+      });
+      return { deleted: true, remoteId: row.remote_id ? String(row.remote_id) : null };
     },
   };
 

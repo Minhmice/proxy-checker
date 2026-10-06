@@ -79,8 +79,35 @@ export function migrateProxyIntelligence(db: ProxyIntelligenceDb): void {
     if (!columns.includes("ever_passed")) {
       db.exec("ALTER TABLE proxies ADD COLUMN ever_passed INTEGER NOT NULL DEFAULT 0;");
     }
+    if (!columns.includes("is_pinned")) {
+      db.exec("ALTER TABLE proxies ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0;");
+    }
+    if (!columns.includes("tags")) {
+      db.exec("ALTER TABLE proxies ADD COLUMN tags TEXT NOT NULL DEFAULT '';");
+    }
+    if (!columns.includes("remote_id")) {
+      db.exec("ALTER TABLE proxies ADD COLUMN remote_id TEXT;");
+    }
+    if (!columns.includes("router_state")) {
+      db.exec("ALTER TABLE proxies ADD COLUMN router_state TEXT NOT NULL DEFAULT 'unmanaged';");
+    }
+    if (!columns.includes("removed_at")) {
+      db.exec("ALTER TABLE proxies ADD COLUMN removed_at INTEGER;");
+    }
 
-
+    // Create proxy_test_history
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS proxy_test_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        proxy_key TEXT NOT NULL,
+        tested_at INTEGER NOT NULL,
+        ok INTEGER NOT NULL,
+        latency_ms INTEGER,
+        error_message TEXT,
+        FOREIGN KEY (proxy_key) REFERENCES proxies(proxy_key) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_proxy_test_history_key ON proxy_test_history(proxy_key, tested_at DESC);
+    `);
     // 3. Drop legacy auditor tables
     db.exec(`
       DROP TABLE IF EXISTS proxy_audit_risks;
