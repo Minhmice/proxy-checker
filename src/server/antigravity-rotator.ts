@@ -37,6 +37,12 @@ export interface RotationPlan {
   activeIds: string[];
   proxyReassignments: Record<string, string>; // accountId -> newProxyPoolId
 }
+export interface AntigravityRotator {
+  runRotation(options?: { force?: boolean }): Promise<AntigravityRotatorSnapshot>;
+  optimizeSpeed(): Promise<{ updated: number; accounts: Array<{ id: string; proxyPoolId: string }> }>;
+  getSnapshot(): AntigravityRotatorSnapshot;
+  readonly isRunning: boolean;
+}
 
 export function extractAntigravityUsage(rawUsage: Record<string, unknown>): {
   sessionPercentage: number;
@@ -227,6 +233,24 @@ export function computeRotationPlan(
 
   plan.activeIds = [...dedupedActive.map((a) => a.id), ...plan.activations];
   return plan;
+}
+
+export function optimizeAccountsBySpeed(
+  accounts: AntigravityAccountInput[],
+  rankedProxies: UsableProxyInput[]
+): Array<{ id: string; proxyPoolId: string }> {
+  const activeAccounts = accounts.filter((a) => a.isActive);
+  const reassignments: Array<{ id: string; proxyPoolId: string }> = [];
+  if (rankedProxies.length === 0 || activeAccounts.length === 0) return reassignments;
+
+  for (let i = 0; i < activeAccounts.length; i++) {
+    const acc = activeAccounts[i];
+    const proxy = rankedProxies[i % rankedProxies.length];
+    if (proxy && proxy.remoteId) {
+      reassignments.push({ id: acc.id, proxyPoolId: proxy.remoteId });
+    }
+  }
+  return reassignments;
 }
 
 export function createAntigravityRotator(deps?: {
@@ -465,9 +489,49 @@ export function createAntigravityRotator(deps?: {
     snap.running = running;
     return snap;
   }
+  async function optimizeSpeed(): Promise<{ updated: number; accounts: Array<{ id: string; proxyPoolId: string }> }> {
+    const rawConnections = await listConnections();
+    if (!rawConnections || rawConnections.length === 0) return { updated: 0, accounts: [] };
+
+    const usable = deps?.getUsableProxies ? deps.getUsableProxies() : [];
+    if (usable.length === 0) return { updated: 0, accounts: [] };
+
+    const inputs: AntigravityAccountInput[] = rawConnections.map((c) => ({
+      id: c.id,
+      email: c.email || c.name || c.id,
+      name: c.name || c.email || c.id,
+      isActive: Boolean(c.isActive),
+      sessionPercentage: 100,
+      weeklyPercentage: 100,
+      resetAt: null,
+      proxyPoolId: (c.providerSpecificData?.proxyPoolId as string | undefined) ?? null,
+    }));
+
+    const reassignments = optimizeAccountsBySpeed(inputs, usable);
+    const connMap = new Map(rawConnections.map((c) => [c.id, c]));
+    let updatedCount = 0;
+    for (const item of reassignments) {
+      const conn = connMap.get(item.id);
+      const currentPsData = (conn?.providerSpecificData && typeof conn.providerSpecificData === "object" ? conn.providerSpecificData : {}) as Record<string, unknown>;
+      try {
+        await updateConn(item.id, {
+          providerSpecificData: {
+            ...currentPsData,
+            proxyPoolId: item.proxyPoolId,
+          },
+        });
+        updatedCount++;
+      } catch (err) {
+        logActivity("warn", `Failed to optimize proxy for account ${item.id}: ${(err as Error).message}`);
+      }
+    }
+    logActivity("info", `Antigravity speed optimization: updated ${updatedCount} account(s)`);
+    return { updated: updatedCount, accounts: reassignments };
+  }
 
   return {
     runRotation,
+    optimizeSpeed,
     getSnapshot,
     get isRunning() {
       return running;
