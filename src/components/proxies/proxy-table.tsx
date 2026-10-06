@@ -10,6 +10,7 @@ import {
   Globe2,
   Loader2,
   Play,
+  Pin,
   RotateCcw,
   SlidersHorizontal,
   XCircle,
@@ -27,7 +28,7 @@ import {
 } from "@/components/ui/table";
 import type { UnifiedProxyItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
-
+import { ProxyContextMenu } from "./proxy-context-menu";
 export interface ProxyTableProps {
   items: UnifiedProxyItem[];
   loading: boolean;
@@ -45,6 +46,10 @@ export interface ProxyTableProps {
   copiedKey: string | null;
   onCopyEndpoint: (text: string) => void;
   onResetFilters?: () => void;
+  onTogglePin?: (proxy: UnifiedProxyItem) => void;
+  onUnlinkRouter?: (proxy: UnifiedProxyItem) => void;
+  onPushRouter?: (proxy: UnifiedProxyItem) => void;
+  onHardDelete?: (proxy: UnifiedProxyItem) => void;
 }
 
 export function ProxyTable({
@@ -64,6 +69,10 @@ export function ProxyTable({
   copiedKey,
   onCopyEndpoint,
   onResetFilters,
+  onTogglePin,
+  onUnlinkRouter,
+  onPushRouter,
+  onHardDelete,
 }: ProxyTableProps) {
   const totalPages = Math.ceil(total / pageSize) || 1;
 
@@ -94,7 +103,14 @@ export function ProxyTable({
     }
   };
 
-  const renderPoolBadge = (tier: string | null) => {
+  const renderPoolBadge = (tier: string | null, routerState?: string) => {
+    if (routerState === "removed") {
+      return (
+        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] uppercase font-mono font-medium tracking-wider bg-rose-500/10 text-rose-400 border border-rose-500/30">
+          Offline
+        </span>
+      );
+    }
     if (!tier || tier === "unsynced") {
       return <span className="text-muted-foreground/60 font-mono text-[11px]">—</span>;
     }
@@ -141,9 +157,6 @@ export function ProxyTable({
                 Exit / ISP
               </TableHead>
               <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground text-right">
-                Privacy
-              </TableHead>
-              <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground text-right">
                 Latency
               </TableHead>
               <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground text-right pr-4">
@@ -155,7 +168,7 @@ export function ProxyTable({
           <TableBody>
             {loading && items.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={9} className="h-48 text-center text-muted-foreground">
+                <TableCell colSpan={8} className="h-48 text-center text-muted-foreground">
                   <div className="flex flex-col items-center justify-center gap-2">
                     <Loader2 className="h-6 w-6 animate-spin text-primary" />
                     <span className="text-xs font-medium">Loading proxy fleet...</span>
@@ -164,7 +177,7 @@ export function ProxyTable({
               </TableRow>
             ) : items.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={9} className="h-48 text-center text-muted-foreground">
+                <TableCell colSpan={8} className="h-48 text-center text-muted-foreground">
                   <div className="flex flex-col items-center justify-center gap-3">
                     <p className="text-xs">No proxies match the selected filters or search.</p>
                     {onResetFilters && (
@@ -184,50 +197,61 @@ export function ProxyTable({
                 const privacyScore = item.lastAudit?.overallSafety ?? null;
 
                 return (
-                  <TableRow
+                  <ProxyContextMenu
                     key={item.key || item.proxyKey}
-                    data-state={isSelected ? "selected" : undefined}
-                    className={cn(
-                      "border-border/50 transition-colors group cursor-pointer",
-                      isSelected ? "bg-primary/5" : "hover:bg-surface/50"
-                    )}
-                    onClick={(e) => {
-                      const target = e.target as HTMLElement;
-                      if (target.closest("button") || target.closest("input")) return;
-                      onOpenDetail(item);
-                    }}
+                    proxy={item}
+                    onTest={onCheckSingle}
+                    onTogglePin={onTogglePin}
+                    onUnlinkRouter={onUnlinkRouter}
+                    onPushRouter={onPushRouter}
+                    onHardDelete={onHardDelete}
+                    onOpenDetail={onOpenDetail}
                   >
-                    {/* Checkbox */}
-                    <TableCell className="px-3" onClick={(e) => e.stopPropagation()}>
-                      <Checkbox
-                        checked={isSelected}
-                        onCheckedChange={() => onToggleSelectKey(item.key || item.proxyKey)}
-                        aria-label={`Select proxy ${endpoint}`}
-                      />
-                    </TableCell>
+                    <TableRow
+                      data-state={isSelected ? "selected" : undefined}
+                      className={cn(
+                        "border-border/50 transition-colors group cursor-pointer",
+                        isSelected ? "bg-primary/5" : "hover:bg-surface/50"
+                      )}
+                      onClick={(e) => {
+                        const target = e.target as HTMLElement;
+                        if (target.closest("button") || target.closest("input")) return;
+                        onOpenDetail(item);
+                      }}
+                    >
+                      {/* Checkbox */}
+                      <TableCell className="px-3" onClick={(e) => e.stopPropagation()}>
+                        <Checkbox
+                          checked={isSelected}
+                          onCheckedChange={() => onToggleSelectKey(item.key || item.proxyKey)}
+                          aria-label={`Select proxy ${endpoint}`}
+                        />
+                      </TableCell>
 
-                    {/* Endpoint + Copy */}
-                    <TableCell className="font-mono text-xs font-medium text-foreground py-3">
-                      <div className="flex items-center gap-1.5">
-                        <span className="hover:text-primary transition-colors">{endpoint}</span>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onCopyEndpoint(endpoint);
-                          }}
-                          className="opacity-0 group-hover:opacity-100 p-1 hover:text-foreground text-muted-foreground transition-all cursor-pointer"
-                          aria-label={`Copy endpoint ${endpoint}`}
-                        >
-                          {copiedKey === endpoint ? (
-                            <Check className="h-3 w-3 text-emerald-400" />
-                          ) : (
-                            <Copy className="h-3 w-3" />
+                      {/* Endpoint + Pin + Copy */}
+                      <TableCell className="font-mono text-xs font-medium text-foreground py-3">
+                        <div className="flex items-center gap-1.5">
+                          {item.isPinned && (
+                            <Pin className="h-3 w-3 text-amber-400 fill-amber-400/20 shrink-0" aria-label="Protected proxy" />
                           )}
-                        </button>
-                      </div>
-                    </TableCell>
-
+                          <span className="hover:text-primary transition-colors">{endpoint}</span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onCopyEndpoint(endpoint);
+                            }}
+                            className="opacity-0 group-hover:opacity-100 p-1 hover:text-foreground text-muted-foreground transition-all cursor-pointer"
+                            aria-label={`Copy endpoint ${endpoint}`}
+                          >
+                            {copiedKey === endpoint ? (
+                              <Check className="h-3 w-3 text-emerald-400" />
+                            ) : (
+                              <Copy className="h-3 w-3" />
+                            )}
+                          </button>
+                        </div>
+                      </TableCell>
                     {/* Protocol */}
                     <TableCell>
                       <Badge variant="outline" className="text-[10px] uppercase font-mono tracking-wider py-0">
@@ -239,7 +263,7 @@ export function ProxyTable({
                     <TableCell>{renderHealthBadge(item.health || item.status)}</TableCell>
 
                     {/* Pool Tier */}
-                    <TableCell>{renderPoolBadge(item.poolTier ?? (item.sync as string))}</TableCell>
+                    <TableCell>{renderPoolBadge(item.poolTier ?? (item.sync as string), item.routerState)}</TableCell>
 
                     {/* Exit IP & Location / ISP */}
                     <TableCell className="text-xs">
@@ -255,26 +279,6 @@ export function ProxyTable({
                         </div>
                       ) : (
                         <span className="text-muted-foreground/60 font-mono text-[11px]">—</span>
-                      )}
-                    </TableCell>
-
-                    {/* Privacy Score */}
-                    <TableCell className="text-right font-mono text-xs">
-                      {privacyScore !== null ? (
-                        <span
-                          className={cn(
-                            "font-semibold",
-                            privacyScore >= 80
-                              ? "text-emerald-400"
-                              : privacyScore >= 50
-                              ? "text-amber-400"
-                              : "text-rose-400"
-                          )}
-                        >
-                          {privacyScore}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground/60">—</span>
                       )}
                     </TableCell>
 
@@ -326,7 +330,8 @@ export function ProxyTable({
                         </Button>
                       </div>
                     </TableCell>
-                  </TableRow>
+                    </TableRow>
+                  </ProxyContextMenu>
                 );
               })
             )}

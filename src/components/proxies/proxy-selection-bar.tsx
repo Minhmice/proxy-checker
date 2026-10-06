@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckSquare, Download, Play, X } from "lucide-react";
+import { CheckSquare, Download, Pin, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export interface ProxySelectionBarProps {
@@ -8,10 +8,10 @@ export interface ProxySelectionBarProps {
   totalMatching: number;
   selectAllMatching: boolean;
   onSelectAllMatchingToggle: (select: boolean) => void;
-  onAuditSelected: () => void;
+  onPinSelected?: () => void;
+  onDeleteSelected?: () => void;
   onExportSelected: () => void;
   onClearSelection: () => void;
-  auditing: boolean;
 }
 
 export function ProxySelectionBar({
@@ -19,10 +19,10 @@ export function ProxySelectionBar({
   totalMatching,
   selectAllMatching,
   onSelectAllMatchingToggle,
-  onAuditSelected,
+  onPinSelected,
+  onDeleteSelected,
   onExportSelected,
   onClearSelection,
-  auditing,
 }: ProxySelectionBarProps) {
   if (selectedCount === 0) return null;
 
@@ -53,17 +53,31 @@ export function ProxySelectionBar({
       </div>
 
       <div className="flex items-center gap-2 shrink-0">
-        <Button
-          size="sm"
-          onClick={onAuditSelected}
-          disabled={auditing}
-          className="h-8 text-xs gap-1.5 bg-primary text-primary-foreground hover:bg-primary-hover cursor-pointer"
-          aria-label="Audit selected proxies"
-        >
-          <Play className="h-3 w-3 fill-current" />
-          <span>Audit selected</span>
-        </Button>
+        {onPinSelected && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onPinSelected}
+            className="h-8 text-xs gap-1.5 border-border/80 bg-surface hover:bg-surface-raised cursor-pointer text-amber-400"
+            aria-label="Pin selected proxies"
+          >
+            <Pin className="h-3 w-3 fill-current" />
+            <span>Ghim đã chọn</span>
+          </Button>
+        )}
 
+        {onDeleteSelected && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onDeleteSelected}
+            className="h-8 text-xs gap-1.5 border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 cursor-pointer"
+            aria-label="Delete selected proxies"
+          >
+            <Trash2 className="h-3 w-3" />
+            <span>Xóa đã chọn</span>
+          </Button>
+        )}
         <Button
           variant="outline"
           size="sm"
