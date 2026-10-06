@@ -744,3 +744,83 @@ export async function refreshAntigravityQuota(password?: string): Promise<{ star
   if (!response.ok) throw new Error("Failed to refresh Antigravity quotas");
   return response.json();
 }
+
+export async function setProxyPin(proxyKey: string, isPinned: boolean, password?: string): Promise<{ proxyKey: string; isPinned: boolean }> {
+  const response = await fetch("/api/proxies/pin", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: authHeaders(password),
+    body: JSON.stringify({ proxyKey, isPinned }),
+  });
+  if (response.status === 401) throw new Error("Wrong control password");
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error || "Failed to toggle proxy pin");
+  }
+  return response.json();
+}
+
+export async function unlinkProxyFromRouter(proxyKey: string, password?: string): Promise<{ ok: boolean }> {
+  const response = await fetch("/api/proxies/unlink-router", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: authHeaders(password),
+    body: JSON.stringify({ proxyKey }),
+  });
+  if (response.status === 401) throw new Error("Wrong control password");
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error || "Failed to unlink proxy from 9Router");
+  }
+  return response.json();
+}
+
+export async function pushProxyToRouter(proxyKey: string, password?: string): Promise<{ ok: boolean; remoteId?: string }> {
+  const response = await fetch("/api/proxies/push-router", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: authHeaders(password),
+    body: JSON.stringify({ proxyKey }),
+  });
+  if (response.status === 401) throw new Error("Wrong control password");
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error || "Failed to push proxy to 9Router");
+  }
+  return response.json();
+}
+
+export async function hardDeleteProxy(key: string, force = false, password?: string): Promise<{ ok: boolean; deleted: boolean }> {
+  const query = new URLSearchParams({ key, force: String(force) });
+  const response = await fetch(`/api/proxies/hard-delete?${query.toString()}`, {
+    method: "DELETE",
+    credentials: "same-origin",
+    headers: authHeaders(password),
+  });
+  if (response.status === 401) throw new Error("Wrong control password");
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error || "Failed to delete proxy");
+  }
+  return response.json();
+}
+
+export async function triggerUnifiedSync(password?: string): Promise<{ started: boolean; error?: string }> {
+  const response = await fetch("/api/ninerouter/sync-all", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: authHeaders(password),
+  });
+  if (response.status === 401) throw new Error("Wrong control password");
+  return response.json();
+}
+
+export async function triggerOptimizeAccountsBySpeed(password?: string): Promise<{ ok: boolean; updated?: number }> {
+  const response = await fetch("/api/antigravity/optimize-by-speed", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: authHeaders(password),
+  });
+  if (response.status === 401) throw new Error("Wrong control password");
+  return response.json();
+}

@@ -8,8 +8,9 @@ import { getSettingsSecrets, getSettingsPublic, onSettingsChange, updateSettings
 import { logActivity, logActivityThrottled } from "./activity-log.js";
 import { createPoolRanker, PoolConflictError } from "./pool-ranker.js";
 import { createAntigravityRotator } from "./antigravity-rotator.js";
+import { createUnifiedSyncCoordinator } from "./unified-sync-coordinator.js";
 import { clearNineRouterSession, nineRouterConfigured, testNineRouterConnection } from "./nine-router-client.js";
-import { bulkSetActive, listPools, testPool } from "./nine-router-client.js";
+import { bulkSetActive, listPools, testPool, createPool, deletePool } from "./nine-router-client.js";
 import { openProxyIntelligenceDb } from "./proxy-intelligence-db.js";
 import { createProxyIntelligenceRepository } from "./proxy-intelligence-repository.js";
 import { createFleetRepository } from "../proxyfleet/db.js";
@@ -48,13 +49,21 @@ const handleFleetApi = createFleetApiHandler({
   repo: fleetRepo,
   verifyAuth: verifyControlPassword,
 });
-const poolRanker = createPoolRanker({ dataDir });
+const poolRanker = createPoolRanker({
+  dataDir,
+  onSoftDelete: (key, err) => proxyIntelligenceRepo.softDeleteFromRouter(key, err),
+  onTestResult: (key, ok, lat, err) => proxyIntelligenceRepo.recordTestResult(key, ok, lat, err),
+});
 const antigravityRotator = createAntigravityRotator({
   dataDir,
   getUsableProxies: () =>
     Object.values(poolRanker.readState().pools)
       .filter((p) => p.status === "usable" && Boolean(p.remoteId))
       .map((p) => ({ remoteId: p.remoteId!, name: p.name })),
+});
+const unifiedSyncCoordinator = createUnifiedSyncCoordinator({
+  poolRanker,
+  antigravityRotator,
 });
 
 function auth(request: http.IncomingMessage): boolean {
@@ -211,6 +220,14 @@ async function handleNineRouter(request: http.IncomingMessage, response: http.Se
     }
 
   }
+  if (request.method === "POST" && pathname === "/api/ninerouter/sync-all") {
+    try {
+      const report = await unifiedSyncCoordinator.runUnifiedSyncCycle({ force: true });
+      return json(response, report, report.started ? 200 : 409);
+    } catch (err) {
+      return json(response, { error: (err as Error).message }, 500);
+    }
+  }
 
   return json(response, { error: "not found" }, 404);
 }
@@ -225,6 +242,14 @@ async function handleAntigravity(request: http.IncomingMessage, response: http.S
       return json(response, { started: true, snapshot });
     } catch (err) {
       return json(response, { started: false, error: (err as Error).message }, 500);
+    }
+  }
+  if (request.method === "POST" && pathname === "/api/antigravity/optimize-by-speed") {
+    try {
+      const result = await antigravityRotator.optimizeSpeed();
+      return json(response, { ok: true, ...result });
+    } catch (err) {
+      return json(response, { ok: false, error: (err as Error).message }, 500);
     }
   }
   return json(response, { error: "not found" }, 404);
@@ -570,6 +595,93 @@ async function handleProxiesUnified(request: http.IncomingMessage, response: htt
     })) : [];
 
     return json(response, { history });
+  }
+
+  if (request.method === "POST" && pathname === "/api/proxies/pin") {
+    const body = (await readBody(request, 100_000).catch(() => ({}))) as Record<string, unknown>;
+    const proxyKey = typeof body.proxyKey === "string" ? body.proxyKey : "";
+    const isPinned = Boolean(body.isPinned);
+    if (!proxyKey) return json(response, { error: "proxyKey is required" }, 400);
+    try {
+      await proxyIntelligenceRepo.setPin(proxyKey, isPinned);
+      return json(response, { proxyKey, isPinned });
+    } catch (err) {
+      return json(response, { error: (err as Error).message }, 500);
+    }
+  }
+
+  if (request.method === "POST" && pathname === "/api/proxies/tags") {
+    const body = (await readBody(request, 100_000).catch(() => ({}))) as Record<string, unknown>;
+    const proxyKey = typeof body.proxyKey === "string" ? body.proxyKey : "";
+    const tags = Array.isArray(body.tags) ? body.tags.map(String) : [];
+    if (!proxyKey) return json(response, { error: "proxyKey is required" }, 400);
+    try {
+      await proxyIntelligenceRepo.updateTags(proxyKey, tags);
+      return json(response, { proxyKey, tags });
+    } catch (err) {
+      return json(response, { error: (err as Error).message }, 500);
+    }
+  }
+
+  if (request.method === "POST" && pathname === "/api/proxies/unlink-router") {
+    const body = (await readBody(request, 100_000).catch(() => ({}))) as Record<string, unknown>;
+    const proxyKey = typeof body.proxyKey === "string" ? body.proxyKey : "";
+    if (!proxyKey) return json(response, { error: "proxyKey is required" }, 400);
+    const row = proxyIntelligenceDb.get<{ remote_id: string | null }>(
+      "SELECT remote_id FROM proxies WHERE proxy_key = ?",
+      [proxyKey]
+    );
+    if (!row) return json(response, { error: "Proxy not found" }, 404);
+    try {
+      if (row.remote_id) {
+        await deletePool(row.remote_id).catch(() => {});
+      }
+      await proxyIntelligenceRepo.softDeleteFromRouter(proxyKey, "Unlinked by user");
+      return json(response, { ok: true, proxyKey, routerState: "removed" });
+    } catch (err) {
+      return json(response, { error: (err as Error).message }, 500);
+    }
+  }
+
+  if (request.method === "POST" && pathname === "/api/proxies/push-router") {
+    const body = (await readBody(request, 100_000).catch(() => ({}))) as Record<string, unknown>;
+    const proxyKey = typeof body.proxyKey === "string" ? body.proxyKey : "";
+    if (!proxyKey) return json(response, { error: "proxyKey is required" }, 400);
+    const row = proxyIntelligenceDb.get<{ endpoint: string; protocol: string; remote_id: string | null }>(
+      "SELECT endpoint, protocol, remote_id FROM proxies WHERE proxy_key = ?",
+      [proxyKey]
+    );
+    if (!row) return json(response, { error: "Proxy not found" }, 404);
+    try {
+      const created = await createPool({
+        name: row.endpoint,
+        proxyUrl: `${row.protocol}://${row.endpoint}`,
+        type: row.protocol,
+        isActive: false,
+      });
+      proxyIntelligenceDb.run(
+        "UPDATE proxies SET remote_id = ?, router_state = 'reserve', updated_at = ? WHERE proxy_key = ?",
+        [created.id, Date.now(), proxyKey]
+      );
+      return json(response, { ok: true, proxyKey, remoteId: created.id, routerState: "reserve" });
+    } catch (err) {
+      return json(response, { error: (err as Error).message }, 500);
+    }
+  }
+
+  if (request.method === "DELETE" && (pathname === "/api/proxies/hard-delete" || pathname === "/api/proxies")) {
+    const key = parsedUrl.searchParams.get("key") || "";
+    const force = parsedUrl.searchParams.get("force") === "true";
+    if (!key) return json(response, { error: "key is required" }, 400);
+    try {
+      const res = await proxyIntelligenceRepo.hardDeleteProxy(key, force);
+      if (res.remoteId) {
+        await deletePool(res.remoteId).catch(() => {});
+      }
+      return json(response, { ok: true, deleted: res.deleted });
+    } catch (err) {
+      return json(response, { error: (err as Error).message }, 400);
+    }
   }
 
   return json(response, { error: "not found" }, 404);
