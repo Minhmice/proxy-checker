@@ -126,6 +126,6 @@ Acceptance scenario:
 
 - No change to `/api/ninerouter/pools` read-path behavior.
 - No change to unified sync or Antigravity concurrency.
-- No automatic retry, rollback, restart, or circuit breaker.
+- No new automatic redeployment, rollback, restart, or circuit breaker. Delivery retry of an already-completed deployment result uses the existing agent cycle as specified above.
 - No inference that applied revision means proxy connectivity is healthy.
 - No broad UI redesign outside the three fleet surfaces named above.
