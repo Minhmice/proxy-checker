@@ -20,12 +20,13 @@ Heartbeat liveness is not proof that the 3proxy data plane applied the desired c
 
 ## Scope and State Model
 
-Add configuration convergence fields to the fleet node contract:
+Add configuration convergence fields to fleet node storage, exposing the nested API view described below:
 
 - `applied_revision: number | null`
 - `deployment_status: "pending" | "applied" | "failed" | "unknown"`
 - `deployment_error: string | null`
 - `deployment_updated_at: number | null`
+- `deployment_revision: number | null` records the latest reported revision watermark independently of the successful applied revision.
 - `desired_revision` remains the controller-owned target revision.
 
 Keep `fleet_nodes.status` exclusively for agent liveness (`online`, `offline`, `degraded` as currently derived). The UI MUST label the axes distinctly:
@@ -93,9 +94,9 @@ This does not prove runtime availability: the current agent reports `applied` af
 ## Error Handling and Security
 
 - Preserve node-scoped agent authentication and do not log bearer tokens or proxy credentials.
-- Validate node ID, numeric positive revision, status enum, and bounded string lengths at the deployment-result boundary.
+- Validate `nodeId` as a nonempty string of at most 128 characters matching the authenticated existing node; `revision` as a positive safe integer no greater than desired revision; `status` as exactly `applied` or `failed`; `configDigest` as a string of at most 128 characters (empty is allowed for render failure); and optional `errorMessage` as a string of at most 2,048 characters. Store/display errors as text, never HTML; prohibit bearer/proxy credentials in agent error construction.
 - Treat unknown deployment status as a 400 validation error; do not coerce arbitrary values to `applied`.
-- Treat stale results deterministically and make them observable through the API response and an activity/event record only if the existing event model can represent it without mislabeling success.
+- Stale and duplicate results return an acknowledgement without creating a deployment success/failure event; accepted history and event updates use the transaction specified above.
 - Deployment convergence is configuration evidence, not a replacement for proxy health checks or heartbeat liveness.
 
 ## Testing and Acceptance
@@ -108,7 +109,9 @@ Permanent tests MUST cover:
 4. A stale result cannot move current state backward or replace a newer failure/success.
 5. Invalid status/revision/node input is rejected without persistence changes.
 6. Node and node-detail API responses expose the nested configuration contract.
-7. UI rendering distinguishes Agent Online from Configuration Failed/Pending/Unknown.
+7. Agent report delivery survives controller request failure and agent restart; acknowledged retry does not re-apply configuration and does not duplicate history/events.
+8. Same-revision success supersedes failure; same-revision delayed failure cannot supersede success. Older applied evidence while a newer target is outstanding remains Pending, never Applied.
+9. UI smoke verification renders Agent Online alongside Configuration Failed/Pending/Unknown at desktop and mobile widths; this is behavior proof, not a source-text assertion test.
 
 Acceptance scenario:
 
