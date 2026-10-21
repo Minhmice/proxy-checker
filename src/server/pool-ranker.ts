@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { DetailedDiagnosticResult, ParsedProxy, PoolRecord, PoolStats, RemoteState, TestState } from "../lib/types.js";
+import type { DetailedDiagnosticResult, PoolRecord, PoolStats, RemoteState, TestState } from "../lib/types.js";
 import { getSettingsSecrets } from "./app-config.js";
 import { getActivitySnapshot, logActivity, logActivityThrottled, resetSyncProgress, setSyncProgress } from "./activity-log.js";
 import { createMetricsHistory } from "./metrics-history.js";
@@ -14,7 +14,7 @@ import {
   setPoolActive as defaultSetPoolActive,
   testPool as defaultTestPool,
   updatePool as defaultUpdatePool,
-  renamePool as defaultRenamePool,
+  renamePool,
 } from "./nine-router-client.js";
 import { parseProxy } from "./proxy-core.js";
 
@@ -35,6 +35,7 @@ export interface PoolRankerDeps {
   updatePool: typeof defaultUpdatePool;
   testPool: typeof defaultTestPool;
   renamePool?: (id: string, name: string) => Promise<unknown> | unknown;
+  unbindConnectionsFromPool?: (remoteId: string) => Promise<void>;
   onSoftDelete?: (proxyKey: string, error?: string) => Promise<void> | void;
   onTestResult?: (proxyKey: string, ok: boolean, latencyMs?: number, error?: string) => Promise<void> | void;
   checkProxy?: unknown;
@@ -490,8 +491,7 @@ export function createPoolRanker(
                 logActivity("warn", `Deactivate failed before delete for ${pool.name}: ${(err as Error).message}`);
               });
 
-              try {
-                await deps.deletePool(pool.remoteId);
+              const markRemoved = async () => {
                 mutatePool(localId, (t) => {
                   t.remoteId = null;
                   t.remoteState = "removed";
@@ -505,30 +505,34 @@ export function createPoolRanker(
                   t.remoteTestStatus = "failed";
                   t.failures += 1;
                 });
-                if (deps.onSoftDelete) {
-                  try {
-                    await deps.onSoftDelete(pool.proxyUrl || localId, errMsg);
-                  } catch {}
-                }
-                if (deps.onTestResult) {
-                  try {
-                    await deps.onTestResult(pool.proxyUrl || localId, false, undefined, errMsg);
-                  } catch {}
-                }
+                if (deps.onSoftDelete) await Promise.resolve(deps.onSoftDelete(pool.proxyUrl || localId, errMsg)).catch(() => {});
+                if (deps.onTestResult) await Promise.resolve(deps.onTestResult(pool.proxyUrl || localId, false, undefined, errMsg)).catch(() => {});
+              };
+
+              try {
+                await deps.deletePool(pool.remoteId);
+                await markRemoved();
                 logActivity("info", `Removed dead proxy ${pool.name} (${localId}) from 9Router; kept locally`);
               } catch (delErr) {
+                let finalDeleteError: unknown = delErr;
                 const status = delErr && typeof delErr === "object" && "status" in delErr ? delErr.status : undefined;
-                if (status === 404) {
-                  mutatePool(localId, (t) => {
-                    t.remoteId = null;
-                    t.remoteState = "removed";
-                    t.tier = "removed";
-                    t.isActiveOnRouter = false;
-                    t.testState = "idle";
-                    t.healthStatus = "done";
-                    t.status = "dead";
-                    t.last_error = errMsg;
-                  });
+                if (status === 409 && deps.unbindConnectionsFromPool) {
+                  try {
+                    await deps.unbindConnectionsFromPool(pool.remoteId);
+                    await deps.deletePool(pool.remoteId);
+                    await markRemoved();
+                    logActivity("info", `Unbound and removed dead proxy ${pool.name} (${localId}) from 9Router; kept locally`);
+                    continue;
+                  } catch (retryErr) {
+                    finalDeleteError = retryErr;
+                  }
+                }
+
+                const finalStatus = finalDeleteError && typeof finalDeleteError === "object" && "status" in finalDeleteError
+                  ? finalDeleteError.status
+                  : undefined;
+                if (finalStatus === 404) {
+                  await markRemoved();
                 } else {
                   mutatePool(localId, (t) => {
                     t.remoteState = "delete_failed";
@@ -537,7 +541,7 @@ export function createPoolRanker(
                     t.testState = "idle";
                     t.healthStatus = "done";
                     t.status = "dead";
-                    t.last_error = (delErr as Error).message;
+                    t.last_error = finalDeleteError instanceof Error ? finalDeleteError.message : String(finalDeleteError);
                   });
                 }
               }

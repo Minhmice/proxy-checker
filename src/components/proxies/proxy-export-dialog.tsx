@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { AlertTriangle, Download, Loader2, ShieldAlert } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Download, Loader2, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -13,6 +13,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@/components/ui/toggle-group";
 
 export interface ProxyExportDialogProps {
   open: boolean;
@@ -33,11 +37,17 @@ export function ProxyExportDialog({
   totalFiltered,
   onExport,
 }: ProxyExportDialogProps) {
+  // ponytail: ToggleGroup single-select covers txt/csv and filtered/selected without custom radio machinery. Upgrade to full presets if multi-destination export is added.
   const [scope, setScope] = useState<"filtered" | "selected">(selectedCount > 0 ? "selected" : "filtered");
   const [format, setFormat] = useState<"txt" | "csv">("txt");
   const [includeCredentials, setIncludeCredentials] = useState(false);
   const [exporting, setExporting] = useState(false);
 
+  useEffect(() => {
+    if (selectedCount === 0 && scope === "selected") {
+      setScope("filtered");
+    }
+  }, [selectedCount, scope]);
   const handleExecuteExport = async () => {
     setExporting(true);
     try {
@@ -48,7 +58,7 @@ export function ProxyExportDialog({
       });
       onOpenChange(false);
     } catch (err) {
-      toast.error((err as Error).message);
+      toast.error((err as Error).message || "Export failed");
     } finally {
       setExporting(false);
     }
@@ -56,8 +66,8 @@ export function ProxyExportDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md bg-card border-border/80">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-md max-h-[90vh] flex flex-col p-6 overflow-hidden bg-card border-border/80">
+        <DialogHeader className="shrink-0">
           <DialogTitle className="text-sm font-bold font-mono flex items-center gap-2">
             <Download className="h-4 w-4 text-primary" />
             <span>Export Proxies</span>
@@ -67,80 +77,82 @@ export function ProxyExportDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 py-2 text-xs">
+        <div className="overflow-y-auto min-h-0 space-y-4 py-2 text-xs pr-1">
           {/* Scope Selector */}
           <div className="space-y-1.5">
-            <label className="text-[11px] font-semibold text-muted-foreground uppercase">
+            <label id="export-scope-label" className="text-[11px] font-semibold text-muted-foreground uppercase">
               Export Scope
             </label>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setScope("filtered")}
-                className={`p-2.5 rounded-lg border text-left cursor-pointer transition-colors ${
-                  scope === "filtered"
-                    ? "border-primary bg-primary/10 text-foreground"
-                    : "border-border/60 bg-surface/50 text-muted-foreground hover:bg-surface"
-                }`}
+            <ToggleGroup
+              type="single"
+              value={selectedCount > 0 ? scope : "filtered"}
+              onValueChange={(val) => {
+                if (val === "filtered" || val === "selected") {
+                  setScope(val);
+                }
+              }}
+              aria-labelledby="export-scope-label"
+              className="grid grid-cols-2 gap-2 w-full"
+            >
+              <ToggleGroupItem
+                value="filtered"
+                aria-label={`Current Filters (${totalFiltered.toLocaleString()} matching)`}
+                className="h-auto min-h-[44px] p-2.5 rounded-lg border text-left flex flex-col items-start justify-start transition-colors data-[state=on]:border-primary data-[state=on]:bg-primary/10 data-[state=on]:text-foreground data-[state=off]:border-border/60 data-[state=off]:bg-surface/50 data-[state=off]:text-muted-foreground hover:bg-surface cursor-pointer"
               >
                 <div className="font-semibold text-xs text-foreground">Current Filters</div>
                 <div className="text-[11px] text-muted-foreground mt-0.5">
                   All {totalFiltered.toLocaleString()} matching
                 </div>
-              </button>
+              </ToggleGroupItem>
 
-              <button
-                type="button"
-                onClick={() => setScope("selected")}
+              <ToggleGroupItem
+                value="selected"
                 disabled={selectedCount === 0}
-                className={`p-2.5 rounded-lg border text-left transition-colors ${
-                  selectedCount === 0
-                    ? "opacity-50 cursor-not-allowed border-border/40 bg-surface/20"
-                    : scope === "selected"
-                    ? "border-primary bg-primary/10 text-foreground cursor-pointer"
-                    : "border-border/60 bg-surface/50 text-muted-foreground hover:bg-surface cursor-pointer"
-                }`}
+                aria-label={`Selected Only (${selectedCount.toLocaleString()} selected)`}
+                className="h-auto min-h-[44px] p-2.5 rounded-lg border text-left flex flex-col items-start justify-start transition-colors data-[state=on]:border-primary data-[state=on]:bg-primary/10 data-[state=on]:text-foreground data-[state=off]:border-border/60 data-[state=off]:bg-surface/50 data-[state=off]:text-muted-foreground hover:bg-surface disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-surface/20 disabled:border-border/40"
               >
                 <div className="font-semibold text-xs text-foreground">Selected Only</div>
                 <div className="text-[11px] text-muted-foreground mt-0.5">
                   {selectedCount.toLocaleString()} selected
                 </div>
-              </button>
-            </div>
+              </ToggleGroupItem>
+            </ToggleGroup>
           </div>
 
           {/* Format Selector */}
           <div className="space-y-1.5">
-            <label className="text-[11px] font-semibold text-muted-foreground uppercase">
+            <label id="export-format-label" className="text-[11px] font-semibold text-muted-foreground uppercase">
               File Format
             </label>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setFormat("txt")}
-                className={`p-2.5 rounded-lg border text-left cursor-pointer transition-colors ${
-                  format === "txt"
-                    ? "border-primary bg-primary/10 text-foreground"
-                    : "border-border/60 bg-surface/50 text-muted-foreground hover:bg-surface"
-                }`}
+            <ToggleGroup
+              type="single"
+              value={format}
+              onValueChange={(val) => {
+                if (val === "txt" || val === "csv") {
+                  setFormat(val);
+                }
+              }}
+              aria-labelledby="export-format-label"
+              className="grid grid-cols-2 gap-2 w-full"
+            >
+              <ToggleGroupItem
+                value="txt"
+                aria-label="Plain Text (.txt)"
+                className="h-auto min-h-[44px] p-2.5 rounded-lg border text-left flex flex-col items-start justify-start transition-colors data-[state=on]:border-primary data-[state=on]:bg-primary/10 data-[state=on]:text-foreground data-[state=off]:border-border/60 data-[state=off]:bg-surface/50 data-[state=off]:text-muted-foreground hover:bg-surface cursor-pointer"
               >
                 <div className="font-semibold text-xs text-foreground font-mono">Plain Text (.txt)</div>
                 <div className="text-[11px] text-muted-foreground mt-0.5">protocol://host:port lines</div>
-              </button>
+              </ToggleGroupItem>
 
-              <button
-                type="button"
-                onClick={() => setFormat("csv")}
-                className={`p-2.5 rounded-lg border text-left cursor-pointer transition-colors ${
-                  format === "csv"
-                    ? "border-primary bg-primary/10 text-foreground"
-                    : "border-border/60 bg-surface/50 text-muted-foreground hover:bg-surface"
-                }`}
+              <ToggleGroupItem
+                value="csv"
+                aria-label="CSV (.csv)"
+                className="h-auto min-h-[44px] p-2.5 rounded-lg border text-left flex flex-col items-start justify-start transition-colors data-[state=on]:border-primary data-[state=on]:bg-primary/10 data-[state=on]:text-foreground data-[state=off]:border-border/60 data-[state=off]:bg-surface/50 data-[state=off]:text-muted-foreground hover:bg-surface cursor-pointer"
               >
                 <div className="font-semibold text-xs text-foreground font-mono">CSV (.csv)</div>
                 <div className="text-[11px] text-muted-foreground mt-0.5">Structured spreadsheet rows</div>
-              </button>
-            </div>
+              </ToggleGroupItem>
+            </ToggleGroup>
           </div>
 
           {/* Credentials Checkbox */}
@@ -179,7 +191,7 @@ export function ProxyExportDialog({
           </div>
         </div>
 
-        <DialogFooter className="gap-2 sm:gap-0">
+        <DialogFooter className="shrink-0 gap-2 sm:gap-0 pt-2 border-t border-border/40">
           <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} className="text-xs">
             Cancel
           </Button>

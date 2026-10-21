@@ -5,16 +5,25 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"proxyfleet/agent/internal/controller"
+	"proxyfleet/agent/internal/wireguard"
 )
 
 type State struct {
-	ServerURL            string `json:"server_url"`
-	NodeID               string `json:"node_id"`
-	NodeName             string `json:"node_name"`
-	WireGuardIP          string `json:"wireguard_ip"`
-	WireGuardPublicKey   string `json:"wireguard_public_key"`
-	WireGuardPrivateKey  string `json:"wireguard_private_key"`
-	LastRevision         int64  `json:"last_revision"`
+	ServerURL                string                              `json:"server_url"`
+	NodeID                   string                              `json:"node_id"`
+	NodeName                 string                              `json:"node_name"`
+	WireGuardIP              string                              `json:"wireguard_ip"`
+	WireGuardPublicKey       string                              `json:"wireguard_public_key"`
+	WireGuardPrivateKey      string                              `json:"wireguard_private_key"`
+	ServerWireGuardPublicKey string                              `json:"server_wireguard_public_key,omitempty"`
+	ServerWireGuardEndpoint  string                              `json:"server_wireguard_endpoint,omitempty"`
+	AgentToken               string                              `json:"agent_token"`
+	AgentVersion             string                              `json:"agent_version,omitempty"`
+	LastRevision             int64                               `json:"last_revision"`
+	PendingReport            *controller.DeploymentResultRequest `json:"pending_report,omitempty"`
+	WireGuard                *wireguard.Desired                  `json:"wireguard,omitempty"`
 }
 
 type Manager struct {

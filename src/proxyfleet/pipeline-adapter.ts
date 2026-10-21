@@ -48,7 +48,7 @@ export async function syncFleetEndpointsToIntelligence(
   const endpoints = await fleetRepo.listEndpoints({ enabled: true });
   if (endpoints.length === 0) return 0;
 
-  const lines: string[] = [];
+  const rows: Array<{ nodeId: string; endpointId: string; proxyUrl: string }> = [];
   for (const ep of endpoints) {
     const creds = await fleetRepo.getEndpointCredentials(ep.id);
     const username = creds?.username || ep.username;
@@ -56,15 +56,17 @@ export async function syncFleetEndpointsToIntelligence(
 
     let authPart = "";
     if (username) {
-      authPart = password ? `${username}:${password}@` : `${username}@`;
+      authPart = password
+        ? `${encodeURIComponent(username)}:${encodeURIComponent(password)}@`
+        : `${encodeURIComponent(username)}@`;
     }
-    lines.push(`${ep.protocol}://${authPart}${ep.listen_ip}:${ep.listen_port}`);
+    const proxyUrl = `${ep.protocol}://${authPart}${ep.listen_ip}:${ep.listen_port}`;
+    rows.push({
+      nodeId: ep.node_id,
+      endpointId: ep.id,
+      proxyUrl,
+    });
   }
 
-  const summary = await intelRepo.importProxies({
-    source: "proxyfleet",
-    content: lines.join("\n"),
-  });
-
-  return summary.inserted + summary.updated;
+  return await intelRepo.syncManagedFleetEndpoints(rows);
 }

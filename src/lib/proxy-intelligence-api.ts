@@ -61,30 +61,32 @@ export async function fetchIntelligenceProxies(
   if (filter.pageSize) query.set("pageSize", String(filter.pageSize));
 
   const url = `/api/intelligence/proxies?${query.toString()}`;
-  const response = await fetch(url, {
-    cache: "no-store",
-    signal,
-    credentials: "same-origin",
-    headers: authHeaders(password),
-  }).catch((err) => {
-    if (isAbortError(err)) return null;
+  const emptyPage: ProxyInventoryPage = {
+    items: [],
+    page: 1,
+    pageSize: 50,
+    total: 0,
+  };
+  try {
+    const response = await fetch(url, {
+      cache: "no-store",
+      signal,
+      credentials: "same-origin",
+      headers: authHeaders(password),
+    });
+    if (signal?.aborted) return emptyPage;
+    if (!response.ok) {
+      throw new Error(response.status === 401 ? "Wrong control password" : "Failed to load proxies");
+    }
+    const data = await response.json();
+    if (signal?.aborted) return emptyPage;
+    return data as ProxyInventoryPage;
+  } catch (err: unknown) {
+    if (signal?.aborted || isAbortError(err)) {
+      return emptyPage;
+    }
     throw err;
-  });
-
-  if (!response) {
-    return {
-      items: [],
-      page: 1,
-      pageSize: 50,
-      total: 0,
-    };
   }
-
-  if (!response.ok) {
-    throw new Error(response.status === 401 ? "Wrong control password" : "Failed to load proxies");
-  }
-
-  return response.json() as Promise<ProxyInventoryPage>;
 }
 
 export async function fetchIntelligenceProxyDetail(
@@ -106,19 +108,24 @@ export async function fetchIntelligenceProxyDetail(
   }
 
   const url = `/api/intelligence/proxies/${encodeURIComponent(proxyKey)}`;
-  const response = await fetch(url, {
-    cache: "no-store",
-    signal,
-    credentials: "same-origin",
-    headers: authHeaders(password),
-  });
-
-  if (!response.ok) {
-    throw new Error(response.status === 401 ? "Wrong control password" : "Proxy detail unavailable");
+  try {
+    const response = await fetch(url, {
+      cache: "no-store",
+      signal,
+      credentials: "same-origin",
+      headers: authHeaders(password),
+    });
+    if (signal?.aborted) return {} as ProxyInventoryDetail;
+    if (!response.ok) {
+      throw new Error(response.status === 401 ? "Wrong control password" : "Proxy detail unavailable");
+    }
+    const data = (await response.json()) as { proxy: ProxyInventoryDetail };
+    if (signal?.aborted) return {} as ProxyInventoryDetail;
+    return data.proxy;
+  } catch (err: unknown) {
+    if (signal?.aborted || isAbortError(err)) return {} as ProxyInventoryDetail;
+    throw err;
   }
-
-  const data = (await response.json()) as { proxy: ProxyInventoryDetail };
-  return data.proxy;
 }
 
 export async function importIntelligenceProxies(
@@ -237,37 +244,36 @@ export async function fetchIntelligenceJob(
     if (arg2 instanceof AbortSignal) signal = arg2;
   }
 
-  const response = await fetch(`/api/intelligence/jobs/${encodeURIComponent(id)}`, {
-    cache: "no-store",
-    signal,
-    credentials: "same-origin",
-    headers: authHeaders(password),
-  }).catch((err) => {
-    if (isAbortError(err)) return null;
+  const emptyJob: IntelligenceJob = {
+    id,
+    status: "cancelled",
+    total: 0,
+    checked: 0,
+    passCount: 0,
+    warnCount: 0,
+    failCount: 0,
+    unknownCount: 0,
+    startedAt: null,
+    finishedAt: null,
+  };
+  try {
+    const response = await fetch(`/api/intelligence/jobs/${encodeURIComponent(id)}`, {
+      cache: "no-store",
+      signal,
+      credentials: "same-origin",
+      headers: authHeaders(password),
+    });
+    if (signal?.aborted) return emptyJob;
+    const data = await response.json();
+    if (signal?.aborted) return emptyJob;
+    if (!response.ok) {
+      throw new Error(data.error || "Job unavailable");
+    }
+    return data.job as IntelligenceJob;
+  } catch (err: unknown) {
+    if (signal?.aborted || isAbortError(err)) return emptyJob;
     throw err;
-  });
-
-  if (!response) {
-    return {
-      id,
-      status: "cancelled",
-      total: 0,
-      checked: 0,
-      passCount: 0,
-      warnCount: 0,
-      failCount: 0,
-      unknownCount: 0,
-      startedAt: null,
-      finishedAt: null,
-    };
   }
-
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error || "Job unavailable");
-  }
-
-  return data.job as IntelligenceJob;
 }
 export async function cancelIntelligenceJob(
   arg1: string,
@@ -297,21 +303,22 @@ export async function fetchIntelligenceJobs(
   const signal = arg1 instanceof AbortSignal ? arg1 : arg2;
   const password = typeof arg1 === "string" ? arg1 : undefined;
 
-  const response = await fetch("/api/intelligence/jobs", {
-    cache: "no-store",
-    signal,
-    credentials: "same-origin",
-    headers: authHeaders(password),
-  }).catch((err) => {
-    if (isAbortError(err)) return null;
+  try {
+    const response = await fetch("/api/intelligence/jobs", {
+      cache: "no-store",
+      signal,
+      credentials: "same-origin",
+      headers: authHeaders(password),
+    });
+    if (signal?.aborted) return [];
+    const data = await response.json();
+    if (signal?.aborted || !data) return [];
+    if (!response.ok) {
+      throw new Error(data.error || "Jobs unavailable");
+    }
+    return (data.jobs || []) as IntelligenceJob[];
+  } catch (err: unknown) {
+    if (signal?.aborted || isAbortError(err)) return [];
     throw err;
-  });
-
-  if (!response) return [];
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error || "Jobs unavailable");
   }
-
-  return (data.jobs || []) as IntelligenceJob[];
 }

@@ -115,6 +115,36 @@ test("sync preserves remote pool and active truth on reported 9Router transport 
   assert.equal(state.status, "usable");
 });
 
+test("sync unbinds accounts before retrying a pool delete blocked by usage", async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "sync-unbind-delete-"));
+  const pool = record("local-bound", 8003);
+  fs.writeFileSync(path.join(dataDir, "pool-state.json"), JSON.stringify({
+    pools: { [pool.localId]: pool }, lastSyncAt: null,
+    stats: { total: 1, active: 1, reserve: 0, dead: 0 }, lastError: "",
+  }));
+  let deleteAttempts = 0;
+  const unbound: string[] = [];
+  const ranker = createPoolRanker({ dataDir }, {
+    listPools: async () => [{ id: pool.remoteId!, name: pool.name, proxyUrl: pool.proxyUrl, type: "http", isActive: true }],
+    testPool: async () => ({ ok: false, error: "Proxy test timed out" }),
+    setPoolActive: async () => ({}),
+    deletePool: async () => {
+      deleteAttempts += 1;
+      if (deleteAttempts === 1) throw Object.assign(new Error("Proxy pool is currently in use"), { status: 409 });
+    },
+    unbindConnectionsFromPool: async (remoteId: string) => { unbound.push(remoteId); },
+    bulkSetActive: async () => [],
+    checkProxy: async () => { throw new Error("local checker must not be called during sync"); },
+  } as unknown as Partial<PoolRankerDeps>);
+
+  await ranker.syncPools({ force: true });
+  const state = ranker.readState().pools[pool.localId];
+  assert.equal(deleteAttempts, 2);
+  assert.deepEqual(unbound, [pool.remoteId]);
+  assert.equal(state.remoteState, "removed");
+  assert.equal(state.remoteId, null);
+});
+
 test("sync renames usable pools by ascending latency and keeps going after one rename fails", async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "sync-auto-rank-"));
   const remotePools = [

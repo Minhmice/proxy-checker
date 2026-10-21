@@ -1,3 +1,4 @@
+import type { FleetWireGuardSettings } from "../proxyfleet/wireguard.js";
 export type AuditVerdict = "PASS" | "WARN" | "FAIL" | "UNKNOWN";
 export type ProbeStatus = "PASS" | "WARN" | "FAIL" | "UNKNOWN" | "UNSUPPORTED" | "SKIPPED" | "ERROR";
 
@@ -100,9 +101,10 @@ export interface UnifiedProxyHistoryEntry {
   status: "passed" | "failed";
   exitIp: string | null;
   isp: string | null;
-  udp: "Yes" | "No";
+  udp: "Yes" | "No" | "Unknown";
   latencyMs: number | null;
   timestamp: number;
+  errorMessage: string | null;
 }
 
 
@@ -226,6 +228,7 @@ export interface AppSettingsPublic {
   antigravityActiveLimit: number;
   antigravityRotateMinutes: number;
   antigravitySessionThreshold: number;
+  fleetWireguard?: FleetWireGuardSettings | null;
 }
 
 export interface SettingsMeta {
@@ -254,6 +257,7 @@ export interface SettingsUpdatePayload {
   antigravityActiveLimit?: number;
   antigravityRotateMinutes?: number;
   antigravitySessionThreshold?: number;
+  fleetWireguard?: FleetWireGuardSettings | null;
 }
 
 export interface NineRouterTestResult {
@@ -275,6 +279,8 @@ export interface AntigravityAccountState {
   proxyHealthy: boolean;
   lastError?: string | null;
   lastCheckedAt: number;
+  turnCount?: number;
+  lastActivatedAt?: number | null;
 }
 
 export interface AntigravityRotatorSnapshot {

@@ -1,7 +1,10 @@
+import { createFleetRuntimeStore, type FleetRuntimeStore } from "./runtime-store.js";
+import type { FleetDeviceInfo, FleetRuntimeSnapshot, FleetCapacitySettings } from "./runtime.js";
 import { DatabaseSync } from "node:sqlite";
 import crypto from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
+import os from "node:os";
 import { encryptSecret, decryptSecret, type EncryptedPayload } from "./security.js";
 import type {
   FleetNodeRecord,
@@ -9,11 +12,20 @@ import type {
   FleetNodeStatus,
   FleetProxyEndpointRecord,
   FleetProxyProtocol,
+  FleetNodeDesiredState,
   FleetHealthCheckRecord,
   FleetHealthStatus,
+  FleetDeploymentRecord,
+  FleetDeploymentStatus,
   FleetEventRecord,
+  FleetConfigurationStatus,
+  FleetNodeConfigurationView,
+  RecordDeploymentResultInput,
+  RecordDeploymentResultOutcome,
+  FleetNodeWithCamel,
+  FleetRemovalRecord,
+  FleetRemovalStatus,
 } from "./types.js";
-
 export interface BootstrapControllerNodeInput {
   id?: string;
   name?: string;
@@ -34,6 +46,7 @@ export interface CreateNodeInput {
   os?: string | null;
   arch?: string | null;
   agentVersion?: string | null;
+  desired_revision?: number;
 }
 
 export interface CreateEndpointInput {
@@ -73,11 +86,7 @@ export interface RecordEventInput {
   payload?: Record<string, unknown>;
 }
 
-export type FleetNodeWithCamel = FleetNodeRecord & {
-  wireguardIp: string;
-  publicIp: string | null;
-  agentVersion: string | null;
-};
+export type { FleetNodeWithCamel } from "./types.js";
 
 export type FleetEndpointWithCamel = FleetProxyEndpointRecord & {
   nodeId: string;
@@ -94,14 +103,24 @@ export type FleetHealthCheckWithCamel = FleetHealthCheckRecord & {
 
 export interface FleetRepository {
   migrate(): Promise<void>;
+  startRuntimeSession(nodeId: string, sessionId: string): Promise<void>;
+  recordNodeDevice(nodeId: string, device: FleetDeviceInfo): Promise<void>;
+  recordNodeRuntime(nodeId: string, runtime: FleetRuntimeSnapshot): Promise<{ accepted: boolean }>;
+  updateNodeCapacity(nodeId: string, capacity: FleetCapacitySettings): Promise<FleetNodeWithCamel>;
+  isOverlayApproved(nodeId: string): boolean;
+  setOverlayApproved(nodeId: string, approved: boolean): void;
+  getApprovedNodeIds(): string[];
   createNode(input: CreateNodeInput): Promise<FleetNodeWithCamel>;
   getNode(id: string): Promise<FleetNodeWithCamel | null>;
   listNodes(filter?: { status?: FleetNodeStatus }): Promise<FleetNodeWithCamel[]>;
+  setNodeAgentToken(nodeId: string, token: string): Promise<void>;
+  verifyNodeAgentToken(nodeId: string, token: string): Promise<boolean>;
   recordHeartbeat(nodeId: string, input: RecordHeartbeatInput): Promise<void>;
   createProxyEndpoint(input: CreateEndpointInput): Promise<FleetEndpointWithCamel>;
   listEndpoints(filter?: { nodeId?: string; enabled?: boolean }): Promise<FleetEndpointWithCamel[]>;
   getEndpoint(id: string): Promise<FleetEndpointWithCamel | null>;
   getEndpointCredentials(endpointId: string): Promise<{ username: string; password: string } | null>;
+  getNodeDesiredState(nodeId: string): Promise<FleetNodeDesiredState | null>;
   updateEndpoint(
     id: string,
     patch: { enabled?: boolean; username?: string; password?: string }
@@ -115,10 +134,30 @@ export interface FleetRepository {
   getNextWireguardIp(): Promise<string>;
   bootstrapControllerNode(input?: BootstrapControllerNodeInput): Promise<FleetNodeWithCamel>;
   close(): void;
+  updateNodeDesiredRevision(nodeId: string, desiredRevision: number): Promise<void>;
+  recordDeploymentResult(input: RecordDeploymentResultInput): Promise<RecordDeploymentResultOutcome>;
+  getNodeDeployments(nodeId: string, limit?: number): Promise<FleetDeploymentRecord[]>;
+  requestNodeRemoval(nodeId: string): Promise<FleetRemovalRecord>;
+  getNodeRemoval(nodeId: string): Promise<FleetRemovalRecord | null>;
+  listPendingNodeRemovals(): Promise<FleetRemovalRecord[]>;
+  recordNodeRemovalError(nodeId: string, message: string): Promise<void>;
+  completeNodeRemoval(nodeId: string): Promise<FleetRemovalRecord>;
+  listEndpointsForNodeRemovalCleanup(nodeId: string): Promise<FleetEndpointWithCamel[]>;
+  enrollNodeAtomic(input: {
+    token: string;
+    nodeName: string;
+    wireguardPublicKey: string;
+    publicIp?: string | null;
+    os?: string | null;
+    arch?: string | null;
+    agentVersion?: string | null;
+    agentToken: string;
+  }): Promise<FleetNodeWithCamel>;
 }
 
 class SqliteFleetRepository implements FleetRepository {
   private db: DatabaseSync;
+  private runtimeStore!: FleetRuntimeStore;
 
   constructor(filePath: string) {
     if (filePath !== ":memory:") {
@@ -142,10 +181,16 @@ class SqliteFleetRepository implements FleetRepository {
         arch TEXT,
         agent_version TEXT,
         last_heartbeat_at INTEGER,
+        desired_revision INTEGER NOT NULL DEFAULT 1,
+        agent_token_hash TEXT,
+        applied_revision INTEGER,
+        deployment_revision INTEGER,
+        deployment_status TEXT NOT NULL DEFAULT 'unknown',
+        deployment_error TEXT,
+        deployment_updated_at INTEGER,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
-
       CREATE TABLE IF NOT EXISTS fleet_node_interfaces (
         id TEXT PRIMARY KEY,
         node_id TEXT NOT NULL REFERENCES fleet_nodes(id) ON DELETE CASCADE,
@@ -238,24 +283,160 @@ class SqliteFleetRepository implements FleetRepository {
         created_at INTEGER NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS fleet_node_removals (
+        node_id TEXT PRIMARY KEY,
+        node_name TEXT NOT NULL,
+        wireguard_ip TEXT NOT NULL,
+        wireguard_public_key TEXT,
+        status TEXT NOT NULL,
+        error_message TEXT,
+        requested_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_fleet_removals_status ON fleet_node_removals(status);
+
       CREATE INDEX IF NOT EXISTS idx_fleet_endpoints_node ON fleet_proxy_endpoints(node_id);
       CREATE INDEX IF NOT EXISTS idx_fleet_health_endpoint ON fleet_health_checks(endpoint_id, checked_at DESC);
       CREATE INDEX IF NOT EXISTS idx_fleet_events_created ON fleet_events(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_fleet_deployments_node ON fleet_deployments(node_id, revision DESC);
     `);
-    try {
+    const columns = this.db.prepare("PRAGMA table_info(fleet_nodes)").all() as Array<{ name: string; type: string }>;
+    const columnNames = new Set(columns.map((c) => c.name));
+
+    if (!columnNames.has("role")) {
       this.db.exec("ALTER TABLE fleet_nodes ADD COLUMN role TEXT NOT NULL DEFAULT 'worker';");
-    } catch {
-      // column already exists
     }
+
+    if (!columnNames.has("agent_token_hash")) {
+      this.db.exec("ALTER TABLE fleet_nodes ADD COLUMN agent_token_hash TEXT;");
+    }
+    if (!columnNames.has("applied_revision")) {
+      this.db.exec("ALTER TABLE fleet_nodes ADD COLUMN applied_revision INTEGER;");
+    }
+    if (!columnNames.has("deployment_revision")) {
+      this.db.exec("ALTER TABLE fleet_nodes ADD COLUMN deployment_revision INTEGER;");
+    }
+    if (!columnNames.has("deployment_status")) {
+      this.db.exec("ALTER TABLE fleet_nodes ADD COLUMN deployment_status TEXT NOT NULL DEFAULT 'unknown';");
+    }
+    if (!columnNames.has("deployment_error")) {
+      this.db.exec("ALTER TABLE fleet_nodes ADD COLUMN deployment_error TEXT;");
+    }
+    if (!columnNames.has("deployment_updated_at")) {
+      this.db.exec("ALTER TABLE fleet_nodes ADD COLUMN deployment_updated_at INTEGER;");
+    }
+
+    if (!columnNames.has("desired_revision")) {
+      this.db.exec("BEGIN IMMEDIATE;");
+      try {
+        this.db.exec("ALTER TABLE fleet_nodes ADD COLUMN desired_revision INTEGER NOT NULL DEFAULT 1;");
+
+        const existingNodes = this.db.prepare("SELECT id, updated_at FROM fleet_nodes").all() as Array<{
+          id: string;
+          updated_at: number;
+        }>;
+        const getEpStats = this.db.prepare(
+          "SELECT MAX(updated_at) AS max_updated, MAX(current_revision) AS max_rev FROM fleet_proxy_endpoints WHERE node_id = ?"
+        );
+        const updateNodeRev = this.db.prepare(
+          "UPDATE fleet_nodes SET desired_revision = ? WHERE id = ?"
+        );
+
+        const now = Date.now();
+        for (const node of existingNodes) {
+          const epStats = getEpStats.get(node.id) as { max_updated?: number | null; max_rev?: number | null } | undefined;
+          const maxEpUpdated = epStats?.max_updated != null ? Number(epStats.max_updated) : 0;
+          const maxEpRev = epStats?.max_rev != null ? Number(epStats.max_rev) : 0;
+          const nodeUpdated = node.updated_at != null ? Number(node.updated_at) : 0;
+          const maxHistorical = Math.max(now, nodeUpdated, maxEpUpdated, maxEpRev);
+          const seedRevision = maxHistorical + 1;
+          updateNodeRev.run(seedRevision, node.id);
+        }
+
+        this.db.exec("COMMIT;");
+      } catch (err) {
+        this.db.exec("ROLLBACK;");
+        throw err;
+      }
+    }
+    this.runtimeStore = createFleetRuntimeStore(this.db);
+  }
+
+  async startRuntimeSession(nodeId: string, sessionId: string): Promise<void> {
+    this.runtimeStore.startSession(nodeId, sessionId);
+  }
+
+  async recordNodeDevice(nodeId: string, device: FleetDeviceInfo): Promise<void> {
+    this.runtimeStore.recordDevice(nodeId, device);
+  }
+
+  async recordNodeRuntime(nodeId: string, runtime: FleetRuntimeSnapshot): Promise<{ accepted: boolean }> {
+    return this.runtimeStore.recordRuntime(nodeId, runtime);
+  }
+
+  async updateNodeCapacity(nodeId: string, capacity: FleetCapacitySettings): Promise<FleetNodeWithCamel> {
+    this.runtimeStore.updateCapacity(nodeId, capacity);
+    const node = await this.getNode(nodeId);
+    if (!node) throw new Error("Node not found");
+    return node;
+  }
+  isOverlayApproved(nodeId: string): boolean {
+    return this.runtimeStore.isOverlayApproved(nodeId);
+  }
+
+  setOverlayApproved(nodeId: string, approved: boolean): void {
+    this.runtimeStore.setOverlayApproved(nodeId, approved);
+  }
+
+  getApprovedNodeIds(): string[] {
+    return this.runtimeStore.getApprovedNodeIds();
+  }
+
+  private mapRemoval(row: Record<string, unknown> | undefined): FleetRemovalRecord | null {
+    if (!row) return null;
+    return {
+      nodeId: String(row.node_id),
+      nodeName: String(row.node_name),
+      wireguardIp: String(row.wireguard_ip),
+      publicKey: row.wireguard_public_key ? String(row.wireguard_public_key) : null,
+      status: row.status as FleetRemovalStatus,
+      lastError: row.error_message ? String(row.error_message) : null,
+      requestedAt: Number(row.requested_at),
+      completedAt: row.completed_at != null ? Number(row.completed_at) : null,
+    };
   }
 
   private mapNode(row: Record<string, unknown> | undefined): FleetNodeWithCamel | null {
     if (!row) return null;
+    const now = Date.now();
+    const role = (row.role as FleetNodeRole) || "worker";
+    const reportedStatus = row.status as FleetNodeStatus;
+    const lastHeartbeatAt = row.last_heartbeat_at != null ? Number(row.last_heartbeat_at) : null;
+    const desiredRevision = Number(row.desired_revision || 1);
+
+    const effectiveStatus: FleetNodeStatus = lastHeartbeatAt === null || now - lastHeartbeatAt >= 60_000 ? "offline" : reportedStatus;
+    const appliedRevision = row.applied_revision != null ? Number(row.applied_revision) : null;
+    const deploymentRevision = row.deployment_revision != null ? Number(row.deployment_revision) : null;
+    const deploymentStatus = (row.deployment_status as FleetConfigurationStatus) || "unknown";
+    const deploymentError = row.deployment_error ? String(row.deployment_error) : null;
+    const deploymentUpdatedAt = row.deployment_updated_at != null ? Number(row.deployment_updated_at) : null;
+
+    const configuration: FleetNodeConfigurationView = {
+      status: deploymentStatus,
+      desiredRevision,
+      appliedRevision,
+      deploymentRevision,
+      error: deploymentError,
+      updatedAt: deploymentUpdatedAt,
+    };
+
     return {
       id: String(row.id),
       name: String(row.name),
-      role: (row.role as FleetNodeRole) || "worker",
-      status: row.status as FleetNodeStatus,
+      role,
+      status: effectiveStatus,
       public_ip: row.public_ip ? String(row.public_ip) : null,
       publicIp: row.public_ip ? String(row.public_ip) : null,
       wireguard_ip: String(row.wireguard_ip),
@@ -265,14 +446,30 @@ class SqliteFleetRepository implements FleetRepository {
       arch: row.arch ? String(row.arch) : null,
       agent_version: row.agent_version ? String(row.agent_version) : null,
       agentVersion: row.agent_version ? String(row.agent_version) : null,
-      last_heartbeat_at: row.last_heartbeat_at ? Number(row.last_heartbeat_at) : null,
+      last_heartbeat_at: lastHeartbeatAt,
+      desired_revision: desiredRevision,
+      applied_revision: appliedRevision,
+      appliedRevision,
+      deployment_revision: deploymentRevision,
+      deploymentRevision,
+      deployment_status: deploymentStatus,
+      deploymentStatus,
+      deployment_error: deploymentError,
+      deploymentError,
+      deployment_updated_at: deploymentUpdatedAt,
+      deploymentUpdatedAt,
+      configuration,
+      device: row.device_json ? JSON.parse(String(row.device_json)) as FleetDeviceInfo : null,
+      runtime: row.runtime_json ? JSON.parse(String(row.runtime_json)) as FleetRuntimeSnapshot : null,
+      runtimeReceivedAt: row.runtime_received_at == null ? null : Number(row.runtime_received_at),
+      capacity: { maxConnections: row.capacity_max_connections == null ? null : Number(row.capacity_max_connections) },
       created_at: Number(row.created_at),
       updated_at: Number(row.updated_at),
     };
   }
-
   private mapEndpoint(row: Record<string, unknown> | undefined): FleetEndpointWithCamel | null {
     if (!row) return null;
+    const latestHealth = this.db.prepare("SELECT * FROM fleet_health_checks WHERE endpoint_id = ? ORDER BY checked_at DESC LIMIT 1").get(String(row.id)) as Record<string, unknown> | undefined;
     return {
       id: String(row.id),
       node_id: String(row.node_id),
@@ -287,6 +484,7 @@ class SqliteFleetRepository implements FleetRepository {
       credential_ref: String(row.credential_ref),
       enabled: Boolean(row.enabled),
       current_revision: Number(row.current_revision),
+      health: latestHealth ? this.mapHealthCheck(latestHealth) : null,
       created_at: Number(row.created_at),
       updated_at: Number(row.updated_at),
     };
@@ -313,10 +511,11 @@ class SqliteFleetRepository implements FleetRepository {
   async createNode(input: CreateNodeInput): Promise<FleetNodeWithCamel> {
     const id = input.id || crypto.randomUUID();
     const now = Date.now();
+    const desiredRevision = input.desired_revision && input.desired_revision > 0 ? input.desired_revision : 1;
     const query = `
       INSERT INTO fleet_nodes (
-        id, name, role, status, public_ip, wireguard_ip, wireguard_public_key, os, arch, agent_version, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, name, role, status, public_ip, wireguard_ip, wireguard_public_key, os, arch, agent_version, desired_revision, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
     this.db.prepare(query).run(
       id,
@@ -329,6 +528,7 @@ class SqliteFleetRepository implements FleetRepository {
       input.os || null,
       input.arch || null,
       input.agentVersion || null,
+      desiredRevision,
       now,
       now
     );
@@ -339,9 +539,63 @@ class SqliteFleetRepository implements FleetRepository {
   }
 
   async getNode(id: string): Promise<FleetNodeWithCamel | null> {
+    const removal = this.db.prepare("SELECT status FROM fleet_node_removals WHERE node_id = ?").get(id) as
+      | { status: string }
+      | undefined;
+    if (removal?.status === "pending") {
+      return null;
+    }
     const stmt = this.db.prepare("SELECT * FROM fleet_nodes WHERE id = ?");
     const row = stmt.get(id) as Record<string, unknown> | undefined;
     return this.mapNode(row);
+  }
+  async updateNodeDesiredRevision(nodeId: string, desiredRevision: number): Promise<void> {
+    const now = Date.now();
+    this.db
+      .prepare(
+        "UPDATE fleet_nodes SET desired_revision = ?, deployment_status = 'pending', deployment_error = NULL, updated_at = ? WHERE id = ?"
+      )
+      .run(desiredRevision, now, nodeId);
+  }
+
+  async setNodeAgentToken(nodeId: string, token: string): Promise<void> {
+    if (!nodeId) throw new Error("nodeId is required");
+    if (!token) throw new Error("token is required");
+    const hash = crypto.createHash("sha256").update(token).digest("hex");
+    this.db.exec("SAVEPOINT fleet_token_rotation");
+    try {
+      const result = this.db.prepare("UPDATE fleet_nodes SET agent_token_hash = ?, runtime_session_id = NULL, runtime_sequence = 0, runtime_json = NULL, runtime_received_at = NULL, updated_at = ? WHERE id = ? AND NOT EXISTS (SELECT 1 FROM fleet_node_removals WHERE node_id = ? AND status = 'pending')").run(hash, Date.now(), nodeId, nodeId);
+      if (result.changes === 0) throw new Error(`Node ${nodeId} not found`);
+      this.db.prepare("DELETE FROM fleet_runtime_sessions WHERE node_id = ?").run(nodeId);
+      this.db.exec("RELEASE fleet_token_rotation");
+    } catch (error) {
+      this.db.exec("ROLLBACK TO fleet_token_rotation; RELEASE fleet_token_rotation");
+      throw error;
+    }
+  }
+
+  async verifyNodeAgentToken(nodeId: string, token: string): Promise<boolean> {
+    if (!nodeId || !token) return false;
+    const removal = this.db.prepare("SELECT status FROM fleet_node_removals WHERE node_id = ?").get(nodeId) as
+      | { status: string }
+      | undefined;
+    if (removal?.status === "pending") {
+      return false;
+    }
+    const row = this.db.prepare("SELECT agent_token_hash FROM fleet_nodes WHERE id = ?").get(nodeId) as
+      | { agent_token_hash: string | null }
+      | undefined;
+    if (!row || !row.agent_token_hash) {
+      return false;
+    }
+    const expectedHash = row.agent_token_hash;
+    const actualHash = crypto.createHash("sha256").update(token).digest("hex");
+    const expectedBuffer = Buffer.from(expectedHash, "hex");
+    const actualBuffer = Buffer.from(actualHash, "hex");
+    if (expectedBuffer.length !== 32 || actualBuffer.length !== 32) {
+      return false;
+    }
+    return crypto.timingSafeEqual(expectedBuffer, actualBuffer);
   }
 
   async bootstrapControllerNode(input: BootstrapControllerNodeInput = {}): Promise<FleetNodeWithCamel> {
@@ -349,19 +603,29 @@ class SqliteFleetRepository implements FleetRepository {
       "SELECT * FROM fleet_nodes WHERE role = 'controller-worker' OR wireguard_ip = '10.77.0.1' LIMIT 1"
     ).get() as Record<string, unknown> | undefined;
 
+    const defaultName = os.hostname() || "controller-node";
+    const targetName = input.name || (existing && existing.name !== "controller-001" ? (existing.name as string) : defaultName);
+
     if (existing) {
-      return this.mapNode(existing)!;
+      if (input.name || existing.name === "controller-001") {
+        this.db.prepare("UPDATE fleet_nodes SET name = ?, updated_at = ? WHERE id = ?").run(
+          targetName,
+          Date.now(),
+          existing.id as string
+        );
+      }
+      return (await this.getNode(existing.id as string))!;
     }
 
     const id = input.id || "controller-node-master";
-    const name = input.name || "controller-001";
+    const name = input.name || defaultName;
     const wireguardIp = input.wireguardIp || "10.77.0.1";
     const now = Date.now();
 
     this.db.prepare(`
       INSERT INTO fleet_nodes (
-        id, name, role, status, public_ip, wireguard_ip, wireguard_public_key, os, arch, agent_version, last_heartbeat_at, created_at, updated_at
-      ) VALUES (?, ?, 'controller-worker', 'online', NULL, ?, NULL, ?, ?, ?, ?, ?, ?)
+        id, name, role, status, public_ip, wireguard_ip, wireguard_public_key, os, arch, agent_version, last_heartbeat_at, desired_revision, created_at, updated_at
+      ) VALUES (?, ?, 'controller-worker', 'online', NULL, ?, NULL, ?, ?, ?, ?, 1, ?, ?)
     `).run(
       id,
       name,
@@ -378,14 +642,17 @@ class SqliteFleetRepository implements FleetRepository {
   }
 
   async listNodes(filter?: { status?: FleetNodeStatus }): Promise<FleetNodeWithCamel[]> {
-    if (filter?.status) {
-      const stmt = this.db.prepare("SELECT * FROM fleet_nodes WHERE status = ? ORDER BY created_at DESC");
-      const rows = stmt.all(filter.status) as Array<Record<string, unknown>>;
-      return rows.map((r) => this.mapNode(r)!) as FleetNodeWithCamel[];
-    }
-    const stmt = this.db.prepare("SELECT * FROM fleet_nodes ORDER BY created_at DESC");
+    const stmt = this.db.prepare(`
+      SELECT * FROM fleet_nodes
+      WHERE id NOT IN (SELECT node_id FROM fleet_node_removals WHERE status = 'pending')
+      ORDER BY created_at DESC
+    `);
     const rows = stmt.all() as Array<Record<string, unknown>>;
-    return rows.map((r) => this.mapNode(r)!) as FleetNodeWithCamel[];
+    const nodes = rows.map((r) => this.mapNode(r)!) as FleetNodeWithCamel[];
+    if (filter?.status) {
+      return nodes.filter((n) => n.status === filter.status);
+    }
+    return nodes;
   }
 
   async recordHeartbeat(nodeId: string, input: RecordHeartbeatInput): Promise<void> {
@@ -402,65 +669,86 @@ class SqliteFleetRepository implements FleetRepository {
   }
 
   async createProxyEndpoint(input: CreateEndpointInput): Promise<FleetEndpointWithCamel> {
+    if (!Number.isInteger(input.listenPort) || input.listenPort < 1 || input.listenPort > 65535) throw new Error("Invalid managed listener port");
+    if (input.protocol !== "http" && input.protocol !== "socks5") throw new Error("Invalid managed proxy protocol");
+    if (!input.username || /[\s\r\n:]/.test(input.username) || /[\r\n]/.test(input.password ?? "")) throw new Error("Invalid proxy credentials");
+    const activeNode = await this.getNode(input.nodeId);
+    if (!activeNode) throw new Error("Node not found");
+    if (input.listenIp !== activeNode.wireguard_ip) throw new Error("Managed listener must bind the node overlay IP");
     const id = input.id || crypto.randomUUID();
-    const now = Date.now();
     const credRef = `cred-${crypto.randomUUID()}`;
+    const encrypted = input.password ? encryptSecret(input.password) : null;
 
-    const node = await this.getNode(input.nodeId);
-    if (!node) throw new Error(`Node ${input.nodeId} not found`);
+    this.db.exec("BEGIN IMMEDIATE;");
+    try {
+      const nodeRow = this.db.prepare("SELECT desired_revision FROM fleet_nodes WHERE id = ? AND NOT EXISTS (SELECT 1 FROM fleet_node_removals r WHERE r.node_id = fleet_nodes.id AND r.status = 'pending')").get(input.nodeId) as
+        | { desired_revision: number }
+        | undefined;
+      if (!nodeRow) throw new Error(`Node ${input.nodeId} not found`);
+      const nextRevision = (Number(nodeRow.desired_revision) || 0) + 1;
+      const now = Date.now();
 
-    const insertEndpoint = this.db.prepare(`
-      INSERT INTO fleet_proxy_endpoints (
-        id, node_id, protocol, listen_ip, listen_port, egress_id, username, credential_ref, enabled, current_revision, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-    `);
-
-    insertEndpoint.run(
-      id,
-      input.nodeId,
-      input.protocol,
-      input.listenIp,
-      input.listenPort,
-      input.egressId || null,
-      input.username,
-      credRef,
-      input.enabled === false ? 0 : 1,
-      now,
-      now
-    );
-
-    if (input.password) {
-      const encrypted = encryptSecret(input.password);
       this.db
         .prepare(`
-        INSERT INTO fleet_proxy_credentials (
-          id, endpoint_id, username, encrypted_password, salt, iv, tag, rotated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO fleet_proxy_endpoints (
+          id, node_id, protocol, listen_ip, listen_port, egress_id, username, credential_ref, enabled, current_revision, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
-        .run(credRef, id, input.username, encrypted.ciphertext, encrypted.salt, encrypted.iv, encrypted.tag, now);
-    }
+        .run(
+          id,
+          input.nodeId,
+          input.protocol,
+          input.listenIp,
+          input.listenPort,
+          input.egressId || null,
+          input.username,
+          credRef,
+          input.enabled === false ? 0 : 1,
+          1,
+          now,
+          now
+        );
 
-    const created = await this.getEndpoint(id);
-    if (!created) throw new Error("Failed to create endpoint");
-    return created;
+      if (encrypted) {
+        this.db
+          .prepare(`
+          INSERT INTO fleet_proxy_credentials (
+            id, endpoint_id, username, encrypted_password, salt, iv, tag, rotated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+          .run(credRef, id, input.username, encrypted.ciphertext, encrypted.salt, encrypted.iv, encrypted.tag, now);
+      }
+
+      this.db
+        .prepare("UPDATE fleet_nodes SET desired_revision = ?, deployment_status = 'pending', deployment_error = NULL, updated_at = ? WHERE id = ?")
+        .run(nextRevision, now, input.nodeId);
+
+      const createdRow = this.db.prepare("SELECT * FROM fleet_proxy_endpoints WHERE id = ?").get(id) as
+        | Record<string, unknown>
+        | undefined;
+
+      this.db.exec("COMMIT;");
+      return this.mapEndpoint(createdRow)!;
+    } catch (err) {
+      this.db.exec("ROLLBACK;");
+      throw err;
+    }
   }
 
   async listEndpoints(filter?: { nodeId?: string; enabled?: boolean }): Promise<FleetEndpointWithCamel[]> {
-    let sql = "SELECT * FROM fleet_proxy_endpoints";
-    const conditions: string[] = [];
+    let sql = `
+      SELECT * FROM fleet_proxy_endpoints
+      WHERE node_id NOT IN (SELECT node_id FROM fleet_node_removals WHERE status = 'pending')
+    `;
     const params: Array<string | number> = [];
 
     if (filter?.nodeId) {
-      conditions.push("node_id = ?");
+      sql += " AND node_id = ?";
       params.push(filter.nodeId);
     }
     if (filter?.enabled !== undefined) {
-      conditions.push("enabled = ?");
+      sql += " AND enabled = ?";
       params.push(filter.enabled ? 1 : 0);
-    }
-
-    if (conditions.length > 0) {
-      sql += ` WHERE ${conditions.join(" AND ")}`;
     }
     sql += " ORDER BY listen_port ASC";
 
@@ -469,17 +757,23 @@ class SqliteFleetRepository implements FleetRepository {
   }
 
   async getEndpoint(id: string): Promise<FleetEndpointWithCamel | null> {
-    const row = this.db.prepare("SELECT * FROM fleet_proxy_endpoints WHERE id = ?").get(id) as
-      | Record<string, unknown>
-      | undefined;
+    const row = this.db.prepare(`
+      SELECT * FROM fleet_proxy_endpoints
+      WHERE id = ? AND node_id NOT IN (SELECT node_id FROM fleet_node_removals WHERE status = 'pending')
+    `).get(id) as Record<string, unknown> | undefined;
     return this.mapEndpoint(row);
   }
 
   async getEndpointCredentials(endpointId: string): Promise<{ username: string; password: string } | null> {
     const row = this.db
-      .prepare("SELECT username, encrypted_password, salt, iv, tag FROM fleet_proxy_credentials WHERE endpoint_id = ?")
+      .prepare(`
+        SELECT c.username, c.encrypted_password, c.salt, c.iv, c.tag
+        FROM fleet_proxy_credentials c
+        JOIN fleet_proxy_endpoints e ON e.id = c.endpoint_id
+        WHERE c.endpoint_id = ?
+          AND e.node_id NOT IN (SELECT node_id FROM fleet_node_removals WHERE status = 'pending')
+      `)
       .get(endpointId) as (EncryptedPayload & { username: string; encrypted_password: string }) | undefined;
-
     if (!row) return null;
     const decrypted = decryptSecret({
       ciphertext: row.encrypted_password,
@@ -490,43 +784,203 @@ class SqliteFleetRepository implements FleetRepository {
     return { username: row.username, password: decrypted };
   }
 
+  async getNodeDesiredState(nodeId: string): Promise<FleetNodeDesiredState | null> {
+    if (!nodeId) return null;
+
+    const removal = this.db.prepare("SELECT status FROM fleet_node_removals WHERE node_id = ?").get(nodeId) as
+      | { status: string }
+      | undefined;
+    if (removal?.status === "pending") {
+      return null;
+    }
+
+    this.db.exec("BEGIN;");
+    try {
+      const nodeRow = this.db.prepare("SELECT desired_revision, capacity_max_connections FROM fleet_nodes WHERE id = ?").get(nodeId) as
+        | { desired_revision: number; capacity_max_connections: number | null }
+        | undefined;
+      if (!nodeRow) {
+        this.db.exec("ROLLBACK;");
+        return null;
+      }
+
+      const revision = Number(nodeRow.desired_revision || 1);
+
+      const endpoints = this.db
+        .prepare("SELECT * FROM fleet_proxy_endpoints WHERE node_id = ? AND enabled = 1 ORDER BY listen_port ASC")
+        .all(nodeId) as Array<Record<string, unknown>>;
+
+      const getCredStmt = this.db.prepare(
+        "SELECT username, encrypted_password, salt, iv, tag FROM fleet_proxy_credentials WHERE endpoint_id = ?"
+      );
+
+      const proxies = endpoints.map((ep) => {
+        const epId = String(ep.id);
+        const credRow = getCredStmt.get(epId) as
+          | (EncryptedPayload & { username: string; encrypted_password: string })
+          | undefined;
+
+        let password = "";
+        let username = String(ep.username);
+        if (credRow) {
+          username = credRow.username || username;
+          password = decryptSecret({
+            ciphertext: credRow.encrypted_password,
+            salt: credRow.salt,
+            iv: credRow.iv,
+            tag: credRow.tag,
+          });
+        }
+
+        return {
+          id: epId,
+          node_id: String(ep.node_id),
+          protocol: ep.protocol as FleetProxyProtocol,
+          listen_ip: String(ep.listen_ip),
+          listen_port: Number(ep.listen_port),
+          username,
+          password,
+          enabled: Boolean(ep.enabled),
+          current_revision: Number(ep.current_revision),
+        };
+      });
+
+      this.db.exec("COMMIT;");
+      return {
+        revision,
+        capacity: { maxConnections: nodeRow.capacity_max_connections },
+        proxies,
+      };
+    } catch (err) {
+      this.db.exec("ROLLBACK;");
+      throw err;
+    }
+  }
+
   async updateEndpoint(
     id: string,
     patch: { enabled?: boolean; username?: string; password?: string }
   ): Promise<FleetEndpointWithCamel> {
-    const now = Date.now();
-    const current = await this.getEndpoint(id);
-    if (!current) throw new Error(`Endpoint ${id} not found`);
+    this.db.exec("BEGIN IMMEDIATE;");
+    try {
+      const epRow = this.db.prepare("SELECT * FROM fleet_proxy_endpoints WHERE id = ?").get(id) as
+        | Record<string, unknown>
+        | undefined;
+      if (!epRow) throw new Error(`Endpoint ${id} not found`);
 
-    if (patch.enabled !== undefined || patch.username !== undefined) {
+      const currentEnabled = Boolean(epRow.enabled);
+      const currentUsername = String(epRow.username);
+      const nodeId = String(epRow.node_id);
+
+      const credRow = this.db
+        .prepare("SELECT id, username, encrypted_password, salt, iv, tag FROM fleet_proxy_credentials WHERE endpoint_id = ?")
+        .get(id) as (EncryptedPayload & { id: string; username: string; encrypted_password: string }) | undefined;
+
+      const targetEnabled = patch.enabled !== undefined ? Boolean(patch.enabled) : currentEnabled;
+      const targetUsername = patch.username !== undefined ? patch.username : currentUsername;
+      const isEnabledChanged = patch.enabled !== undefined && patch.enabled !== currentEnabled;
+      const isUsernameChanged = patch.username !== undefined && patch.username !== currentUsername;
+
+      let isPasswordChanged = false;
+      let encrypted: EncryptedPayload | null = null;
+      if (patch.password !== undefined) {
+        if (credRow) {
+          const currentPassword = decryptSecret({
+            ciphertext: credRow.encrypted_password,
+            salt: credRow.salt,
+            iv: credRow.iv,
+            tag: credRow.tag,
+          });
+          isPasswordChanged = patch.password !== currentPassword;
+        } else {
+          isPasswordChanged = true;
+        }
+        if (isPasswordChanged) {
+          encrypted = encryptSecret(patch.password);
+        }
+      }
+
+      if (!isEnabledChanged && !isUsernameChanged && !isPasswordChanged) {
+        this.db.exec("COMMIT;");
+        return this.mapEndpoint(epRow)!;
+      }
+
+      const now = Date.now();
+      const nodeRow = this.db.prepare("SELECT desired_revision FROM fleet_nodes WHERE id = ? AND NOT EXISTS (SELECT 1 FROM fleet_node_removals r WHERE r.node_id = fleet_nodes.id AND r.status = 'pending')").get(nodeId) as
+        | { desired_revision: number }
+        | undefined;
+      if (!nodeRow) throw new Error(`Node ${nodeId} not found`);
+      const nextNodeRevision = (Number(nodeRow.desired_revision) || 0) + 1;
+      const nextEndpointRevision = (Number(epRow.current_revision) || 1) + 1;
+
       this.db
         .prepare(`
         UPDATE fleet_proxy_endpoints
-        SET enabled = COALESCE(?, enabled),
-            username = COALESCE(?, username),
-            current_revision = current_revision + 1,
+        SET enabled = ?,
+            username = ?,
+            current_revision = ?,
             updated_at = ?
         WHERE id = ?
       `)
-        .run(patch.enabled !== undefined ? (patch.enabled ? 1 : 0) : null, patch.username || null, now, id);
-    }
+        .run(targetEnabled ? 1 : 0, targetUsername, nextEndpointRevision, now, id);
 
-    if (patch.password) {
-      const encrypted = encryptSecret(patch.password);
+      if (encrypted) {
+        if (credRow) {
+          this.db
+            .prepare(`
+            UPDATE fleet_proxy_credentials
+            SET username = ?,
+                encrypted_password = ?,
+                salt = ?,
+                iv = ?,
+                tag = ?,
+                rotated_at = ?
+            WHERE endpoint_id = ?
+          `)
+            .run(targetUsername, encrypted.ciphertext, encrypted.salt, encrypted.iv, encrypted.tag, now, id);
+        } else {
+          const credRef = epRow.credential_ref ? String(epRow.credential_ref) : `cred-${crypto.randomUUID()}`;
+          this.db
+            .prepare(`
+            INSERT INTO fleet_proxy_credentials (
+              id, endpoint_id, username, encrypted_password, salt, iv, tag, rotated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `)
+            .run(credRef, id, targetUsername, encrypted.ciphertext, encrypted.salt, encrypted.iv, encrypted.tag, now);
+        }
+      } else if (isUsernameChanged && credRow) {
+        this.db
+          .prepare("UPDATE fleet_proxy_credentials SET username = ? WHERE endpoint_id = ?")
+          .run(targetUsername, id);
+      }
+
       this.db
-        .prepare(`
-        UPDATE fleet_proxy_credentials
-        SET encrypted_password = ?, salt = ?, iv = ?, tag = ?, rotated_at = ?
-        WHERE endpoint_id = ?
-      `)
-        .run(encrypted.ciphertext, encrypted.salt, encrypted.iv, encrypted.tag, now, id);
-    }
+        .prepare("UPDATE fleet_nodes SET desired_revision = ?, deployment_status = 'pending', deployment_error = NULL, updated_at = ? WHERE id = ?")
+        .run(nextNodeRevision, now, nodeId);
 
-    const updated = await this.getEndpoint(id);
-    if (!updated) throw new Error("Endpoint missing after update");
-    return updated;
+      const updatedRow = this.db.prepare("SELECT * FROM fleet_proxy_endpoints WHERE id = ?").get(id) as
+        | Record<string, unknown>
+        | undefined;
+
+      this.db.exec("COMMIT;");
+      return this.mapEndpoint(updatedRow)!;
+    } catch (err) {
+      this.db.exec("ROLLBACK;");
+      throw err;
+    }
   }
   async recordHealthCheck(input: RecordHealthCheckInput): Promise<FleetHealthCheckWithCamel> {
+    const removal = this.db.prepare("SELECT status FROM fleet_node_removals WHERE node_id = ?").get(input.nodeId) as
+      | { status: string }
+      | undefined;
+    if (removal?.status === "pending") {
+      throw new Error(`Cannot record health check: node ${input.nodeId} is pending removal`);
+    }
+    const node = this.db.prepare("SELECT id FROM fleet_nodes WHERE id = ?").get(input.nodeId);
+    if (!node) {
+      throw new Error(`Cannot record health check: node ${input.nodeId} not found`);
+    }
+
     const id = crypto.randomUUID();
     const now = Date.now();
     this.db
@@ -641,6 +1095,163 @@ class SqliteFleetRepository implements FleetRepository {
       };
     });
   }
+
+  async recordDeploymentResult(input: RecordDeploymentResultInput): Promise<RecordDeploymentResultOutcome> {
+    this.db.exec("BEGIN IMMEDIATE;");
+    try {
+      const nodeRow = this.db.prepare("SELECT * FROM fleet_nodes WHERE id = ?").get(input.nodeId) as
+        | Record<string, unknown>
+        | undefined;
+
+      if (!nodeRow) {
+        this.db.exec("ROLLBACK;");
+        return { ok: false, accepted: false, reason: "node_not_found" };
+      }
+
+      const desiredRevision = Number(nodeRow.desired_revision || 1);
+      const currentDeploymentRev = nodeRow.deployment_revision != null ? Number(nodeRow.deployment_revision) : 0;
+      const currentDeploymentStatus = (nodeRow.deployment_status as FleetConfigurationStatus) || "unknown";
+      const currentDeploymentError = nodeRow.deployment_error ? String(nodeRow.deployment_error) : null;
+
+      if (input.revision > desiredRevision) {
+        this.db.exec("ROLLBACK;");
+        return { ok: false, accepted: false, reason: "future_revision" };
+      }
+
+      if (input.revision < currentDeploymentRev) {
+        this.db.exec("ROLLBACK;");
+        return { ok: true, accepted: false, reason: "stale_revision" };
+      }
+
+      if (input.revision === currentDeploymentRev) {
+        if (currentDeploymentStatus === "applied") {
+          this.db.exec("ROLLBACK;");
+          return { ok: true, accepted: false, reason: "duplicate_revision" };
+        }
+        if (
+          currentDeploymentStatus === "failed" &&
+          input.status === "failed" &&
+          (currentDeploymentError || "") === (input.errorMessage || "")
+        ) {
+          this.db.exec("ROLLBACK;");
+          return { ok: true, accepted: false, reason: "duplicate_revision" };
+        }
+      }
+
+      const now = Date.now();
+      const deploymentId = `dep-${crypto.randomUUID()}`;
+      const appliedAt = input.status === "applied" ? now : null;
+
+      this.db
+        .prepare(`
+        INSERT INTO fleet_deployments (
+          id, node_id, revision, config_digest, status, error_message, applied_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+        .run(
+          deploymentId,
+          input.nodeId,
+          input.revision,
+          input.configDigest,
+          input.status,
+          input.errorMessage ?? null,
+          appliedAt,
+          now
+        );
+
+      const eventId = `evt-${crypto.randomUUID()}`;
+      const eventType = input.status === "applied" ? "node_config_applied" : "node_config_failed";
+      const level = input.status === "applied" ? "info" : "error";
+      const payload = JSON.stringify({
+        revision: input.revision,
+        desiredRevision,
+        configDigest: input.configDigest,
+        error: input.errorMessage ?? null,
+      });
+
+      this.db
+        .prepare(`
+        INSERT INTO fleet_events (
+          id, node_id, endpoint_id, event_type, level, payload_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `)
+        .run(eventId, input.nodeId, null, eventType, level, payload, now);
+
+      const newDeploymentRev = Math.max(input.revision, currentDeploymentRev);
+      let newAppliedRev = nodeRow.applied_revision != null ? Number(nodeRow.applied_revision) : null;
+      let newDeploymentStatus: FleetConfigurationStatus;
+      let newDeploymentError: string | null = null;
+
+      if (input.status === "applied") {
+        newAppliedRev = Math.max(input.revision, newAppliedRev ?? 0);
+        newDeploymentStatus = input.revision === desiredRevision ? "applied" : "pending";
+        newDeploymentError = null;
+      } else {
+        newDeploymentStatus = input.revision === desiredRevision ? "failed" : "pending";
+        newDeploymentError = input.errorMessage || "Deployment failed";
+      }
+
+      this.db
+        .prepare(`
+        UPDATE fleet_nodes
+        SET deployment_revision = ?,
+            applied_revision = ?,
+            deployment_status = ?,
+            deployment_error = ?,
+            deployment_updated_at = ?,
+            updated_at = ?
+        WHERE id = ?
+      `)
+        .run(
+          newDeploymentRev,
+          newAppliedRev,
+          newDeploymentStatus,
+          newDeploymentError,
+          now,
+          now,
+          input.nodeId
+        );
+
+      this.db.exec("COMMIT;");
+
+      const updatedRow = this.db.prepare("SELECT * FROM fleet_nodes WHERE id = ?").get(input.nodeId) as
+        | Record<string, unknown>
+        | undefined;
+      const mappedNode = this.mapNode(updatedRow);
+
+      return {
+        ok: true,
+        accepted: true,
+        node: mappedNode ?? undefined,
+      };
+    } catch (err) {
+      try {
+        this.db.exec("ROLLBACK;");
+      } catch {
+        // ignore
+      }
+      throw err;
+    }
+  }
+
+  async getNodeDeployments(nodeId: string, limit = 20): Promise<FleetDeploymentRecord[]> {
+    const rows = this.db
+      .prepare(
+        "SELECT * FROM fleet_deployments WHERE node_id = ? ORDER BY revision DESC, created_at DESC LIMIT ?"
+      )
+      .all(nodeId, limit) as Array<Record<string, unknown>>;
+
+    return rows.map((r) => ({
+      id: String(r.id),
+      node_id: String(r.node_id),
+      revision: Number(r.revision),
+      config_digest: String(r.config_digest),
+      status: r.status as FleetDeploymentStatus,
+      error_message: r.error_message ? String(r.error_message) : null,
+      applied_at: r.applied_at != null ? Number(r.applied_at) : null,
+      created_at: Number(r.created_at),
+    }));
+  }
   async createEnrollmentToken(input: {
     tokenHash: string;
     nodeName: string;
@@ -660,19 +1271,24 @@ class SqliteFleetRepository implements FleetRepository {
   async consumeEnrollmentToken(tokenHash: string): Promise<{ nodeName: string; assignedIp: string | null } | null> {
     const now = Date.now();
     const row = this.db
-      .prepare("SELECT node_name, assigned_ip, expires_at, consumed_at FROM fleet_enrollment_tokens WHERE token_hash = ?")
-      .get(tokenHash) as { node_name: string; assigned_ip: string | null; expires_at: number; consumed_at: number | null } | undefined;
+      .prepare(
+        "UPDATE fleet_enrollment_tokens SET consumed_at = ? WHERE token_hash = ? AND consumed_at IS NULL AND expires_at >= ? RETURNING node_name, assigned_ip"
+      )
+      .get(now, tokenHash, now) as { node_name: string; assigned_ip: string | null } | undefined;
 
-    if (!row || row.consumed_at !== null || row.expires_at < now) {
+    if (!row) {
       return null;
     }
 
-    this.db.prepare("UPDATE fleet_enrollment_tokens SET consumed_at = ? WHERE token_hash = ?").run(now, tokenHash);
     return { nodeName: row.node_name, assignedIp: row.assigned_ip };
   }
 
   async getNextWireguardIp(): Promise<string> {
-    const rows = this.db.prepare("SELECT wireguard_ip FROM fleet_nodes").all() as Array<{ wireguard_ip: string }>;
+    const rows = this.db.prepare(`
+      SELECT wireguard_ip FROM fleet_nodes
+      UNION
+      SELECT wireguard_ip FROM fleet_node_removals WHERE status = 'pending'
+    `).all() as Array<{ wireguard_ip: string }>;
     const usedLastOctets = new Set<number>();
     for (const r of rows) {
       const parts = r.wireguard_ip.split(".");
@@ -689,6 +1305,291 @@ class SqliteFleetRepository implements FleetRepository {
       }
     }
     throw new Error("No available WireGuard IP in subnet 10.77.0.0/24");
+  }
+
+  async requestNodeRemoval(nodeId: string): Promise<FleetRemovalRecord> {
+    if (!nodeId) throw new Error("nodeId is required");
+
+    const existingRemoval = this.db.prepare("SELECT * FROM fleet_node_removals WHERE node_id = ?").get(nodeId) as
+      | Record<string, unknown>
+      | undefined;
+    if (existingRemoval) {
+      if (existingRemoval.status === "completed") {
+        return this.mapRemoval(existingRemoval)!;
+      }
+      this.db.prepare("UPDATE fleet_nodes SET agent_token_hash = NULL, runtime_session_id = NULL, runtime_sequence = 0 WHERE id = ?").run(nodeId);
+      return this.mapRemoval(existingRemoval)!;
+    }
+
+    const nodeRow = this.db.prepare("SELECT * FROM fleet_nodes WHERE id = ?").get(nodeId) as
+      | Record<string, unknown>
+      | undefined;
+    if (!nodeRow) {
+      const err = new Error(`Node ${nodeId} not found`);
+      Object.assign(err, { status: 404, statusCode: 404 });
+      throw err;
+    }
+
+    const role = String(nodeRow.role || "worker");
+    if (role === "controller-worker" || nodeRow.wireguard_ip === "10.77.0.1") {
+      const err = new Error("Cannot remove controller node");
+      Object.assign(err, { status: 409, statusCode: 409 });
+      throw err;
+    }
+
+    const now = Date.now();
+    this.db.exec("BEGIN IMMEDIATE;");
+    try {
+      this.db.prepare("UPDATE fleet_nodes SET agent_token_hash = NULL, runtime_session_id = NULL, runtime_sequence = 0, updated_at = ? WHERE id = ?").run(now, nodeId);
+      this.db.prepare("DELETE FROM fleet_runtime_sessions WHERE node_id = ?").run(nodeId);
+
+      this.db
+        .prepare(`
+        INSERT INTO fleet_node_removals (
+          node_id, node_name, wireguard_ip, wireguard_public_key, status, error_message, requested_at, completed_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'pending', NULL, ?, NULL, ?)
+      `)
+        .run(
+          nodeId,
+          String(nodeRow.name || nodeId),
+          String(nodeRow.wireguard_ip),
+          nodeRow.wireguard_public_key ? String(nodeRow.wireguard_public_key) : null,
+          now,
+          now
+        );
+
+      const eventId = `evt-${crypto.randomUUID()}`;
+      const payload = JSON.stringify({
+        nodeId,
+        nodeName: String(nodeRow.name || nodeId),
+        wireguardIp: String(nodeRow.wireguard_ip),
+        status: "pending",
+      });
+      this.db
+        .prepare(`
+        INSERT INTO fleet_events (id, node_id, endpoint_id, event_type, level, payload_json, created_at)
+        VALUES (?, ?, NULL, 'node_removal_requested', 'info', ?, ?)
+      `)
+        .run(eventId, nodeId, payload, now);
+
+      this.db.exec("COMMIT;");
+    } catch (err) {
+      this.db.exec("ROLLBACK;");
+      throw err;
+    }
+
+    const removalRow = this.db.prepare("SELECT * FROM fleet_node_removals WHERE node_id = ?").get(nodeId) as
+      | Record<string, unknown>
+      | undefined;
+    return this.mapRemoval(removalRow)!;
+  }
+
+  async getNodeRemoval(nodeId: string): Promise<FleetRemovalRecord | null> {
+    if (!nodeId) return null;
+    const row = this.db.prepare("SELECT * FROM fleet_node_removals WHERE node_id = ?").get(nodeId) as
+      | Record<string, unknown>
+      | undefined;
+    return this.mapRemoval(row);
+  }
+
+  async listPendingNodeRemovals(): Promise<FleetRemovalRecord[]> {
+    const rows = this.db
+      .prepare("SELECT * FROM fleet_node_removals WHERE status = 'pending' ORDER BY requested_at DESC")
+      .all() as Array<Record<string, unknown>>;
+    return rows.map((r) => this.mapRemoval(r)!);
+  }
+
+  async recordNodeRemovalError(nodeId: string, message: string): Promise<void> {
+    if (!nodeId) return;
+    const boundedMsg = message ? String(message).slice(0, 2048) : null;
+    const now = Date.now();
+    this.db
+      .prepare("UPDATE fleet_node_removals SET error_message = ?, updated_at = ? WHERE node_id = ? AND status = 'pending'")
+      .run(boundedMsg, now, nodeId);
+  }
+
+  async completeNodeRemoval(nodeId: string): Promise<FleetRemovalRecord> {
+    if (!nodeId) throw new Error("nodeId is required");
+    const existing = this.db.prepare("SELECT * FROM fleet_node_removals WHERE node_id = ?").get(nodeId) as
+      | Record<string, unknown>
+      | undefined;
+
+    if (!existing) {
+      throw new Error(`No removal intent found for node ${nodeId}`);
+    }
+    if (existing.status === "completed") {
+      return this.mapRemoval(existing)!;
+    }
+
+    const now = Date.now();
+    this.db.exec("PRAGMA foreign_keys = ON; BEGIN IMMEDIATE;");
+    try {
+      this.db.prepare("DELETE FROM fleet_nodes WHERE id = ?").run(nodeId);
+
+      this.db
+        .prepare(`
+        UPDATE fleet_node_removals
+        SET status = 'completed', error_message = NULL, completed_at = ?, updated_at = ?
+        WHERE node_id = ?
+      `)
+        .run(now, now, nodeId);
+
+      const eventId = `evt-${crypto.randomUUID()}`;
+      const payload = JSON.stringify({
+        nodeId,
+        nodeName: String(existing.node_name),
+        wireguardIp: String(existing.wireguard_ip),
+        status: "completed",
+      });
+      this.db
+        .prepare(`
+        INSERT INTO fleet_events (id, node_id, endpoint_id, event_type, level, payload_json, created_at)
+        VALUES (?, ?, NULL, 'node_removal_completed', 'info', ?, ?)
+      `)
+        .run(eventId, nodeId, payload, now);
+
+      this.db.exec("COMMIT;");
+    } catch (err) {
+      this.db.exec("ROLLBACK;");
+      throw err;
+    }
+
+    const completedRow = this.db.prepare("SELECT * FROM fleet_node_removals WHERE node_id = ?").get(nodeId) as
+      | Record<string, unknown>
+      | undefined;
+    return this.mapRemoval(completedRow)!;
+  }
+
+  async listEndpointsForNodeRemovalCleanup(nodeId: string): Promise<FleetEndpointWithCamel[]> {
+    const rows = this.db.prepare("SELECT * FROM fleet_proxy_endpoints WHERE node_id = ? ORDER BY listen_port ASC")
+      .all(nodeId) as Array<Record<string, unknown>>;
+    return rows.map((r) => this.mapEndpoint(r)!) as FleetEndpointWithCamel[];
+  }
+
+  async enrollNodeAtomic(input: {
+    token: string;
+    nodeName: string;
+    wireguardPublicKey: string;
+    publicIp?: string | null;
+    os?: string | null;
+    arch?: string | null;
+    agentVersion?: string | null;
+    agentToken: string;
+  }): Promise<FleetNodeWithCamel> {
+    const tokenHash = crypto.createHash("sha256").update(input.token).digest("hex");
+    const agentTokenHash = crypto.createHash("sha256").update(input.agentToken).digest("hex");
+    const id = crypto.randomUUID();
+    const now = Date.now();
+
+    this.db.exec("BEGIN IMMEDIATE;");
+    try {
+      if (
+        typeof input.wireguardPublicKey !== "string" ||
+        !/^[A-Za-z0-9+/]{43}=$/.test(input.wireguardPublicKey) ||
+        Buffer.from(input.wireguardPublicKey, "base64").length !== 32
+      ) {
+        throw new Error("Invalid WireGuard public key: must be 32-byte base64 encoded string");
+      }
+
+      const keyInUse = this.db.prepare(`
+        SELECT 1 FROM fleet_nodes WHERE wireguard_public_key = ?
+        UNION
+        SELECT 1 FROM fleet_node_removals WHERE wireguard_public_key = ? AND status = 'pending'
+      `).get(input.wireguardPublicKey, input.wireguardPublicKey);
+      if (keyInUse) {
+        throw new Error("WireGuard public key already in use or reserved by pending removal");
+      }
+
+      const consumed = this.db
+        .prepare(
+          "UPDATE fleet_enrollment_tokens SET consumed_at = ? WHERE token_hash = ? AND consumed_at IS NULL AND expires_at >= ? RETURNING node_name, assigned_ip"
+        )
+        .get(now, tokenHash, now) as { node_name: string; assigned_ip: string | null } | undefined;
+
+      if (!consumed) {
+        throw new Error("Enrollment token already consumed or expired");
+      }
+
+      let assignedIp = consumed.assigned_ip;
+      if (assignedIp) {
+        const parts = assignedIp.split(".");
+        const octet = parts.length === 4 && parts[0] === "10" && parts[1] === "77" && parts[2] === "0" ? Number(parts[3]) : NaN;
+        if (!Number.isInteger(octet) || octet < 11 || octet > 254) {
+          throw new Error("Invalid assigned WireGuard IP: must be within 10.77.0.11-10.77.0.254");
+        }
+        const ipInUse = this.db.prepare(`
+          SELECT 1 FROM fleet_nodes WHERE wireguard_ip = ?
+          UNION
+          SELECT 1 FROM fleet_node_removals WHERE wireguard_ip = ? AND status = 'pending'
+        `).get(assignedIp, assignedIp);
+        if (ipInUse) {
+          throw new Error(`Assigned WireGuard IP ${assignedIp} already in use or reserved by pending removal`);
+        }
+      }
+      if (!assignedIp) {
+        const rows = this.db.prepare(`
+          SELECT wireguard_ip FROM fleet_nodes
+          UNION
+          SELECT wireguard_ip FROM fleet_node_removals WHERE status = 'pending'
+        `).all() as Array<{ wireguard_ip: string }>;
+        const usedLastOctets = new Set<number>();
+        for (const r of rows) {
+          const parts = r.wireguard_ip.split(".");
+          if (parts.length === 4) {
+            const octet = Number(parts[3]);
+            if (Number.isInteger(octet)) usedLastOctets.add(octet);
+          }
+        }
+        for (let i = 11; i <= 254; i++) {
+          if (!usedLastOctets.has(i)) {
+            assignedIp = `10.77.0.${i}`;
+            break;
+          }
+        }
+        if (!assignedIp) {
+          throw new Error("No available WireGuard IP in subnet 10.77.0.0/24");
+        }
+      }
+
+      const nodeName = consumed.node_name || input.nodeName;
+      this.db.prepare(`
+        INSERT INTO fleet_nodes (
+          id, name, role, status, public_ip, wireguard_ip, wireguard_public_key, os, arch, agent_version, desired_revision, agent_token_hash, created_at, updated_at
+        ) VALUES (?, ?, 'worker', 'offline', ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+      `).run(
+        id,
+        nodeName,
+        input.publicIp || null,
+        assignedIp,
+        input.wireguardPublicKey,
+        input.os || null,
+        input.arch || null,
+        input.agentVersion || null,
+        agentTokenHash,
+        now,
+        now
+      );
+
+      const eventId = `evt-${crypto.randomUUID()}`;
+      const payload = JSON.stringify({
+        nodeId: id,
+        nodeName,
+        wireguardIp: assignedIp,
+      });
+      this.db.prepare(`
+        INSERT INTO fleet_events (id, node_id, endpoint_id, event_type, level, payload_json, created_at)
+        VALUES (?, ?, NULL, 'node.enrolled', 'info', ?, ?)
+      `).run(eventId, id, payload, now);
+
+      this.db.exec("COMMIT;");
+    } catch (err) {
+      this.db.exec("ROLLBACK;");
+      throw err;
+    }
+
+    const node = await this.getNode(id);
+    if (!node) throw new Error("Failed to retrieve enrolled node");
+    return node;
   }
 
   close(): void {

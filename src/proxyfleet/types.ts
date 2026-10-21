@@ -1,6 +1,18 @@
+import type { FleetDeviceInfo, FleetRuntimeSnapshot, FleetCapacitySettings } from "./runtime.js";
 export type FleetNodeRole = "controller-worker" | "worker";
 
 export type FleetNodeStatus = "online" | "offline" | "degraded";
+
+export type FleetConfigurationStatus = "pending" | "applied" | "failed" | "unknown";
+
+export interface FleetNodeConfigurationView {
+  status: FleetConfigurationStatus;
+  desiredRevision: number;
+  appliedRevision: number | null;
+  deploymentRevision: number | null;
+  error: string | null;
+  updatedAt: number | null;
+}
 
 export interface FleetNodeRecord {
   id: string;
@@ -14,6 +26,17 @@ export interface FleetNodeRecord {
   arch: string | null;
   agent_version: string | null;
   last_heartbeat_at: number | null;
+  desired_revision: number;
+  applied_revision?: number | null;
+  deployment_revision?: number | null;
+  deployment_status?: FleetConfigurationStatus;
+  deployment_error?: string | null;
+  deployment_updated_at?: number | null;
+  configuration?: FleetNodeConfigurationView;
+  device?: FleetDeviceInfo | null;
+  runtime?: FleetRuntimeSnapshot | null;
+  runtimeReceivedAt?: number | null;
+  capacity?: FleetCapacitySettings;
   created_at: number;
   updated_at: number;
 }
@@ -55,9 +78,26 @@ export interface FleetProxyEndpointRecord {
   credential_ref: string;
   enabled: boolean;
   current_revision: number;
+  health?: FleetHealthCheckRecord | null;
   created_at: number;
   updated_at: number;
 }
+export interface FleetNodeDesiredState {
+  revision: number;
+  capacity?: FleetCapacitySettings;
+  proxies: Array<{
+    id: string;
+    node_id: string;
+    protocol: FleetProxyProtocol;
+    listen_ip: string;
+    listen_port: number;
+    username: string;
+    password: string;
+    enabled: boolean;
+    current_revision: number;
+  }>;
+}
+
 
 export interface FleetProxyCredentialRecord {
   id: string;
@@ -109,6 +149,24 @@ export interface FleetEnrollmentTokenRecord {
   consumed_at: number | null;
   created_at: number;
 }
+export type FleetRemovalStatus = "pending" | "completed";
+
+export interface FleetRemovalRecord {
+  nodeId: string;
+  nodeName: string;
+  wireguardIp: string;
+  publicKey: string | null;
+  status: FleetRemovalStatus;
+  lastError: string | null;
+  requestedAt: number;
+  completedAt: number | null;
+}
+
+export interface NodeRemovalService {
+  remove(nodeId: string): Promise<FleetRemovalRecord>;
+  retryPending(): Promise<void>;
+  retryNode?(nodeId: string): Promise<FleetRemovalRecord>;
+}
 
 export interface FleetEventRecord {
   id: string;
@@ -121,3 +179,30 @@ export interface FleetEventRecord {
   created_at: number;
   createdAt?: number;
 }
+
+export interface RecordDeploymentResultInput {
+  nodeId: string;
+  revision: number;
+  configDigest: string;
+  status: "applied" | "failed";
+  errorMessage?: string;
+}
+
+export interface RecordDeploymentResultOutcome {
+  ok: boolean;
+  accepted: boolean;
+  reason?: "stale_revision" | "duplicate_revision" | "future_revision" | "node_not_found" | string;
+  node?: FleetNodeWithCamel;
+}
+
+export type FleetNodeWithCamel = FleetNodeRecord & {
+  wireguardIp: string;
+  publicIp: string | null;
+  agentVersion: string | null;
+  appliedRevision: number | null;
+  deploymentRevision: number | null;
+  deploymentStatus: FleetConfigurationStatus;
+  deploymentError: string | null;
+  deploymentUpdatedAt: number | null;
+  configuration: FleetNodeConfigurationView;
+};

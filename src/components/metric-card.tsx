@@ -44,11 +44,11 @@ export function MetricCard({
       <CardContent className="pt-0">
         <div className="flex items-baseline justify-between gap-2">
           <div className="text-3xl font-bold tracking-tight text-ink font-mono">
-            {value}
+            {value == null || value === "" ? "—" : value}
           </div>
-          {sparkData.length > 0 && (
+          {sparkData && sparkData.length >= 2 && (
             <div className="shrink-0 opacity-90 transition-opacity hover:opacity-100">
-              <Sparkline data={sparkData} color={sparkColor} width={92} height={38} />
+              <Sparkline data={sparkData} color={sparkColor} width={92} height={38} label={`${label} trend`} />
             </div>
           )}
         </div>
@@ -56,6 +56,7 @@ export function MetricCard({
           <span className="truncate">{sub}</span>
           {delta && (
             <Badge variant={badgeVariant} className="font-mono text-[10px] px-1.5 py-0 h-4 shrink-0 font-medium">
+              <span className="sr-only">Trend: </span>
               {delta}
             </Badge>
           )}

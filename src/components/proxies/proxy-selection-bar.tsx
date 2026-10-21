@@ -28,31 +28,31 @@ export function ProxySelectionBar({
 
   return (
     <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-3 rounded-lg border border-primary/40 bg-primary/10 text-foreground animate-in fade-in duration-150">
-      <div className="flex items-center gap-2.5 text-xs font-medium">
+      <div className="flex flex-wrap items-center gap-2 text-xs font-medium">
         <CheckSquare className="h-4 w-4 text-primary shrink-0" aria-hidden="true" />
         <span>
-          <strong className="font-semibold text-primary">{selectedCount.toLocaleString()}</strong> proxy
-          {selectedCount > 1 ? "ies" : ""} selected
+          <strong className="font-semibold text-primary">{selectedCount.toLocaleString()}</strong>{" "}
+          {selectedCount === 1 ? "proxy" : "proxies"} selected
         </span>
 
         {totalMatching > selectedCount && !selectAllMatching && (
           <button
             type="button"
             onClick={() => onSelectAllMatchingToggle(true)}
-            className="text-xs text-primary underline hover:text-primary-hover font-semibold ml-2 cursor-pointer"
+            className="text-xs text-primary underline hover:text-primary-hover font-semibold ml-1 cursor-pointer"
           >
             Select all {totalMatching.toLocaleString()} matching proxies
           </button>
         )}
 
         {selectAllMatching && (
-          <span className="text-xs text-muted-foreground ml-2">
+          <span className="text-xs text-muted-foreground ml-1">
             (All {totalMatching.toLocaleString()} matching proxies targeted)
           </span>
         )}
       </div>
 
-      <div className="flex items-center gap-2 shrink-0">
+      <div className="flex flex-wrap items-center gap-2 shrink-0">
         {onPinSelected && (
           <Button
             variant="outline"
@@ -62,7 +62,7 @@ export function ProxySelectionBar({
             aria-label="Pin selected proxies"
           >
             <Pin className="h-3 w-3 fill-current" />
-            <span>Ghim đã chọn</span>
+            <span>Pin selected</span>
           </Button>
         )}
 
@@ -75,7 +75,7 @@ export function ProxySelectionBar({
             aria-label="Delete selected proxies"
           >
             <Trash2 className="h-3 w-3" />
-            <span>Xóa đã chọn</span>
+            <span>Delete selected</span>
           </Button>
         )}
         <Button

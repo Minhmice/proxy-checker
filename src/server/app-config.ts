@@ -1,3 +1,4 @@
+import { validateFleetWireGuardSettings, type FleetWireGuardSettings } from "../proxyfleet/wireguard.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -23,6 +24,7 @@ export interface AppSettings {
   antigravityActiveLimit: number;
   antigravityRotateMinutes: number;
   antigravitySessionThreshold: number;
+  fleetWireguard?: FleetWireGuardSettings | null;
 }
 
 export interface AppSettingsPublic {
@@ -40,6 +42,7 @@ export interface AppSettingsPublic {
   antigravityActiveLimit: number;
   antigravityRotateMinutes: number;
   antigravitySessionThreshold: number;
+  fleetWireguard?: FleetWireGuardSettings | null;
 }
 
 export interface SettingsMeta {
@@ -63,6 +66,7 @@ export interface SettingsUpdatePatch {
   antigravityActiveLimit?: number;
   antigravityRotateMinutes?: number;
   antigravitySessionThreshold?: number;
+  fleetWireguard?: FleetWireGuardSettings | null;
 }
 
 type ChangeListener = (settings: AppSettings, changed: string[]) => void;
@@ -101,6 +105,7 @@ function defaultsFromEnv(): AppSettings {
     antigravityActiveLimit: envNumber("ANTIGRAVITY_ACTIVE_LIMIT", 3),
     antigravityRotateMinutes: envNumber("ANTIGRAVITY_ROTATE_MINUTES", 10),
     antigravitySessionThreshold: envNumber("ANTIGRAVITY_SESSION_THRESHOLD", 20),
+    fleetWireguard: null,
   };
 }
 
@@ -108,19 +113,30 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-function validateUrl(url: string) {
+export function normalizeNineRouterUrl(raw: string): string {
+  let url = (raw ?? "").trim();
+  if (!url) throw new Error("9Router URL cannot be empty");
+  if (/^[a-z0-9+.-]+:\/\//i.test(url)) {
+    if (!/^https?:\/\//i.test(url)) {
+      throw new Error("URL must use http or https");
+    }
+  } else {
+    url = `http://${url}`;
+  }
   try {
     const parsed = new URL(url);
     if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("URL must use http or https");
-  } catch {
-    throw new Error("Invalid 9Router URL");
+    return url.replace(/\/+$/, "");
+  } catch (err) {
+    if ((err as Error).message.includes("http")) throw err;
+    throw new Error("Invalid 9Router URL", { cause: err });
   }
 }
 
 function normalize(settingsValue: AppSettings): AppSettings {
   return {
     controlPassword: settingsValue.controlPassword,
-    nineRouterUrl: settingsValue.nineRouterUrl.replace(/\/$/, ""),
+    nineRouterUrl: normalizeNineRouterUrl(settingsValue.nineRouterUrl || "https://9router.minhmice.com"),
     nineRouterPassword: settingsValue.nineRouterPassword,
     nineRouterApiKey: settingsValue.nineRouterApiKey,
     nineRouterAutoSync: settingsValue.nineRouterAutoSync !== false,
@@ -133,6 +149,7 @@ function normalize(settingsValue: AppSettings): AppSettings {
     antigravityActiveLimit: clamp(Math.round(settingsValue.antigravityActiveLimit ?? 3), 1, 10),
     antigravityRotateMinutes: clamp(Math.round(settingsValue.antigravityRotateMinutes ?? 10), 1, 60),
     antigravitySessionThreshold: clamp(Math.round(settingsValue.antigravitySessionThreshold ?? 20), 5, 50),
+    fleetWireguard: settingsValue.fleetWireguard == null ? null : validateFleetWireGuardSettings(settingsValue.fleetWireguard),
   };
 }
 
@@ -214,6 +231,7 @@ export function getSettingsPublic(): { settings: AppSettingsPublic; meta: Settin
       antigravityActiveLimit: settings.antigravityActiveLimit,
       antigravityRotateMinutes: settings.antigravityRotateMinutes,
       antigravitySessionThreshold: settings.antigravitySessionThreshold,
+      fleetWireguard: settings.fleetWireguard ?? null,
     },
     meta: {
       restartRequired: [],
@@ -231,6 +249,10 @@ export function verifyControlPassword(candidate: string): boolean {
 export function updateSettings(patch: SettingsUpdatePatch) {
   const next = { ...settings };
   const changed: string[] = [];
+  if (patch.fleetWireguard !== undefined) {
+    next.fleetWireguard = patch.fleetWireguard === null ? null : validateFleetWireGuardSettings(patch.fleetWireguard);
+    changed.push("fleetWireguard");
+  }
 
   if (patch.controlPassword !== undefined) {
     if (!patch.currentPassword || !verifyControlPassword(patch.currentPassword)) {
@@ -242,8 +264,8 @@ export function updateSettings(patch: SettingsUpdatePatch) {
   }
 
   if (patch.nineRouterUrl !== undefined) {
-    validateUrl(patch.nineRouterUrl);
-    next.nineRouterUrl = patch.nineRouterUrl;
+    const validUrl = normalizeNineRouterUrl(patch.nineRouterUrl);
+    next.nineRouterUrl = validUrl;
     changed.push("nineRouterUrl");
   }
 

@@ -67,7 +67,7 @@ test("listPools preserves remote metadata and testPool parses structured error o
   }
 });
 
-test("testPool marks reported 9Router fetch ECONNRESET as transport failure", async () => {
+test("does not classify proxy-originated ECONNRESET as 9Router transport failure", async () => {
   clearNineRouterSession();
   globalThis.fetch = (async (input: string | URL | Request) => {
     const url = String(input);
@@ -84,8 +84,34 @@ test("testPool marks reported 9Router fetch ECONNRESET as transport failure", as
   }) as typeof fetch;
 
   try {
-    const result = await testPool("remote-transport");
+    const result = await testPool("remote-proxy-failure");
     assert.equal(result.ok, false);
+    assert.equal(result.failureKind, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearNineRouterSession();
+  }
+});
+
+test("testPool preserves explicitly reported 9Router transport failure", async () => {
+  clearNineRouterSession();
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes("/api/auth/login")) {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json", "set-cookie": "auth_token=mock-token; Path=/" },
+      });
+    }
+    return new Response(JSON.stringify({
+      ok: false,
+      failureKind: "transport",
+      error: "9Router test service unavailable",
+    }), { status: 500, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+
+  try {
+    const result = await testPool("remote-router-failure");
     assert.equal(result.failureKind, "transport");
   } finally {
     globalThis.fetch = originalFetch;

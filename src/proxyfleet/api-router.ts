@@ -1,15 +1,21 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { URL } from "node:url";
 import type { FleetRepository } from "./db.js";
-import { createEnrollmentService } from "./enrollment.js";
-import type { FleetNodeStatus, FleetProxyProtocol } from "./types.js";
+import { createEnrollmentService, type EnrollmentService } from "./enrollment.js";
+import type { FleetNodeStatus, FleetProxyProtocol, NodeRemovalService } from "./types.js";
 import { readSession } from "../server/session-auth.js";
+import { generateRandomToken } from "./security.js";
 
 export interface FleetApiHandlerOptions {
   repo: FleetRepository;
   verifyAuth: (candidate: string) => boolean;
+  nodeRemovalService?: NodeRemovalService;
+  enrollmentService?: EnrollmentService;
+  enrollmentOptions?: {
+    serverWireguardPublicKey?: string;
+    serverWireguardEndpoint?: string;
+  };
 }
-
 function sendJson(res: ServerResponse, status: number, payload: unknown): void {
   const body = Buffer.from(JSON.stringify(payload));
   res.writeHead(status, {
@@ -77,8 +83,18 @@ function readBody(req: IncomingMessage, maxBytes = 1_000_000): Promise<Record<st
 }
 
 export function createFleetApiHandler(options: FleetApiHandlerOptions) {
-  const { repo, verifyAuth } = options;
-  const enrollmentService = createEnrollmentService(repo);
+  const { repo, verifyAuth, nodeRemovalService } = options;
+  const enrollmentService =
+    options.enrollmentService || createEnrollmentService(repo, options.enrollmentOptions);
+  async function authenticateAgent(req: IncomingMessage, res: ServerResponse, nodeId: string): Promise<boolean> {
+    const authorization = req.headers.authorization;
+    const token = authorization?.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
+    if (!nodeId || !token || !(await repo.verifyNodeAgentToken(nodeId, token))) {
+      sendJson(res, 401, { error: "Invalid node credential" });
+      return false;
+    }
+    return true;
+  }
 
   return async function handleFleetApi(
     req: IncomingMessage,
@@ -125,10 +141,7 @@ export function createFleetApiHandler(options: FleetApiHandlerOptions) {
       try {
         const body = await readBody(req);
         const nodeId = String(body.nodeId || "");
-        if (!nodeId) {
-          sendJson(res, 400, { error: "nodeId is required" });
-          return true;
-        }
+        if (!(await authenticateAgent(req, res, nodeId))) return true;
 
         await repo.recordHeartbeat(nodeId, {
           status: (body.status as FleetNodeStatus) || "online",
@@ -149,42 +162,13 @@ export function createFleetApiHandler(options: FleetApiHandlerOptions) {
       try {
         const parsed = new URL(req.url || "/", "http://localhost");
         const nodeId = parsed.searchParams.get("nodeId") || String(req.headers["x-node-id"] || "");
-        if (!nodeId) {
-          sendJson(res, 400, { error: "nodeId is required" });
-          return true;
-        }
-        const node = await repo.getNode(nodeId);
-        if (!node) {
+        if (!(await authenticateAgent(req, res, nodeId))) return true;
+        const state = await repo.getNodeDesiredState(nodeId);
+        if (!state) {
           sendJson(res, 404, { error: "Node not found" });
           return true;
         }
-
-        const endpoints = await repo.listEndpoints({ nodeId, enabled: true });
-        const proxies = await Promise.all(
-          endpoints.map(async (ep) => {
-            const creds = await repo.getEndpointCredentials(ep.id);
-            return {
-              id: ep.id,
-              node_id: ep.node_id,
-              protocol: ep.protocol,
-              listen_ip: ep.listen_ip,
-              listen_port: ep.listen_port,
-              username: creds?.username || ep.username,
-              password: creds?.password || "",
-              enabled: ep.enabled,
-              current_revision: ep.current_revision,
-            };
-          })
-        );
-
-        const revision = endpoints.length > 0
-          ? endpoints.reduce((max, ep) => Math.max(max, ep.updated_at, ep.current_revision), 1)
-          : (node.updated_at || 1);
-
-        sendJson(res, 200, {
-          revision,
-          proxies,
-        });
+        sendJson(res, 200, state);
       } catch (err) {
         sendJson(res, 500, { error: (err as Error).message });
       }
@@ -194,15 +178,67 @@ export function createFleetApiHandler(options: FleetApiHandlerOptions) {
     if (req.method === "POST" && pathname === "/api/fleet/agent/deployment-result") {
       try {
         const body = await readBody(req);
-        const nodeId = String(body.nodeId || "");
-        const status = String(body.status || "applied");
-        await repo.recordEvent({
+        const nodeId = typeof body.nodeId === "string" ? body.nodeId.trim() : "";
+        if (!nodeId || nodeId.length > 128) {
+          sendJson(res, 400, { error: "Invalid nodeId" });
+          return true;
+        }
+
+        if (!(await authenticateAgent(req, res, nodeId))) return true;
+
+        const rawRevision = body.revision;
+        const revision = typeof rawRevision === "number" ? rawRevision : Number(rawRevision);
+        if (!Number.isSafeInteger(revision) || revision <= 0) {
+          sendJson(res, 400, { error: "Invalid revision: must be positive safe integer" });
+          return true;
+        }
+
+        const status = body.status;
+        if (status !== "applied" && status !== "failed") {
+          sendJson(res, 400, { error: "Invalid status: must be 'applied' or 'failed'" });
+          return true;
+        }
+
+        const configDigest = typeof body.configDigest === "string" ? body.configDigest.trim() : "";
+        if (!configDigest || configDigest.length > 128) {
+          sendJson(res, 400, { error: "Invalid configDigest" });
+          return true;
+        }
+
+        const rawErrorMessage = body.errorMessage;
+        if (rawErrorMessage !== undefined && rawErrorMessage !== null && typeof rawErrorMessage !== "string") {
+          sendJson(res, 400, { error: "errorMessage must be a string if provided" });
+          return true;
+        }
+        const errorMessage = typeof rawErrorMessage === "string" ? rawErrorMessage : undefined;
+        if (errorMessage && errorMessage.length > 2048) {
+          sendJson(res, 400, { error: "errorMessage exceeds 2048 characters" });
+          return true;
+        }
+
+        const outcome = await repo.recordDeploymentResult({
           nodeId,
-          eventType: status === "applied" ? "deployment.applied" : "deployment.failed",
-          level: status === "applied" ? "info" : "error",
-          payload: body,
+          revision,
+          configDigest,
+          status,
+          errorMessage,
         });
-        sendJson(res, 200, { ok: true });
+
+        if (outcome.reason === "future_revision") {
+          sendJson(res, 400, { ok: false, accepted: false, reason: "future_revision", error: "Future revision not accepted" });
+          return true;
+        }
+
+        if (outcome.reason === "node_not_found") {
+          sendJson(res, 404, { error: "Node not found" });
+          return true;
+        }
+
+        sendJson(res, 200, {
+          ok: outcome.ok,
+          accepted: outcome.accepted,
+          ...(outcome.reason ? { reason: outcome.reason } : {}),
+        });
       } catch (err) {
         sendJson(res, 400, { error: (err as Error).message });
       }
@@ -240,7 +276,92 @@ export function createFleetApiHandler(options: FleetApiHandlerOptions) {
       return true;
     }
 
-    if (req.method === "GET" && pathname.startsWith("/api/fleet/nodes/")) {
+    if (req.method === "POST" && /^\/api\/fleet\/nodes\/[^/]+\/agent-token$/.test(pathname)) {
+      const nodeId = decodeURIComponent(pathname.split("/")[4]);
+      if (!(await repo.getNode(nodeId))) {
+        sendJson(res, 404, { error: "Node not found" });
+        return true;
+      }
+      const agentToken = `fla_${generateRandomToken(32)}`;
+      await repo.setNodeAgentToken(nodeId, agentToken);
+      sendJson(res, 200, { nodeId, agentToken });
+      return true;
+    }
+
+    if (req.method === "DELETE" && /^\/api\/fleet\/nodes\/[^/]+$/.test(pathname)) {
+      const id = decodeURIComponent(pathname.slice("/api/fleet/nodes/".length));
+      const node = await repo.getNode(id);
+      const existingRemoval = await repo.getNodeRemoval(id);
+      if (!node && !existingRemoval) {
+        sendJson(res, 404, { error: "Node not found" });
+        return true;
+      }
+      if (node && (node.role === "controller-worker" || node.wireguardIp === "10.77.0.1")) {
+        sendJson(res, 409, { error: "Cannot remove controller node" });
+        return true;
+      }
+
+      if (!nodeRemovalService) {
+        sendJson(res, 503, { error: "Node removal service not configured" });
+        return true;
+      }
+
+      try {
+        const removal = await nodeRemovalService.remove(id);
+        const status = removal.status === "completed" ? 200 : 202;
+        sendJson(res, status, { removal });
+      } catch (err) {
+        const status = (err && typeof err === "object" && "statusCode" in err && typeof err.statusCode === "number")
+          ? err.statusCode
+          : 500;
+        sendJson(res, status, { error: (err as Error).message });
+      }
+      return true;
+    }
+
+    if (req.method === "GET" && pathname === "/api/fleet/node-removals") {
+      const removals = await repo.listPendingNodeRemovals();
+      sendJson(res, 200, { removals });
+      return true;
+    }
+
+    if (req.method === "GET" && /^\/api\/fleet\/node-removals\/[^/]+$/.test(pathname)) {
+      const id = decodeURIComponent(pathname.slice("/api/fleet/node-removals/".length));
+      const removal = await repo.getNodeRemoval(id);
+      if (!removal) {
+        sendJson(res, 404, { error: "Removal record not found" });
+        return true;
+      }
+      sendJson(res, 200, { removal });
+      return true;
+    }
+
+    if (req.method === "POST" && /^\/api\/fleet\/node-removals\/[^/]+\/retry$/.test(pathname)) {
+      const parts = pathname.split("/");
+      const id = decodeURIComponent(parts[4]);
+      const existingRemoval = await repo.getNodeRemoval(id);
+      if (!existingRemoval) {
+        sendJson(res, 404, { error: "Removal record not found" });
+        return true;
+      }
+      if (!nodeRemovalService) {
+        sendJson(res, 503, { error: "Node removal service not configured" });
+        return true;
+      }
+      try {
+        const removal = await nodeRemovalService.remove(id);
+        const status = removal.status === "completed" ? 200 : 202;
+        sendJson(res, status, { removal });
+      } catch (err) {
+        const status = (err && typeof err === "object" && "statusCode" in err && typeof err.statusCode === "number")
+          ? err.statusCode
+          : 500;
+        sendJson(res, status, { error: (err as Error).message });
+      }
+      return true;
+    }
+
+    if (req.method === "GET" && /^\/api\/fleet\/nodes\/[^/]+$/.test(pathname)) {
       const id = decodeURIComponent(pathname.slice("/api/fleet/nodes/".length));
       const node = await repo.getNode(id);
       if (!node) {
@@ -249,7 +370,8 @@ export function createFleetApiHandler(options: FleetApiHandlerOptions) {
       }
       const endpoints = await repo.listEndpoints({ nodeId: id });
       const events = await repo.listEvents({ nodeId: id, limit: 20 });
-      sendJson(res, 200, { node, endpoints, events });
+      const deployments = await repo.getNodeDeployments(id);
+      sendJson(res, 200, { node, endpoints, events, deployments });
       return true;
     }
 
@@ -302,6 +424,23 @@ export function createFleetApiHandler(options: FleetApiHandlerOptions) {
         return true;
       }
       sendJson(res, 200, creds);
+      return true;
+    }
+
+    if (req.method === "PATCH" && pathname.startsWith("/api/fleet/endpoints/")) {
+      const parts = pathname.split("/");
+      const endpointId = decodeURIComponent(parts[parts.length - 1]);
+      try {
+        const body = await readBody(req);
+        if (typeof body.enabled !== "boolean") {
+          sendJson(res, 400, { error: "enabled must be a boolean" });
+          return true;
+        }
+        const updated = await repo.updateEndpoint(endpointId, { enabled: body.enabled });
+        sendJson(res, 200, updated);
+      } catch (err) {
+        sendJson(res, 400, { error: (err as Error).message });
+      }
       return true;
     }
 

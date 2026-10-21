@@ -1,6 +1,5 @@
 import type {
   DiagnosticJob,
-  DetailedDiagnosticResult,
   PoolRecord,
   PoolStatus,
   MetricsSnapshot,
@@ -59,16 +58,19 @@ export async function logout(): Promise<void> {
 }
 
 export async function checkSession(signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return false;
   try {
     const response = await fetch("/api/auth/session", {
       cache: "no-store",
       credentials: "same-origin",
       signal,
     });
-    if (!response.ok) return false;
+    if (signal?.aborted || !response.ok) return false;
     const body = await response.json();
-    return Boolean(body.authenticated);
-  } catch {
+    if (signal?.aborted) return false;
+    return Boolean(body?.authenticated);
+  } catch (err: unknown) {
+    if (signal?.aborted || isAbortError(err)) return false;
     return false;
   }
 }
@@ -122,29 +124,35 @@ export async function fetchStatus(arg1?: string | AbortSignal, arg2?: AbortSigna
   const signal = arg1 instanceof AbortSignal ? arg1 : (arg2 instanceof AbortSignal ? arg2 : undefined);
   const password = typeof arg1 === "string" ? arg1 : undefined;
 
-  const response = await fetch("/api/ninerouter/status", {
-    cache: "no-store",
-    signal,
-    credentials: "same-origin",
-    headers: authHeaders(password),
-  }).catch((err) => {
-    if (isAbortError(err)) return null;
+  const emptyStatus: PoolStatus = {
+    running: false,
+    configured: false,
+    lastSyncAt: null,
+    lastError: "",
+    stats: { total: 0, active: 0, reserve: 0, dead: 0 },
+    syncIntervalMinutes: 15,
+    activeLimit: 20,
+  };
+
+  try {
+    const response = await fetch("/api/ninerouter/status", {
+      cache: "no-store",
+      signal,
+      credentials: "same-origin",
+      headers: authHeaders(password),
+    });
+    if (signal?.aborted) return emptyStatus;
+    if (response.status === 401) throw new Error("Wrong control password");
+    if (!response.ok) throw new Error("Control service is unavailable");
+    const data = await response.json();
+    if (signal?.aborted) return emptyStatus;
+    return data;
+  } catch (err: unknown) {
+    if (signal?.aborted || isAbortError(err)) {
+      return emptyStatus;
+    }
     throw err;
-  });
-  if (!response) {
-    return {
-      running: false,
-      configured: false,
-      lastSyncAt: null,
-      lastError: "",
-      stats: { total: 0, active: 0, reserve: 0, dead: 0 },
-      syncIntervalMinutes: 15,
-      activeLimit: 20,
-    };
   }
-  if (response.status === 401) throw new Error("Wrong control password");
-  if (!response.ok) throw new Error("Control service is unavailable");
-  return response.json();
 }
 export async function fetchPools(arg1?: string | AbortSignal, arg2?: string | AbortSignal, arg3?: AbortSignal): Promise<PoolRecord[]> {
   let tier: string | undefined;
@@ -164,23 +172,30 @@ export async function fetchPools(arg1?: string | AbortSignal, arg2?: string | Ab
     }
   } else if (arg1 instanceof AbortSignal) {
     signal = arg1;
+  } else if (arg1 === undefined) {
+    if (typeof arg2 === "string") tier = arg2;
+    if (arg3 instanceof AbortSignal) signal = arg3;
+    else if (arg2 instanceof AbortSignal) signal = arg2;
   }
 
   const query = tier ? `?tier=${tier}` : "";
-  const response = await fetch(`/api/ninerouter/pools${query}`, {
-    cache: "no-store",
-    headers: authHeaders(password),
-    credentials: "same-origin",
-    signal,
-  }).catch((err) => {
-    if (isAbortError(err)) return null;
+  try {
+    const response = await fetch(`/api/ninerouter/pools${query}`, {
+      cache: "no-store",
+      headers: authHeaders(password),
+      credentials: "same-origin",
+      signal,
+    });
+    if (signal?.aborted) return [];
+    if (response.status === 401) throw new Error("Wrong control password");
+    if (!response.ok) throw new Error("Control service is unavailable");
+    const body = await response.json();
+    if (signal?.aborted) return [];
+    return body.pools ?? [];
+  } catch (err: unknown) {
+    if (signal?.aborted || isAbortError(err)) return [];
     throw err;
-  });
-  if (!response) return [];
-  if (response.status === 401) throw new Error("Wrong control password");
-  if (!response.ok) throw new Error("Control service is unavailable");
-  const body = await response.json();
-  return body.pools ?? [];
+  }
 }
 
 export async function fetchMetrics(arg1?: number | string | AbortSignal, arg2?: number | AbortSignal, arg3?: AbortSignal): Promise<MetricsSnapshot[]> {
@@ -197,22 +212,29 @@ export async function fetchMetrics(arg1?: number | string | AbortSignal, arg2?: 
     if (arg2 instanceof AbortSignal) signal = arg2;
   } else if (arg1 instanceof AbortSignal) {
     signal = arg1;
+  } else if (arg1 === undefined) {
+    if (typeof arg2 === "number") hours = arg2;
+    if (arg3 instanceof AbortSignal) signal = arg3;
+    else if (arg2 instanceof AbortSignal) signal = arg2;
   }
 
-  const response = await fetch(`/api/ninerouter/metrics?hours=${hours}`, {
-    cache: "no-store",
-    headers: authHeaders(password),
-    credentials: "same-origin",
-    signal,
-  }).catch((err) => {
-    if (isAbortError(err)) return null;
+  try {
+    const response = await fetch(`/api/ninerouter/metrics?hours=${hours}`, {
+      cache: "no-store",
+      headers: authHeaders(password),
+      credentials: "same-origin",
+      signal,
+    });
+    if (signal?.aborted) return [];
+    if (response.status === 401) throw new Error("Wrong control password");
+    if (!response.ok) throw new Error("Metrics unavailable");
+    const body = await response.json();
+    if (signal?.aborted) return [];
+    return body.snapshots ?? [];
+  } catch (err: unknown) {
+    if (signal?.aborted || isAbortError(err)) return [];
     throw err;
-  });
-  if (!response) return [];
-  if (response.status === 401) throw new Error("Wrong control password");
-  if (!response.ok) throw new Error("Metrics unavailable");
-  const body = await response.json();
-  return body.snapshots ?? [];
+  }
 }
 export async function syncPools(password?: string) {
   const response = await fetch("/api/ninerouter/sync", {
@@ -260,22 +282,26 @@ export async function fetchDiagnosticFiles(password?: string) {
   return response.json() as Promise<{ files: Array<{ name: string; count: number }>; job: DiagnosticJob }>;
 }
 
-export async function fetchDiagnosticJob(arg1?: string | AbortSignal, arg2?: AbortSignal) {
+export async function fetchDiagnosticJob(arg1?: string | AbortSignal, arg2?: AbortSignal): Promise<DiagnosticJob | null> {
   const signal = arg1 instanceof AbortSignal ? arg1 : (arg2 instanceof AbortSignal ? arg2 : undefined);
   const password = typeof arg1 === "string" ? arg1 : undefined;
 
-  const response = await fetch("/api/diagnostics/job", {
-    cache: "no-store",
-    signal,
-    credentials: "same-origin",
-    headers: authHeaders(password),
-  }).catch((err) => {
-    if (isAbortError(err)) return null;
+  try {
+    const response = await fetch("/api/diagnostics/job", {
+      cache: "no-store",
+      signal,
+      credentials: "same-origin",
+      headers: authHeaders(password),
+    });
+    if (signal?.aborted) return null;
+    if (!response.ok) throw new Error(response.status === 401 ? "Wrong control password" : "Diagnostic job unavailable");
+    const data = await response.json();
+    if (signal?.aborted) return null;
+    return (data?.job ?? null) as DiagnosticJob | null;
+  } catch (err: unknown) {
+    if (signal?.aborted || isAbortError(err)) return null;
     throw err;
-  });
-  if (!response) return null;
-  if (!response.ok) throw new Error(response.status === 401 ? "Wrong control password" : "Diagnostic job unavailable");
-  return (await response.json()).job as DiagnosticJob;
+  }
 }
 
 export async function uploadDiagnosticFile(arg1: string, arg2: string, arg3?: string) {
@@ -388,43 +414,49 @@ export function formatTime(value: number | null): string {
   return new Date(value).toLocaleString();
 }
 
-export async function fetchSettings(arg1?: string | AbortSignal, arg2?: AbortSignal) {
+export async function fetchSettings(arg1?: string | AbortSignal, arg2?: AbortSignal): Promise<SettingsResponse> {
   const signal = arg1 instanceof AbortSignal ? arg1 : (arg2 instanceof AbortSignal ? arg2 : undefined);
   const password = typeof arg1 === "string" ? arg1 : undefined;
 
-  const response = await fetch("/api/settings", {
-    cache: "no-store",
-    signal,
-    credentials: "same-origin",
-    headers: authHeaders(password),
-  }).catch((err) => {
-    if (isAbortError(err)) return null;
+  const defaultSettings: SettingsResponse = {
+    settings: {
+      controlPasswordSet: false,
+      nineRouterPasswordSet: false,
+      nineRouterApiKeySet: false,
+      nineRouterUrl: "",
+      nineRouterAutoSync: false,
+      activePoolLimit: 20,
+      nineRouterSyncMinutes: 15,
+      checkConcurrency: 20,
+      checkTimeoutMs: 5000,
+      proxyTtlMinutes: 60,
+      antigravityRotatorEnabled: true,
+      antigravityActiveLimit: 3,
+      antigravityRotateMinutes: 10,
+      antigravitySessionThreshold: 20,
+    },
+    meta: { restartRequired: [], source: "settings" as const },
+  };
+
+  try {
+    const response = await fetch("/api/settings", {
+      cache: "no-store",
+      signal,
+      credentials: "same-origin",
+      headers: authHeaders(password),
+    });
+    if (signal?.aborted) return defaultSettings;
+    if (response.status === 401) throw new Error("Wrong control password");
+    if (!response.ok) throw new Error("Settings unavailable");
+    const data = await response.json();
+    if (signal?.aborted) return defaultSettings;
+    return data as SettingsResponse;
+  } catch (err: unknown) {
+    if (signal?.aborted || isAbortError(err)) {
+      return defaultSettings;
+    }
     throw err;
-  });
-  if (!response) {
-    return {
-      settings: {
-        controlPasswordSet: false,
-        nineRouterPasswordSet: false,
-        nineRouterApiKeySet: false,
-        nineRouterUrl: "",
-        nineRouterAutoSync: false,
-        activePoolLimit: 20,
-        nineRouterSyncMinutes: 15,
-        checkConcurrency: 20,
-        checkTimeoutMs: 5000,
-        proxyTtlMinutes: 60,
-        antigravityRotatorEnabled: true,
-        antigravityActiveLimit: 3,
-        antigravityRotateMinutes: 10,
-        antigravitySessionThreshold: 20,
-      },
-      meta: { restartRequired: [], source: "settings" as const },
-    };
   }
-  if (response.status === 401) throw new Error("Wrong control password");
-  if (!response.ok) throw new Error("Settings unavailable");
-  return response.json() as Promise<SettingsResponse>;
 }
 
 export async function updateSettings(arg1: string | SettingsUpdatePayload, arg2?: SettingsUpdatePayload) {
@@ -578,35 +610,40 @@ export async function fetchUnifiedProxies(
   if (params?.direction) query.set("direction", params.direction);
   if (params?.page) query.set("page", String(params.page));
   if (params?.pageSize) query.set("pageSize", String(params.pageSize));
-  const response = await fetch(`/api/proxies/unified?${query.toString()}`, {
-    cache: "no-store",
-    signal,
-    credentials: "same-origin",
-    headers: authHeaders(password),
-  }).catch((err) => {
-    if (isAbortError(err)) return null;
+  const emptyProxies: UnifiedProxyResponse = {
+    items: [],
+    counts: { all: 0, working: 0, regressed: 0, dead: 0 },
+    total: 0,
+    facets: { all: 0, working: 0, regressed: 0, dead: 0, protocols: {} },
+    pagination: { page: 1, pageSize: 50, total: 0 },
+    meta: { generatedAt: new Date().toISOString() },
+  };
+  try {
+    const response = await fetch(`/api/proxies/unified?${query.toString()}`, {
+      cache: "no-store",
+      signal,
+      credentials: "same-origin",
+      headers: authHeaders(password),
+    });
+    if (signal?.aborted) return emptyProxies;
+    if (response.status === 401) throw new Error("Wrong control password");
+    if (!response.ok) {
+      let msg = "Failed to fetch proxies";
+      try {
+        const data = await response.json();
+        if (data.error) msg = data.error;
+      } catch {}
+      throw new Error(msg);
+    }
+    const data = await response.json();
+    if (signal?.aborted) return emptyProxies;
+    return data as UnifiedProxyResponse;
+  } catch (err: unknown) {
+    if (signal?.aborted || isAbortError(err)) {
+      return emptyProxies;
+    }
     throw err;
-  });
-  if (!response) {
-    return {
-      items: [],
-      counts: { all: 0, working: 0, regressed: 0, dead: 0 },
-      total: 0,
-      facets: { all: 0, working: 0, regressed: 0, dead: 0, protocols: {} },
-      pagination: { page: 1, pageSize: 50, total: 0 },
-      meta: { generatedAt: new Date().toISOString() },
-    };
   }
-  if (response.status === 401) throw new Error("Wrong control password");
-  if (!response.ok) {
-    let msg = "Failed to fetch proxies";
-    try {
-      const data = await response.json();
-      if (data.error) msg = data.error;
-    } catch {}
-    throw new Error(msg);
-  }
-  return response.json();
 }
 
 export async function checkProxyValidity(
@@ -666,26 +703,30 @@ export async function fetchProxyHistory(
   }
 
   const query = new URLSearchParams({ key: proxyKey });
-  const response = await fetch(`/api/proxies/history?${query.toString()}`, {
-    cache: "no-store",
-    signal,
-    credentials: "same-origin",
-    headers: authHeaders(password),
-  }).catch((err) => {
-    if (isAbortError(err)) return null;
+  try {
+    const response = await fetch(`/api/proxies/history?${query.toString()}`, {
+      cache: "no-store",
+      signal,
+      credentials: "same-origin",
+      headers: authHeaders(password),
+    });
+    if (signal?.aborted) return { history: [] };
+    if (response.status === 401) throw new Error("Wrong control password");
+    if (!response.ok) {
+      let msg = "Failed to fetch proxy history";
+      try {
+        const data = await response.json();
+        if (data.error) msg = data.error;
+      } catch {}
+      throw new Error(msg);
+    }
+    const data = await response.json();
+    if (signal?.aborted) return { history: [] };
+    return data as { history: UnifiedProxyHistoryEntry[] };
+  } catch (err: unknown) {
+    if (signal?.aborted || isAbortError(err)) return { history: [] };
     throw err;
-  });
-  if (!response) return { history: [] };
-  if (response.status === 401) throw new Error("Wrong control password");
-  if (!response.ok) {
-    let msg = "Failed to fetch proxy history";
-    try {
-      const data = await response.json();
-      if (data.error) msg = data.error;
-    } catch {}
-    throw new Error(msg);
   }
-  return response.json();
 }
 
 export async function fetchProxyAuditDetail(
@@ -696,42 +737,50 @@ export async function fetchProxyAuditDetail(
   const query = new URLSearchParams({ key: proxyKey });
   if (auditId) query.set("auditId", auditId);
 
-  const response = await fetch(`/api/proxies/detail?${query.toString()}`, {
-    cache: "no-store",
-    signal,
-    credentials: "same-origin",
-  }).catch((err) => {
-    if (isAbortError(err)) return null;
+  try {
+    const response = await fetch(`/api/proxies/detail?${query.toString()}`, {
+      cache: "no-store",
+      signal,
+      credentials: "same-origin",
+    });
+    if (signal?.aborted) return { auditDetail: null };
+    if (response.status === 401) throw new Error("Wrong control password");
+    if (!response.ok) {
+      let msg = "Failed to fetch audit detail";
+      try {
+        const data = await response.json();
+        if (data.error) msg = data.error;
+      } catch {}
+      throw new Error(msg);
+    }
+    const data = await response.json();
+    if (signal?.aborted) return { auditDetail: null };
+    return data as { auditDetail: ProxyAuditDetail | null };
+  } catch (err: unknown) {
+    if (signal?.aborted || isAbortError(err)) return { auditDetail: null };
     throw err;
-  });
-  if (!response) return { auditDetail: null };
-  if (response.status === 401) throw new Error("Wrong control password");
-  if (!response.ok) {
-    let msg = "Failed to fetch audit detail";
-    try {
-      const data = await response.json();
-      if (data.error) msg = data.error;
-    } catch {}
-    throw new Error(msg);
   }
-  return response.json();
 }
 
 export async function fetchAntigravityStatus(arg1?: string | AbortSignal, arg2?: AbortSignal): Promise<AntigravityRotatorSnapshot | null> {
   const signal = arg1 instanceof AbortSignal ? arg1 : (arg2 instanceof AbortSignal ? arg2 : undefined);
   const password = typeof arg1 === "string" ? arg1 : undefined;
 
-  const response = await fetch("/api/antigravity/status", {
-    cache: "no-store",
-    signal,
-    credentials: "same-origin",
-    headers: authHeaders(password),
-  }).catch((err) => {
-    if (isAbortError(err)) return null;
+  try {
+    const response = await fetch("/api/antigravity/status", {
+      cache: "no-store",
+      signal,
+      credentials: "same-origin",
+      headers: authHeaders(password),
+    });
+    if (signal?.aborted || !response.ok) return null;
+    const data = await response.json();
+    if (signal?.aborted) return null;
+    return data as AntigravityRotatorSnapshot;
+  } catch (err: unknown) {
+    if (signal?.aborted || isAbortError(err)) return null;
     throw err;
-  });
-  if (!response || !response.ok) return null;
-  return response.json();
+  }
 }
 
 export async function refreshAntigravityQuota(password?: string): Promise<{ started: boolean; snapshot?: AntigravityRotatorSnapshot }> {

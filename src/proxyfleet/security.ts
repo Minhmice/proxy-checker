@@ -3,7 +3,6 @@ import crypto from "node:crypto";
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 12;
 const SALT_LENGTH = 16;
-const TAG_LENGTH = 16;
 
 function getMasterKey(salt: Buffer): Buffer {
   const secret = process.env.FLEET_ENCRYPTION_KEY || process.env.CONTROL_PASSWORD || "proxyfleet-default-fallback-master-key";

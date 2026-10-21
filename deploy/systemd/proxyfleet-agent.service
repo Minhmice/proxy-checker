@@ -1,7 +1,7 @@
 [Unit]
 Description=ProxyFleet Node Worker Agent
-After=network.target wg-quick@wg0.service
-Wants=3proxy.service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple

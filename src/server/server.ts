@@ -2,6 +2,7 @@ import "./load-env.js";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 import next from "next";
 import { getSettingsSecrets, getSettingsPublic, onSettingsChange, updateSettings, verifyControlPassword } from "./app-config.js";
@@ -9,12 +10,21 @@ import { logActivity, logActivityThrottled } from "./activity-log.js";
 import { createPoolRanker, PoolConflictError } from "./pool-ranker.js";
 import { createAntigravityRotator } from "./antigravity-rotator.js";
 import { createUnifiedSyncCoordinator } from "./unified-sync-coordinator.js";
-import { clearNineRouterSession, nineRouterConfigured, testNineRouterConnection } from "./nine-router-client.js";
-import { bulkSetActive, listPools, testPool, createPool, deletePool } from "./nine-router-client.js";
+import { clearNineRouterSession, listAntigravityConnections, nineRouterConfigured, testNineRouterConnection, updateConnection } from "./nine-router-client.js";
+import { testPool, createPool, deletePool } from "./nine-router-client.js";
 import { openProxyIntelligenceDb } from "./proxy-intelligence-db.js";
 import { createProxyIntelligenceRepository } from "./proxy-intelligence-repository.js";
 import { createFleetRepository } from "../proxyfleet/db.js";
 import { createFleetApiHandler } from "../proxyfleet/api-router.js";
+import { createProxyCheckHandler } from "./proxy-check-handler.js";
+import { createFleetWireGuardManager, validateFleetWireGuardSettings, type FleetWireGuardManager } from "../proxyfleet/wireguard.js";
+import { createFleetRuntimeApi } from "../proxyfleet/runtime-api.js";
+import { createControllerRuntimeObserver } from "../proxyfleet/controller-runtime.js";
+import { auditManagedFleetEndpoints } from "../proxyfleet/endpoint-audit.js";
+import { syncFleetEndpointsToIntelligence } from "../proxyfleet/pipeline-adapter.js";
+import { createNodeRemovalService } from "../proxyfleet/node-removal.js";
+import { createEnrollmentService } from "../proxyfleet/enrollment.js";
+import type { FleetOverlayObservation } from "../proxyfleet/runtime.js";
 import {
   createSession,
   readSession,
@@ -26,31 +36,84 @@ import {
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "../..");
 
-const inputDir = path.join(root, "input");
-const dataDir = path.join(root, "data");
-const runtimeFile = path.join(root, "runtime", "9router-proxy.env");
+const dataDir = path.resolve(process.env.APP_DATA_DIR || path.join(root, "data"));
 const proxyIntelligenceDb = openProxyIntelligenceDb(dataDir);
 const proxyIntelligenceRepo = createProxyIntelligenceRepository({ db: proxyIntelligenceDb });
+const handleProxyCheck = createProxyCheckHandler({ db: proxyIntelligenceDb, repo: proxyIntelligenceRepo, testPool, readBody, json });
 
 const fleetRepo = createFleetRepository({ sqlitePath: path.join(dataDir, "fleet.sqlite3") });
-void fleetRepo
-  .migrate()
-  .then(() =>
-    fleetRepo.bootstrapControllerNode({
-      name: "controller-001",
-      wireguardIp: "10.77.0.1",
-      os: process.platform,
-      arch: process.arch,
-      agentVersion: "0.1.0",
-    })
-  )
-  .catch((err) => console.error("Fleet DB migration/bootstrap failed:", err));
+const controllerObserver = createControllerRuntimeObserver();
+const fleetReady = fleetRepo.migrate().then(async () => {
+  const node = await fleetRepo.bootstrapControllerNode({ name: os.hostname() || "controller-node", wireguardIp: "10.77.0.1", os: process.platform, arch: process.arch, agentVersion: "0.2.0" });
+  await fleetRepo.startRuntimeSession(node.id, controllerObserver.sessionId);
+  await fleetRepo.recordNodeDevice(node.id, controllerObserver.device);
+  return node;
+});
+let overlayManager: FleetWireGuardManager | null = null;
+let overlaySettingsKey = "";
+function getFleetWireguard() {
+  const settings = getSettingsSecrets().fleetWireguard;
+  if (!settings) return null;
+  const key = JSON.stringify(settings);
+  if (!overlayManager || overlaySettingsKey !== key) {
+    overlayManager = createFleetWireGuardManager(settings);
+    overlaySettingsKey = key;
+  }
+  return { manager: overlayManager, settings };
+}
+const handleFleetRuntimeApi = createFleetRuntimeApi({ repo: fleetRepo, getWireguard: getFleetWireguard, readBody, send: json });
+const nodeRemovalService = createNodeRemovalService({
+  repo: fleetRepo,
+  removeOwnedPeer: async record => {
+    const configured = getFleetWireguard();
+    if (!configured) throw new Error("ProxyFleet WireGuard cleanup requires verified controller setup; IP remains reserved");
+    await configured.manager.removePeer(record);
+  },
+  unlinkManagedEndpoints: async nodeId => {
+    await proxyIntelligenceRepo.unlinkManagedFleetNode(nodeId, {
+      cleanupRemoteRef: cleanupRemotePoolRef,
+    });
+  },
+});
+async function cleanupRemotePoolRef(remoteId: string): Promise<void> {
+  const connections = await listAntigravityConnections();
+  await Promise.all(connections.filter(connection => connection.providerSpecificData?.proxyPoolId === remoteId).map(connection => {
+    const providerSpecificData = { ...(connection.providerSpecificData ?? {}) };
+    delete providerSpecificData.proxyPoolId;
+    return updateConnection(connection.id, { providerSpecificData });
+  }));
+  await deletePool(remoteId);
+}
 const handleFleetApi = createFleetApiHandler({
   repo: fleetRepo,
   verifyAuth: verifyControlPassword,
+  nodeRemovalService,
+  enrollmentService: {
+    issueToken: input => createEnrollmentService(fleetRepo).issueToken(input),
+    enrollNode: async input => {
+      const configured = getFleetWireguard();
+      if (!configured) throw new Error("Configure and set up ProxyFleet WireGuard before enrolling nodes");
+      const ready = await configured.manager.preflight();
+      const enrolled = await createEnrollmentService(fleetRepo, { serverWireguardPublicKey: ready.publicKey, serverWireguardEndpoint: configured.settings.publicEndpoint }).enrollNode(input);
+      fleetRepo.setOverlayApproved(enrolled.nodeId, true);
+      return enrolled;
+    },
+  },
 });
 const poolRanker = createPoolRanker({
   dataDir,
+  unbindConnectionsFromPool: async (remoteId) => {
+    const connections = await listAntigravityConnections();
+    await Promise.all(
+      connections
+        .filter((connection) => connection.providerSpecificData?.proxyPoolId === remoteId)
+        .map((connection) => {
+          const providerSpecificData = { ...(connection.providerSpecificData ?? {}) };
+          delete providerSpecificData.proxyPoolId;
+          return updateConnection(connection.id, { providerSpecificData });
+        }),
+    );
+  },
   onSoftDelete: (key, err) => proxyIntelligenceRepo.softDeleteFromRouter(key, err),
   onTestResult: (key, ok, lat, err) => proxyIntelligenceRepo.recordTestResult(key, ok, lat, err),
 });
@@ -61,9 +124,41 @@ const antigravityRotator = createAntigravityRotator({
       .filter((p) => p.status === "usable" && Boolean(p.remoteId))
       .map((p) => ({ remoteId: p.remoteId!, name: p.name })),
 });
+let lastFleetAuditAt = 0;
 const unifiedSyncCoordinator = createUnifiedSyncCoordinator({
   poolRanker,
   antigravityRotator,
+  proxyIntelligenceRepo,
+  fleetMaintenance: async () => {
+    const controller = await fleetReady;
+    await nodeRemovalService.retryPending();
+    const configured = getFleetWireguard();
+    let overlay: FleetOverlayObservation;
+    if (configured) {
+      try {
+        const nodes = await fleetRepo.listNodes();
+        const approvedIds = new Set(fleetRepo.getApprovedNodeIds());
+        const peers = nodes.filter(node => node.role !== "controller-worker" && node.wireguard_public_key && approvedIds.has(node.id)).map(node => ({ nodeId: node.id, publicKey: node.wireguard_public_key!, address: node.wireguard_ip }));
+        await configured.manager.reconcilePeers(peers);
+        overlay = await configured.manager.observe();
+      } catch (error) {
+        const errMessage = error instanceof Error ? error.message : "WireGuard reconciliation failed";
+        overlay = { state: "unhealthy", interfacePresent: null, peerPresent: null, lastHandshakeAt: null, probeOk: false, rxBytes: null, txBytes: null, error: errMessage, lastRecoveryAt: null };
+      }
+    } else {
+      overlay = { state: "unknown", interfacePresent: null, peerPresent: null, lastHandshakeAt: null, probeOk: null, rxBytes: null, txBytes: null, error: "ProxyFleet WireGuard is not configured", lastRecoveryAt: null };
+    }
+    const endpoints = await fleetRepo.listEndpoints({ nodeId: controller.id, enabled: true });
+    await fleetRepo.recordNodeRuntime(controller.id, await controllerObserver.sample(endpoints, overlay));
+    await fleetRepo.recordHeartbeat(controller.id, { status: "online", agentVersion: "0.2.0" });
+    const syncedEndpoints = await syncFleetEndpointsToIntelligence(fleetRepo, proxyIntelligenceRepo);
+    await proxyIntelligenceRepo.cleanupPendingManagedFleetEndpoints({ cleanupRemoteRef: cleanupRemotePoolRef });
+    if (Date.now() - lastFleetAuditAt >= 60_000) {
+      lastFleetAuditAt = Date.now();
+      await auditManagedFleetEndpoints(fleetRepo, proxyIntelligenceRepo);
+    }
+    return { pendingRemovals: (await fleetRepo.listPendingNodeRemovals()).length, syncedEndpoints };
+  },
 });
 
 function auth(request: http.IncomingMessage): boolean {
@@ -223,7 +318,8 @@ async function handleNineRouter(request: http.IncomingMessage, response: http.Se
   if (request.method === "POST" && pathname === "/api/ninerouter/sync-all") {
     try {
       const report = await unifiedSyncCoordinator.runUnifiedSyncCycle({ force: true });
-      return json(response, report, report.started ? 200 : 409);
+      const statusCode = !report.started ? 409 : (report.error || report.fleetResult?.error) ? 502 : 200;
+      return json(response, report, statusCode);
     } catch (err) {
       return json(response, { error: (err as Error).message }, 500);
     }
@@ -269,7 +365,7 @@ async function handleSettings(request: http.IncomingMessage, response: http.Serv
       const result = updateSettings({
         controlPassword: typeof body.controlPassword === "string" ? body.controlPassword : undefined,
         currentPassword: typeof body.currentPassword === "string" ? body.currentPassword : undefined,
-        nineRouterUrl: typeof body.nineRouterUrl === "string" ? body.nineRouterUrl : undefined,
+        nineRouterUrl: typeof body.nineRouterUrl === "string" ? body.nineRouterUrl.trim() : undefined,
         nineRouterPassword: typeof body.nineRouterPassword === "string" ? body.nineRouterPassword : undefined,
         nineRouterApiKey: typeof body.nineRouterApiKey === "string" ? body.nineRouterApiKey : undefined,
         activePoolLimit: body.activePoolLimit !== undefined ? Number(body.activePoolLimit) : undefined,
@@ -278,6 +374,11 @@ async function handleSettings(request: http.IncomingMessage, response: http.Serv
         checkConcurrency: body.checkConcurrency !== undefined ? Number(body.checkConcurrency) : undefined,
         checkTimeoutMs: body.checkTimeoutMs !== undefined ? Number(body.checkTimeoutMs) : undefined,
         proxyTtlMinutes: body.proxyTtlMinutes !== undefined ? Number(body.proxyTtlMinutes) : undefined,
+        antigravityRotatorEnabled: body.antigravityRotatorEnabled !== undefined ? Boolean(body.antigravityRotatorEnabled) : undefined,
+        antigravityActiveLimit: body.antigravityActiveLimit !== undefined ? Number(body.antigravityActiveLimit) : undefined,
+        antigravityRotateMinutes: body.antigravityRotateMinutes !== undefined ? Number(body.antigravityRotateMinutes) : undefined,
+        antigravitySessionThreshold: body.antigravitySessionThreshold !== undefined ? Number(body.antigravitySessionThreshold) : undefined,
+        fleetWireguard: body.fleetWireguard === undefined ? undefined : body.fleetWireguard === null ? null : validateFleetWireGuardSettings(body.fleetWireguard),
       });
       return json(response, result);
     } catch (error) {
@@ -288,7 +389,7 @@ async function handleSettings(request: http.IncomingMessage, response: http.Serv
   if (request.method === "POST" && pathname === "/api/settings/test-ninerouter") {
     const body = await readBody(request);
     const overrides = {
-      url: typeof body.nineRouterUrl === "string" ? body.nineRouterUrl : undefined,
+      url: typeof body.nineRouterUrl === "string" ? body.nineRouterUrl.trim() : undefined,
       password: typeof body.nineRouterPassword === "string" && body.nineRouterPassword.trim() ? body.nineRouterPassword : undefined,
       apiKey: typeof body.nineRouterApiKey === "string" && body.nineRouterApiKey.trim() ? body.nineRouterApiKey : undefined,
     };
@@ -342,71 +443,47 @@ async function handleSettings(request: http.IncomingMessage, response: http.Serv
 }
 
 const dev = process.env.NODE_ENV !== "production" && process.env.npm_lifecycle_event !== "start";
-const port = 1300;
+const port = Number(process.env.PORT || 1300);
 
-let syncIntervalId: NodeJS.Timeout | null = null;
+let maintenanceIntervalId: NodeJS.Timeout | undefined;
+let lastScheduledRotationAt = 0;
 
-function runScheduledSync() {
-  poolRanker.startSyncIfStale().catch((error) => {
-    const message = (error as Error).message;
-    logActivity("error", `Scheduled sync failed: ${message}`);
-    console.error("Scheduled 9Router sync failed:", message);
-  });
-}
-
-function scheduleNineRouterSync() {
-  if (syncIntervalId) {
-    clearInterval(syncIntervalId);
-    syncIntervalId = null;
-  }
-  const secrets = getSettingsSecrets();
-  if (!nineRouterConfigured() || secrets.nineRouterAutoSync === false) return;
-
-  const intervalMs = Math.max(1, secrets.nineRouterSyncMinutes) * 60_000;
-  const lastSyncAt = poolRanker.readState().lastSyncAt;
-  const isRecent = typeof lastSyncAt === "number" && Date.now() - lastSyncAt < intervalMs;
-
-  if (isRecent) {
-    const remainingMs = Math.max(10_000, intervalMs - (Date.now() - (lastSyncAt as number)));
-    const remainingMins = Math.round(remainingMs / 60_000);
-    logActivity("info", `Skipping startup sync: last sync was recent (${remainingMins}m remaining). Next sync scheduled.`);
-    syncIntervalId = setTimeout(() => {
-      runScheduledSync();
-      syncIntervalId = setInterval(runScheduledSync, intervalMs);
-    }, remainingMs);
-  } else {
-    runScheduledSync();
-    syncIntervalId = setInterval(runScheduledSync, intervalMs);
-  }
-}
-
-let antigravityIntervalId: NodeJS.Timeout | null = null;
-
-function scheduleAntigravityRotator() {
-  if (antigravityIntervalId) {
-    clearInterval(antigravityIntervalId);
-    antigravityIntervalId = null;
-  }
-  const secrets = getSettingsSecrets();
-  if (!nineRouterConfigured() || secrets.antigravityRotatorEnabled === false) return;
-
-  const intervalMs = Math.max(1, secrets.antigravityRotateMinutes) * 60_000;
-  antigravityIntervalId = setInterval(() => {
-    antigravityRotator.runRotation().catch((err) => {
-      logActivity("error", `Antigravity scheduled rotation failed: ${(err as Error).message}`);
+async function runScheduledMaintenance() {
+  const settings = getSettingsSecrets();
+  const now = Date.now();
+  const lastSyncAt = poolRanker.readState().lastSyncAt ?? 0;
+  const configured = nineRouterConfigured();
+  const routerDue = configured && settings.nineRouterAutoSync !== false && now - lastSyncAt >= Math.max(1, settings.nineRouterSyncMinutes) * 60_000;
+  const rotationDue = configured && settings.antigravityRotatorEnabled !== false && now - lastScheduledRotationAt >= Math.max(1, settings.antigravityRotateMinutes) * 60_000;
+  if (rotationDue) lastScheduledRotationAt = now;
+  if (configured && !routerDue) {
+    void poolRanker.refreshRemoteTracking().catch((err) => {
+      logActivity("error", `Remote tracking refresh failed: ${(err as Error).message}`);
     });
-  }, intervalMs);
+  }
+  const report = await unifiedSyncCoordinator.runUnifiedSyncCycle({ force: false, router: routerDue, rotation: rotationDue });
+  if (report.error || report.fleetResult?.error) logActivity("error", `Scheduled maintenance failed: ${report.error || report.fleetResult?.error}`);
+}
+
+function scheduleMaintenance() {
+  clearInterval(maintenanceIntervalId);
+  maintenanceIntervalId = setInterval(() => {
+    void runScheduledMaintenance().catch(error => logActivity("error", `Scheduled maintenance failed: ${(error as Error).message}`));
+  }, 15_000);
+  void runScheduledMaintenance().catch(error => logActivity("error", `Startup maintenance failed: ${(error as Error).message}`));
 }
 
 onSettingsChange((_settings, changed) => {
   if (changed.some((key) => ["nineRouterUrl", "nineRouterPassword", "nineRouterApiKey"].includes(key))) {
     clearNineRouterSession();
   }
-  if (changed.includes("nineRouterSyncMinutes") || changed.includes("nineRouterAutoSync")) {
-    scheduleNineRouterSync();
+  if (changed.some(key => ["nineRouterSyncMinutes", "nineRouterAutoSync", "antigravityRotateMinutes", "antigravityRotatorEnabled"].includes(key))) {
+    scheduleMaintenance();
   }
-  if (changed.includes("antigravityRotateMinutes") || changed.includes("antigravityRotatorEnabled")) {
-    scheduleAntigravityRotator();
+  if (changed.includes("antigravityActiveLimit") || changed.includes("antigravitySessionThreshold")) {
+    antigravityRotator.runRotation({ force: true }).catch((err) => {
+      logActivity("error", `Antigravity rotation on settings change failed: ${(err as Error).message}`);
+    });
   }
 });
 async function handleIntelligence(request: http.IncomingMessage, response: http.ServerResponse, pathname: string) {
@@ -468,6 +545,7 @@ async function handleProxiesUnified(request: http.IncomingMessage, response: htt
   if (!requireDashboardAuth(request).authenticated) {
     return json(response, { error: "Unauthorized" }, 401);
   }
+  if (await handleProxyCheck(request, response, pathname)) return;
   const parsedUrl = new URL(request.url ?? "/", "http://localhost");
 
   if (request.method === "GET" && pathname === "/api/proxies/unified") {
@@ -523,79 +601,6 @@ async function handleProxiesUnified(request: http.IncomingMessage, response: htt
     return json(response, { auditDetail });
   }
 
-  if (request.method === "POST" && pathname === "/api/proxies/check") {
-    const body = (await readBody(request, 100_000).catch(() => ({}))) as Record<string, unknown>;
-    const proxyKey = typeof body.proxyKey === "string" ? body.proxyKey : "";
-    if (!proxyKey) return json(response, { error: "proxyKey is required" }, 400);
-
-    const proxyRow = proxyIntelligenceDb.get<{
-      proxy_key: string;
-      endpoint: string;
-      remote_id?: string | null;
-    }>("SELECT proxy_key, endpoint, remote_id FROM proxies WHERE proxy_key = ?", [proxyKey]);
-
-    if (!proxyRow) return json(response, { error: "Proxy not found" }, 404);
-
-    try {
-      let isOk = false;
-      let latency: number | null = null;
-      if (proxyRow.remote_id) {
-        const testRes = await testPool(proxyRow.remote_id);
-        isOk = testRes.ok;
-        latency = testRes.elapsedMs ?? null;
-      }
-      const finishedTime = Date.now();
-      const verdict = isOk ? "PASS" : "FAIL";
-
-      await proxyIntelligenceRepo.persistAuditSnapshot({
-        proxyKey,
-        result: { verdict, connectivity: { reachable: isOk, latencyMs: latency ?? undefined } },
-        finishedAt: finishedTime,
-      });
-
-      const auditDetail = await proxyIntelligenceRepo.getAuditDetail(proxyKey);
-      const updated = await proxyIntelligenceRepo.getUnifiedProxies({ proxyKey, pageSize: 1 });
-      const item = updated.items[0];
-      if (!item) return json(response, { error: "Proxy no longer exists" }, 404);
-      return json(response, { proxy: item, auditDetail, auditResult: { verdict, latency } });
-    } catch (err) {
-      return json(response, { error: (err as Error).message }, 500);
-    }
-  }
-
-  if (request.method === "GET" && pathname === "/api/proxies/history") {
-    const key = parsedUrl.searchParams.get("key");
-    if (!key) return json(response, { error: "key is required" }, 400);
-
-    const hasHistoryTable = proxyIntelligenceDb.all<{ name: string }>(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='proxy_test_history'"
-    ).length > 0;
-
-    const history = hasHistoryTable ? proxyIntelligenceDb.all<{
-      id: number;
-      tested_at: number;
-      ok: number;
-      latency_ms: number | null;
-      error_message: string | null;
-    }>(
-      `SELECT id, tested_at, ok, latency_ms, error_message
-       FROM proxy_test_history
-       WHERE proxy_key = ?
-       ORDER BY tested_at DESC
-       LIMIT 10`,
-      [key]
-    ).map((r) => ({
-      id: String(r.id),
-      status: (r.ok ? "passed" : "failed") as "passed" | "failed",
-      exitIp: null,
-      isp: null,
-      udp: "No" as const,
-      latencyMs: r.latency_ms,
-      timestamp: r.tested_at,
-    })) : [];
-
-    return json(response, { history });
-  }
 
   if (request.method === "POST" && pathname === "/api/proxies/pin") {
     const body = (await readBody(request, 100_000).catch(() => ({}))) as Record<string, unknown>;
@@ -690,6 +695,7 @@ async function handleProxiesUnified(request: http.IncomingMessage, response: htt
 
 
 async function main() {
+  await fleetReady;
   const app = next({ dev, dir: root });
   const handle = app.getRequestHandler();
   await app.prepare();
@@ -727,6 +733,7 @@ async function main() {
     if (!pathname.startsWith("/api/")) return handle(request, response);
     if (pathname === "/api/health") return json(response, { ok: true });
     if (pathname.startsWith("/api/fleet/")) {
+      if (await handleFleetRuntimeApi(request, response, pathname)) return;
       const handled = await handleFleetApi(request, response, pathname);
       if (handled) return;
     }
@@ -783,11 +790,7 @@ async function main() {
 
   server.listen(port, () => {
     console.log(`minhmiceProxy listening on http://localhost:${port}`);
-    setInterval(() => {
-      void poolRanker.refreshRemoteTracking();
-    }, 60_000);
-    scheduleNineRouterSync();
-    scheduleAntigravityRotator();
+    scheduleMaintenance();
   });
 }
 

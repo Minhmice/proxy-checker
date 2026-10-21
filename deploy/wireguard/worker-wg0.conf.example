@@ -1,5 +1,5 @@
-# WireGuard Peer Configuration (Worker - VPS #2)
-# Location: /etc/wireguard/wg0.conf
+# Reference only: agent-managed ProxyFleet worker tunnel.
+# Location: /etc/wireguard/proxyfleet.conf (never overwrite unrelated tunnels)
 # Mode: 0600
 
 [Interface]

@@ -29,24 +29,26 @@ interface TrafficChartProps {
 export function TrafficChart({ snapshots, hours, onHoursChange }: TrafficChartProps) {
   const [, setActivePoint] = useState<number | null>(null);
 
+  // ponytail: filter invalid dates/snapshots inline; add streaming windowing if multi-day data grows heavy
   const data = useMemo(
     () =>
-      snapshots.map((s) => ({
-        time: new Date(s.timestamp).toLocaleString(undefined, {
-          month: "short",
-          day: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
-        active: s.active,
-        reserve: s.reserve,
-        latency: s.avgLatencyMs ?? 0,
-      })),
+      (snapshots || [])
+        .filter((s) => s && typeof s.active === "number" && !Number.isNaN(new Date(s.timestamp).getTime()))
+        .map((s) => ({
+          time: new Date(s.timestamp).toLocaleString(undefined, {
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          active: s.active,
+          reserve: s.reserve,
+          latency: s.avgLatencyMs ?? 0,
+        })),
     [snapshots]
   );
 
   const latestActive = data.length > 0 ? data[data.length - 1].active : null;
-
   return (
     <Card className="border-border bg-card/90 shadow-sm backdrop-blur-xs transition-all duration-200">
       <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between pb-4 border-b border-border-subtle/60">
@@ -58,9 +60,9 @@ export function TrafficChart({ snapshots, hours, onHoursChange }: TrafficChartPr
             <CardTitle className="text-base font-semibold text-ink">
               Pool Traffic & Capacity
             </CardTitle>
-            {latestActive != null && (
+            {latestActive != null && data.length >= 2 && (
               <Badge variant="outline" className="font-mono text-xs border-primary/30 text-primary bg-primary/5">
-                {latestActive} active now
+                {latestActive} active (latest snapshot)
               </Badge>
             )}
           </div>
@@ -94,9 +96,15 @@ export function TrafficChart({ snapshots, hours, onHoursChange }: TrafficChartPr
             <div className="flex size-12 items-center justify-center rounded-full bg-surface-raised border border-border-subtle text-muted-foreground mb-3">
               <BarChart3 className="size-6 opacity-60" />
             </div>
-            <p className="text-sm font-medium text-ink">No metrics history recorded yet</p>
+            <p className="text-sm font-medium text-ink">
+              {data.length === 1
+                ? "Insufficient metrics history recorded yet"
+                : "No metrics history recorded yet"}
+            </p>
             <p className="text-xs text-muted-foreground mt-1 max-w-sm">
-              Trigger a pool sync or wait for automated interval checks to start charting route health and density.
+              {data.length === 1
+                ? "At least two snapshots are required to chart route allocation and stability trends."
+                : "Trigger a pool sync or wait for automated interval checks to start charting route health and density."}
             </p>
           </div>
         ) : (

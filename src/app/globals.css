@@ -52,8 +52,7 @@
   --accent: var(--surface-raised);
   --accent-foreground: var(--ink);
   --destructive: var(--error);
-  --border: oklch(0.25 0.03 265);
-  --input: oklch(0.25 0.03 265);
+  --input: var(--border);
   --ring: var(--accent-teal);
   --chart-1: var(--primary);
   --chart-2: var(--accent-violet);
@@ -127,25 +126,44 @@ input {
   outline-offset: 2px;
 }
 
+/* Intentional reduced-motion rules: suppress decorative & spatial motion while keeping functional states readable */
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+  html:focus-within {
+    scroll-behavior: auto;
+  }
+
+  /* Decorative loops disabled */
+  :is(.animate-ping, .animate-pulse, .skeleton, .shimmer) {
+    animation: none !important;
+  }
+
+  /* Operational spinner: static busy icon; accessible text & ARIA preserve meaning */
+  :is(.animate-spin, .ops-spin) {
+    animation: none !important;
+  }
+
+  /* Suppress disorienting zoom and slide spatial transitions on overlays */
+  :is(
+    [class*="zoom-in-"],
+    [class*="zoom-out-"],
+    [class*="slide-in-from-"],
+    [class*="slide-out-to-"]
+  ) {
+    animation-name: none !important;
+    transform: none !important;
   }
 }
 
+/* Consolidate sidebar tokens with OKLCH control-room identity */
 .dark {
-  --sidebar: hsl(240 5.9% 10%);
-  --sidebar-foreground: hsl(240 4.8% 95.9%);
-  --sidebar-primary: hsl(224.3 76.3% 48%);
-  --sidebar-primary-foreground: hsl(0 0% 100%);
-  --sidebar-accent: hsl(240 3.7% 15.9%);
-  --sidebar-accent-foreground: hsl(240 4.8% 95.9%);
-  --sidebar-border: hsl(240 3.7% 15.9%);
-  --sidebar-ring: hsl(217.2 91.2% 59.8%);
+  --sidebar: var(--surface);
+  --sidebar-foreground: var(--ink);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--surface-raised);
+  --sidebar-accent-foreground: var(--ink);
+  --sidebar-border: var(--border-subtle);
+  --sidebar-ring: var(--accent-teal);
 }
 
 @theme inline {

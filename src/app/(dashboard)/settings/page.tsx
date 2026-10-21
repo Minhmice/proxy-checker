@@ -1,15 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/components/auth-provider";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { downloadProxyExport, fetchSettings, testNineRouterConnection, updateSettings } from "@/lib/api";
 import { Switch } from "@/components/ui/switch";
+import { downloadProxyExport, fetchSettings, testNineRouterConnection, updateSettings } from "@/lib/api";
+import { isAbortError } from "@/lib/request-lifecycle";
 import type { AppSettingsPublic, NineRouterTestResult, SettingsMeta, SettingsUpdatePayload } from "@/lib/types";
+import { WireGuardSettingsCard } from "@/components/nodes/wireguard-settings";
+import type { FleetWireGuardSettings } from "@/proxyfleet/wireguard";
 type FormState = {
   nineRouterUrl: string;
   nineRouterPassword: string;
@@ -56,20 +61,33 @@ export default function SettingsPage() {
   const [flags, setFlags] = useState({ controlPasswordSet: false, nineRouterPasswordSet: false, nineRouterApiKeySet: false });
   const [form, setForm] = useState<FormState | null>(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [savingSection, setSavingSection] = useState<"access" | "ninerouter" | "sync" | "antigravity" | null>(null);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<NineRouterTestResult | null>(null);
   const [exporting, setExporting] = useState<"txt" | "csv" | null>(null);
+  const [includeCredentials, setIncludeCredentials] = useState(false);
+  const [fleetWireguard, setFleetWireguard] = useState<FleetWireGuardSettings | null | undefined>(undefined);
+
+  const isSaving = savingSection !== null;
+  const isActionPending = isSaving || testing || exporting !== null;
 
   async function handleExport(format: "txt" | "csv") {
-    if (!password && !authenticated) {
-      toast.error("Not authenticated");
+    if ((!password && !authenticated) || isActionPending) {
+      if (!password && !authenticated) toast.error("Not authenticated");
       return;
     }
+    if (includeCredentials) {
+      const confirmed = window.confirm(
+        "Export proxies with plaintext credentials? Anyone with access to this file will have full proxy authentication access."
+      );
+      if (!confirmed) return;
+    }
     setExporting(format);
-    const withCreds = (document.getElementById("include-creds-toggle") as HTMLInputElement)?.checked;
     try {
-      const { blob, filename } = await downloadProxyExport(password, format, withCreds);
+      const { blob, filename } = password
+        ? await downloadProxyExport(password, format, includeCredentials)
+        : await downloadProxyExport(format, includeCredentials);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -86,13 +104,16 @@ export default function SettingsPage() {
     }
   }
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     if (!password && !authenticated) {
       setLoading(false);
       return;
     }
+    setLoading(true);
+    setLoadError(null);
     try {
-      const data = await fetchSettings(password);
+      const data = await fetchSettings(password, signal);
+      if (signal?.aborted) return;
       setMeta(data.meta);
       setFlags({
         controlPasswordSet: data.settings.controlPasswordSet,
@@ -100,15 +121,36 @@ export default function SettingsPage() {
         nineRouterApiKeySet: data.settings.nineRouterApiKeySet,
       });
       setForm(toForm(data.settings));
+      setFleetWireguard(data.settings.fleetWireguard ?? null);
     } catch (error) {
-      toast.error((error as Error).message);
+      if (signal?.aborted || isAbortError(error)) return;
+      const message = (error as Error).message || "Failed to load configuration";
+      setLoadError(message);
+      toast.error(message);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) {
+        setLoading(false);
+      }
     }
   }, [password, authenticated]);
 
+  const abortRef = useRef<AbortController | null>(null);
+
   useEffect(() => {
-    load();
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    void load(controller.signal);
+    return () => {
+      if (abortRef.current) {
+        abortRef.current.abort();
+        abortRef.current = null;
+      }
+    };
   }, [load]);
 
   function patchForm<K extends keyof FormState>(key: K, value: FormState[K]) {
@@ -116,8 +158,8 @@ export default function SettingsPage() {
   }
 
   async function handleSave(section: "access" | "ninerouter" | "sync" | "antigravity") {
-    if ((!password && !authenticated) || !form) return;
-    setSaving(true);
+    if ((!password && !authenticated) || !form || isActionPending) return;
+    setSavingSection(section);
     try {
       const payload: SettingsUpdatePayload = {};
 
@@ -130,15 +172,17 @@ export default function SettingsPage() {
           payload.controlPassword = form.newPassword;
         } else {
           toast.message("No password changes to save");
-          setSaving(false);
+          setSavingSection(null);
           return;
         }
       }
 
       if (section === "ninerouter") {
-        payload.nineRouterUrl = form.nineRouterUrl;
+        const trimmedUrl = form.nineRouterUrl.trim();
+        if (!trimmedUrl) throw new Error("9Router URL cannot be empty");
+        payload.nineRouterUrl = trimmedUrl;
         if (form.nineRouterPassword.trim()) payload.nineRouterPassword = form.nineRouterPassword;
-        payload.nineRouterApiKey = form.nineRouterApiKey.trim();
+        if (form.nineRouterApiKey.trim()) payload.nineRouterApiKey = form.nineRouterApiKey.trim();
       }
 
       if (section === "sync") {
@@ -151,10 +195,22 @@ export default function SettingsPage() {
       }
 
       if (section === "antigravity") {
+        const activeLimit = Number(form.antigravityActiveLimit);
+        if (Number.isNaN(activeLimit) || activeLimit < 1) {
+          throw new Error("Concurrent active accounts must be at least 1");
+        }
+        const rotateMinutes = Number(form.antigravityRotateMinutes);
+        if (Number.isNaN(rotateMinutes) || rotateMinutes < 1) {
+          throw new Error("Rotation interval must be at least 1 minute");
+        }
+        const sessionThreshold = Number(form.antigravitySessionThreshold);
+        if (Number.isNaN(sessionThreshold) || sessionThreshold < 5 || sessionThreshold > 50) {
+          throw new Error("Session quota threshold must be between 5% and 50%");
+        }
         payload.antigravityRotatorEnabled = form.antigravityRotatorEnabled;
-        payload.antigravityActiveLimit = Number(form.antigravityActiveLimit);
-        payload.antigravityRotateMinutes = Number(form.antigravityRotateMinutes);
-        payload.antigravitySessionThreshold = Number(form.antigravitySessionThreshold);
+        payload.antigravityActiveLimit = activeLimit;
+        payload.antigravityRotateMinutes = rotateMinutes;
+        payload.antigravitySessionThreshold = sessionThreshold;
       }
 
       const data = await updateSettings(password, payload);
@@ -185,17 +241,19 @@ export default function SettingsPage() {
     } catch (error) {
       toast.error((error as Error).message);
     } finally {
-      setSaving(false);
+      setSavingSection(null);
     }
   }
 
   async function handleTestConnection() {
-    if ((!password && !authenticated) || !form) return;
+    if ((!password && !authenticated) || !form || isActionPending) return;
     setTesting(true);
     setTestResult(null);
     try {
+      const trimmedUrl = form.nineRouterUrl.trim();
+      if (!trimmedUrl) throw new Error("Enter 9Router URL to test connection");
       const result = await testNineRouterConnection(password, {
-        nineRouterUrl: form.nineRouterUrl,
+        nineRouterUrl: trimmedUrl,
         nineRouterPassword: form.nineRouterPassword.trim() || undefined,
         nineRouterApiKey: form.nineRouterApiKey.trim() || undefined,
       });
@@ -209,12 +267,51 @@ export default function SettingsPage() {
     }
   }
 
-  if (loading || !form) {
+  if (loading && !form) {
     return (
       <div className="page-header">
         <div>
           <h1>Settings</h1>
           <p>Loading configuration…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (loadError && !form) {
+    return (
+      <div className="space-y-6">
+        <div className="page-header">
+          <div>
+            <h1>Settings</h1>
+            <p>Runtime configuration</p>
+          </div>
+        </div>
+        <Alert variant="destructive" className="max-w-xl">
+          <AlertTitle>Failed to load configuration</AlertTitle>
+          <AlertDescription className="space-y-3 pt-2">
+            <p>{loadError}</p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="min-h-[44px] sm:min-h-8"
+              onClick={() => void load()}
+            >
+              Retry loading
+            </Button>
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
+  if (!form) {
+    return (
+      <div className="page-header">
+        <div>
+          <h1>Settings</h1>
+          <p>Sign in to view and edit settings</p>
         </div>
       </div>
     );
@@ -229,6 +326,23 @@ export default function SettingsPage() {
         </div>
       </div>
 
+      {loadError && (
+        <Alert variant="destructive" className="mb-6">
+          <AlertTitle>Configuration refresh failed</AlertTitle>
+          <AlertDescription className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+            <span>{loadError}</span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="min-h-[44px] sm:min-h-8 shrink-0 w-full sm:w-auto"
+              onClick={() => load()}
+            >
+              Retry
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
 
       <div className="settings-layout">
         <Card className="settings-card">
@@ -276,9 +390,19 @@ export default function SettingsPage() {
                   </FieldContent>
                 </Field>
               </FieldGroup>
-              <Button type="button" disabled={(!password && !authenticated) || saving} onClick={() => handleSave("access")}>
-                Update password
-              </Button>
+              <div className="pt-2">
+                <Button
+                  type="button"
+                  className="min-h-[44px] sm:min-h-9 w-full sm:w-auto"
+                  disabled={(!password && !authenticated) || isActionPending}
+                  onClick={() => handleSave("access")}
+                >
+                  {savingSection === "access" ? "Updating password…" : "Update password"}
+                </Button>
+                <FieldDescription className="mt-1.5">
+                  Saves control password only. Requires re-login after update.
+                </FieldDescription>
+              </div>
             </FieldSet>
           </CardContent>
         </Card>
@@ -292,14 +416,19 @@ export default function SettingsPage() {
             <FieldSet>
               <FieldGroup>
                 <Field>
-                  <FieldLabel htmlFor="ninerouter-url">Base URL</FieldLabel>
+                  <FieldLabel htmlFor="ninerouter-url">9Router URL</FieldLabel>
                   <FieldContent>
                     <Input
                       id="ninerouter-url"
-                      type="url"
+                      type="text"
+                      inputMode="url"
+                      placeholder="e.g. http://127.0.0.1:20128 or https://9router.minhmice.com"
                       value={form.nineRouterUrl}
                       onChange={(event) => patchForm("nineRouterUrl", event.target.value)}
                     />
+                    <FieldDescription>
+                      Endpoint URL of your 9Router instance (supports http://, https://, or IP:port).
+                    </FieldDescription>
                   </FieldContent>
                 </Field>
                 <Field>
@@ -328,13 +457,29 @@ export default function SettingsPage() {
                   </FieldContent>
                 </Field>
               </FieldGroup>
-              <div className="settings-actions">
-                <Button type="button" variant="secondary" disabled={(!password && !authenticated) || testing} onClick={handleTestConnection}>
-                  {testing ? "Testing…" : "Test connection"}
-                </Button>
-                <Button type="button" disabled={(!password && !authenticated) || saving} onClick={() => handleSave("ninerouter")}>
-                  Save 9Router
-                </Button>
+              <div className="pt-2">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="min-h-[44px] sm:min-h-9"
+                    disabled={(!password && !authenticated) || isActionPending}
+                    onClick={handleTestConnection}
+                  >
+                    {testing ? "Testing…" : "Test connection"}
+                  </Button>
+                  <Button
+                    type="button"
+                    className="min-h-[44px] sm:min-h-9"
+                    disabled={(!password && !authenticated) || isActionPending}
+                    onClick={() => handleSave("ninerouter")}
+                  >
+                    {savingSection === "ninerouter" ? "Saving 9Router…" : "Save 9Router"}
+                  </Button>
+                </div>
+                <FieldDescription className="mt-1.5">
+                  Saves 9Router endpoint and authentication only. Does not alter sync schedules or rotator settings.
+                </FieldDescription>
               </div>
               {testResult && (
                 <p className="settings-test-result" role="status" aria-live="polite">
@@ -356,8 +501,8 @@ export default function SettingsPage() {
             <FieldSet>
               <FieldLegend>Pool sync</FieldLegend>
               <FieldGroup>
-                <Field className="flex flex-row items-center justify-between rounded-lg border p-3 shadow-xs">
-                  <div className="space-y-0.5">
+                <div className="flex flex-row items-center justify-between rounded-lg border p-3 shadow-xs">
+                  <div className="space-y-0.5 pr-4">
                     <FieldLabel htmlFor="auto-sync" className="cursor-pointer">Automatic pool sync</FieldLabel>
                     <FieldDescription>Run scheduled background sync and refresh stale pools.</FieldDescription>
                   </div>
@@ -366,7 +511,7 @@ export default function SettingsPage() {
                     checked={form.nineRouterAutoSync}
                     onCheckedChange={(checked) => patchForm("nineRouterAutoSync", checked)}
                   />
-                </Field>
+                </div>
                 <Field>
                   <FieldLabel htmlFor="active-limit">Active pool limit</FieldLabel>
                   <FieldContent>
@@ -443,9 +588,19 @@ export default function SettingsPage() {
                   </FieldContent>
                 </Field>
               </FieldGroup>
-              <Button type="button" disabled={(!password && !authenticated) || saving} onClick={() => handleSave("sync")}>
-                Save sync settings
-              </Button>
+              <div className="pt-2">
+                <Button
+                  type="button"
+                  className="min-h-[44px] sm:min-h-9 w-full sm:w-auto"
+                  disabled={(!password && !authenticated) || isActionPending}
+                  onClick={() => handleSave("sync")}
+                >
+                  {savingSection === "sync" ? "Saving sync settings…" : "Save sync settings"}
+                </Button>
+                <FieldDescription className="mt-1.5">
+                  Saves automatic pool sync, active pool limit, and health check timeouts.
+                </FieldDescription>
+              </div>
             </FieldSet>
           </CardContent>
         </Card>
@@ -453,19 +608,19 @@ export default function SettingsPage() {
           <CardHeader>
             <CardTitle>Antigravity Account Rotator</CardTitle>
             <CardDescription>
-              Automatically rotate 9Router Antigravity accounts when Gemini session quota falls below threshold, enforcing safe proxy multiplexing.
+              Automatically rotate 9Router Antigravity accounts based on Gemini session quota. Accounts at or below the configured session threshold are turned off; standby accounts above threshold are activated by earliest reset time.
             </CardDescription>
           </CardHeader>
           <CardContent>
             <FieldSet>
               <FieldGroup>
-                <Field className="flex flex-row items-center justify-between rounded-lg border p-3 shadow-xs">
-                  <div className="space-y-0.5">
+                <div className="flex flex-row items-center justify-between rounded-lg border p-3 shadow-xs">
+                  <div className="space-y-0.5 pr-4">
                     <FieldLabel htmlFor="ag-rotator-toggle" className="cursor-pointer">
                       Automatic account rotation
                     </FieldLabel>
                     <FieldDescription>
-                      Turn OFF accounts when Gemini session ≤ threshold, promote accounts with lowest reset window.
+                      Turn off accounts when Gemini session quota ≤ {form.antigravitySessionThreshold || "20"}%. Promote standby accounts with session quota &gt; {form.antigravitySessionThreshold || "20"}% by earliest reset time (maintains up to {form.antigravityActiveLimit || "3"} active). Claude, GPT, and weekly quotas are informational only.
                     </FieldDescription>
                   </div>
                   <Switch
@@ -473,7 +628,7 @@ export default function SettingsPage() {
                     checked={form.antigravityRotatorEnabled}
                     onCheckedChange={(checked) => patchForm("antigravityRotatorEnabled", checked)}
                   />
-                </Field>
+                </div>
 
                 <Field>
                   <FieldLabel htmlFor="ag-active-limit">Concurrent active accounts</FieldLabel>
@@ -486,7 +641,7 @@ export default function SettingsPage() {
                       value={form.antigravityActiveLimit}
                       onChange={(event) => patchForm("antigravityActiveLimit", event.target.value)}
                     />
-                    <FieldDescription>Maximum number of Antigravity accounts active simultaneously (default 3).</FieldDescription>
+                    <FieldDescription>Maximum number of Antigravity accounts active simultaneously (configured: {form.antigravityActiveLimit || "3"}, default 3).</FieldDescription>
                   </FieldContent>
                 </Field>
 
@@ -517,18 +672,24 @@ export default function SettingsPage() {
                       value={form.antigravitySessionThreshold}
                       onChange={(event) => patchForm("antigravitySessionThreshold", event.target.value)}
                     />
-                    <FieldDescription>Accounts with Gemini session quota ≤ this percentage are turned off (default 20%).</FieldDescription>
+                    <FieldDescription>Accounts with Gemini session quota ≤ this configured percentage (currently {form.antigravitySessionThreshold || "20"}%) are deactivated. Standby accounts with quota &gt; this threshold are eligible for activation in order of earliest reset time (default 20%).</FieldDescription>
                   </FieldContent>
                 </Field>
               </FieldGroup>
 
-              <Button
-                type="button"
-                disabled={(!password && !authenticated) || saving}
-                onClick={() => handleSave("antigravity")}
-              >
-                Save rotator settings
-              </Button>
+              <div className="pt-2">
+                <Button
+                  type="button"
+                  className="min-h-[44px] sm:min-h-9 w-full sm:w-auto"
+                  disabled={(!password && !authenticated) || isActionPending}
+                  onClick={() => handleSave("antigravity")}
+                >
+                  {savingSection === "antigravity" ? "Saving rotator settings…" : "Save rotator settings"}
+                </Button>
+                <FieldDescription className="mt-1.5">
+                  Saves rotator toggle, active accounts limit, rotation interval, and Gemini session threshold.
+                </FieldDescription>
+              </div>
             </FieldSet>
           </CardContent>
         </Card>
@@ -541,35 +702,68 @@ export default function SettingsPage() {
           </CardHeader>
           <CardContent>
             <div className="flex flex-col gap-4 text-xs">
-              <div className="flex items-center gap-4">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" id="include-creds-toggle" className="rounded border-input" />
-                  <span>Include credentials in output</span>
-                </label>
+              <div className="flex items-start gap-3">
+                <Checkbox
+                  id="include-creds-toggle"
+                  checked={includeCredentials}
+                  onCheckedChange={(checked) => setIncludeCredentials(checked === true)}
+                />
+                <div className="space-y-1">
+                  <label
+                    htmlFor="include-creds-toggle"
+                    className="font-medium text-xs text-foreground cursor-pointer"
+                  >
+                    Include credentials in output
+                  </label>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    Credentials are off by default to prevent accidental plaintext disclosure.
+                  </p>
+                </div>
               </div>
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  disabled={(!password && !authenticated) || exporting !== null}
-                  onClick={() => handleExport("txt")}
-                >
-                  {exporting === "txt" ? "Exporting…" : "Download .txt (URLs)"}
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  disabled={(!password && !authenticated) || exporting !== null}
-                  onClick={() => handleExport("csv")}
-                >
-                  {exporting === "csv" ? "Exporting…" : "Download .csv"}
-                </Button>
+
+              {includeCredentials && (
+                <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs space-y-1 text-amber-200">
+                  <p className="font-semibold text-amber-400">Plaintext credentials warning</p>
+                  <p className="text-[11px] text-amber-300/90 leading-relaxed">
+                    The exported file will contain unencrypted credentials. Anyone who obtains this file can authenticate through these proxies.
+                  </p>
+                </div>
+              )}
+
+              <div className="pt-1">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    className="min-h-[44px] sm:min-h-8"
+                    disabled={(!password && !authenticated) || isActionPending}
+                    onClick={() => handleExport("txt")}
+                  >
+                    {exporting === "txt" ? "Exporting…" : "Download .txt (URLs)"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    className="min-h-[44px] sm:min-h-8"
+                    disabled={(!password && !authenticated) || isActionPending}
+                    onClick={() => handleExport("csv")}
+                  >
+                    {exporting === "csv" ? "Exporting…" : "Download .csv"}
+                  </Button>
+                </div>
+                <p className="mt-1.5 text-[11px] text-muted-foreground">
+                  Exports safety-audited proxies currently stored in database. Does not modify server settings.
+                </p>
               </div>
             </div>
           </CardContent>
         </Card>
+        <WireGuardSettingsCard
+          initialSettings={fleetWireguard}
+          onSettingsSaved={(saved) => setFleetWireguard(saved)}
+        />
       </div>
 
       <p className="settings-footnote">

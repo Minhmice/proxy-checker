@@ -45,6 +45,7 @@ export function ProxyImportDialog({
   onImportSuccess,
   onStartAudit,
 }: ProxyImportDialogProps) {
+  // ponytail: Simple single-text batch preview covers manual paste and text file upload. Stream/chunked parsing deferred until imports exceed 10,000 proxies.
   const [step, setStep] = useState<"input" | "preview" | "done">("input");
   const [source, setSource] = useState("imported-proxies.txt");
   const [content, setContent] = useState("");
@@ -84,7 +85,7 @@ export function ProxyImportDialog({
       setPreview(res);
       setStep("preview");
     } catch (err) {
-      toast.error((err as Error).message);
+      toast.error((err as Error).message || "Failed to preview import");
     } finally {
       setLoading(false);
     }
@@ -103,7 +104,7 @@ export function ProxyImportDialog({
       onImportSuccess(res);
       toast.success(`Imported ${res.inserted.toLocaleString()} proxies`);
     } catch (err) {
-      toast.error((err as Error).message);
+      toast.error((err as Error).message || "Failed to import proxies");
     } finally {
       setLoading(false);
     }
@@ -117,8 +118,8 @@ export function ProxyImportDialog({
         onOpenChange(next);
       }}
     >
-      <DialogContent className="sm:max-w-lg bg-card border-border/80">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-lg max-h-[90vh] flex flex-col p-6 overflow-hidden bg-card border-border/80">
+        <DialogHeader className="shrink-0">
           <DialogTitle className="text-sm font-bold font-mono flex items-center gap-2">
             <Upload className="h-4 w-4 text-primary" />
             <span>Import Proxies</span>
@@ -131,25 +132,29 @@ export function ProxyImportDialog({
               : "Import complete. Start an audit to verify working status."}
           </DialogDescription>
         </DialogHeader>
-
         {/* Step 1: Input */}
         {step === "input" && (
-          <div className="space-y-4 py-2 text-xs">
+          <div className="overflow-y-auto min-h-0 space-y-4 py-2 text-xs pr-1">
             <div className="space-y-1.5">
-              <label className="text-[11px] font-semibold text-muted-foreground uppercase">
+              <label htmlFor="import-source-input" className="text-[11px] font-semibold text-muted-foreground uppercase">
                 Source Name
               </label>
               <Input
+                id="import-source-input"
                 value={source}
                 onChange={(e) => setSource(e.target.value)}
                 placeholder="e.g. residential-batch.txt"
+                aria-describedby="import-source-hint"
                 className="h-8 text-xs font-mono bg-surface border-border/60"
               />
+              <p id="import-source-hint" className="sr-only">
+                Identifier or filename for this proxy batch
+              </p>
             </div>
 
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
-                <label className="text-[11px] font-semibold text-muted-foreground uppercase">
+                <label htmlFor="import-content-textarea" className="text-[11px] font-semibold text-muted-foreground uppercase">
                   Proxy List (host:port or protocol://user:pass@host:port)
                 </label>
                 <label className="text-xs text-primary hover:text-primary-hover cursor-pointer underline flex items-center gap-1">
@@ -160,19 +165,24 @@ export function ProxyImportDialog({
               </div>
 
               <Textarea
+                id="import-content-textarea"
                 value={content}
                 onChange={(e) => setContent(e.target.value)}
                 placeholder={"192.168.1.1:8080\nsocks5://user:pass@10.0.0.1:1080\nhttp://proxy.example.com:3128"}
                 rows={8}
-                className="font-mono text-xs bg-surface border-border/60 resize-none"
+                aria-describedby="import-content-hint"
+                className="font-mono text-xs bg-surface border-border/60 resize-none min-h-[160px]"
               />
+              <p id="import-content-hint" className="text-[11px] text-muted-foreground">
+                One proxy per line. Standard auth format protocol://user:pass@host:port supported.
+              </p>
             </div>
           </div>
         )}
 
         {/* Step 2: Preview */}
         {step === "preview" && preview && (
-          <div className="space-y-4 py-2 text-xs">
+          <div className="overflow-y-auto min-h-0 space-y-4 py-2 text-xs pr-1">
             <div className="grid grid-cols-4 gap-2">
               <div className="rounded-lg border border-border/60 bg-surface/50 p-2 text-center">
                 <span className="text-[10px] uppercase font-semibold text-muted-foreground block">Total</span>
@@ -216,17 +226,21 @@ export function ProxyImportDialog({
 
             {/* Invalid Lines List */}
             {preview.invalid > 0 && (
-              <div className="space-y-1.5">
-                <span className="text-[11px] font-semibold text-rose-400 uppercase flex items-center gap-1">
+              <div className="space-y-1.5" role="region" aria-labelledby="invalid-lines-heading">
+                <span id="invalid-lines-heading" className="text-[11px] font-semibold text-rose-400 uppercase flex items-center gap-1">
                   <AlertTriangle className="h-3 w-3" />
                   <span>Invalid Lines Preview ({preview.invalidLines.length} shown)</span>
                 </span>
-                <ScrollArea className="h-24 rounded border border-rose-500/30 bg-rose-500/5 p-2 font-mono text-[11px] text-rose-300">
-                  {preview.invalidLines.map((line, idx) => (
-                    <div key={idx} className="truncate">
-                      Line {line.line}: &quot;{line.text}&quot; — {line.error}
-                    </div>
-                  ))}
+                <ScrollArea className="h-28 rounded border border-rose-500/30 bg-rose-500/5 p-2 font-mono text-[11px] text-rose-300">
+                  <div className="space-y-1">
+                    {preview.invalidLines.map((line, idx) => (
+                      <div key={idx} className="break-all whitespace-pre-wrap py-0.5 border-b border-rose-500/10 last:border-0">
+                        <span className="font-semibold text-rose-400">Line {line.line}:</span>{" "}
+                        <span className="text-foreground/80">&quot;{line.text}&quot;</span>{" "}
+                        <span className="text-rose-300/80">— {line.error}</span>
+                      </div>
+                    ))}
+                  </div>
                 </ScrollArea>
               </div>
             )}
@@ -235,7 +249,7 @@ export function ProxyImportDialog({
 
         {/* Step 3: Success & Next Action */}
         {step === "done" && summary && (
-          <div className="space-y-4 py-3 text-xs text-center">
+          <div className="overflow-y-auto min-h-0 space-y-4 py-3 text-xs text-center pr-1">
             <div className="flex flex-col items-center gap-2">
               <CheckCircle2 className="h-10 w-10 text-emerald-400" />
               <h3 className="font-bold text-sm text-foreground">Import Completed Successfully</h3>
@@ -270,7 +284,8 @@ export function ProxyImportDialog({
           </div>
         )}
 
-        <DialogFooter className="gap-2 sm:gap-0">
+
+        <DialogFooter className="shrink-0 gap-2 sm:gap-0 pt-2 border-t border-border/40">
           {step === "input" && (
             <>
               <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} className="text-xs">

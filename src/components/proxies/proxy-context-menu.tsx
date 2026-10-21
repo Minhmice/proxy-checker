@@ -68,7 +68,7 @@ export function ProxyContextMenu({
           className="gap-2 cursor-pointer"
         >
           <Play className="h-3.5 w-3.5 text-primary" />
-          <span>Kiểm tra sức khỏe (9Router)</span>
+          <span>Run health check</span>
         </ContextMenuItem>
 
         {proxy.routerState === "removed" ? (
@@ -77,7 +77,7 @@ export function ProxyContextMenu({
             className="gap-2 cursor-pointer text-emerald-400"
           >
             <UploadCloud className="h-3.5 w-3.5" />
-            <span>Đẩy lên 9Router</span>
+            <span>Push to 9Router</span>
           </ContextMenuItem>
         ) : (
           <ContextMenuItem
@@ -85,7 +85,7 @@ export function ProxyContextMenu({
             className="gap-2 cursor-pointer text-amber-400"
           >
             <Unlink className="h-3.5 w-3.5" />
-            <span>Gỡ khỏi 9Router (giữ trong app)</span>
+            <span>Unlink from 9Router</span>
           </ContextMenuItem>
         )}
 
@@ -99,12 +99,12 @@ export function ProxyContextMenu({
           {proxy.isPinned ? (
             <>
               <PinOff className="h-3.5 w-3.5 text-muted-foreground" />
-              <span>Bỏ ghim bảo vệ</span>
+              <span>Unpin (remove protection)</span>
             </>
           ) : (
             <>
               <Pin className="h-3.5 w-3.5 text-amber-400" />
-              <span>Ghim bảo vệ (Protected)</span>
+              <span>Pin (protect from eviction)</span>
             </>
           )}
         </ContextMenuItem>
@@ -115,11 +115,11 @@ export function ProxyContextMenu({
           className="gap-2 cursor-pointer"
         >
           <Copy className="h-3.5 w-3.5" />
-          <span>Sao chép IP:Port</span>
+          <span>Copy host:port</span>
         </ContextMenuItem>
         <ContextMenuItem onClick={handleCopyUrl} className="gap-2 cursor-pointer">
           <ExternalLink className="h-3.5 w-3.5" />
-          <span>Sao chép Proxy URL</span>
+          <span>Copy proxy URL</span>
         </ContextMenuItem>
 
         {/* Inspect Details */}
@@ -128,7 +128,7 @@ export function ProxyContextMenu({
           className="gap-2 cursor-pointer"
         >
           <SlidersHorizontal className="h-3.5 w-3.5" />
-          <span>Xem chi tiết</span>
+          <span>View details</span>
         </ContextMenuItem>
 
         <ContextMenuSeparator />
@@ -139,7 +139,7 @@ export function ProxyContextMenu({
           className="gap-2 cursor-pointer text-rose-400 focus:text-rose-400 focus:bg-rose-500/10"
         >
           <Trash2 className="h-3.5 w-3.5" />
-          <span>Xóa vĩnh viễn (Hard delete)</span>
+          <span>Permanently delete</span>
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>

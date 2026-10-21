@@ -164,7 +164,9 @@ func (c *Checker) CheckHttpProxy(
 
 	exitIP := strings.TrimSpace(string(bodyBytes))
 	latency := time.Since(start).Milliseconds()
-
+	if latency <= 0 {
+		latency = 1
+	}
 	if expectedEgressIP != "" && exitIP != expectedEgressIP {
 		return Result{
 			Status:       StatusRouteLeak,

@@ -6,7 +6,6 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   Globe,
-  ShieldCheck,
   HelpCircle,
   Settings,
   LogOut,
@@ -62,11 +61,8 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
                 <div className="grid flex-1 text-left text-sm leading-tight min-w-0">
                   <span className="truncate font-semibold text-sidebar-foreground tracking-tight">minhmiceProxy</span>
                   <span className="truncate text-[11px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
-                    <span className="relative flex size-1.5">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                      <span className="relative inline-flex rounded-full size-1.5 bg-emerald-500" />
-                    </span>
-                    9Router Active
+                    <span className="size-1.5 rounded-full bg-primary/60 shrink-0" />
+                    Fleet Controller
                   </span>
                 </div>
               </Link>

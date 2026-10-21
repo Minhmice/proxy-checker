@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Activity,
@@ -56,6 +56,8 @@ const TrafficChart = dynamic(
 
 export default function OverviewPage() {
   const { password, authenticated } = useAuth();
+  const canRead = authenticated || Boolean(password);
+  const inFlightRef = useRef<AbortController | null>(null);
   const [status, setStatus] = useState<PoolStatus | null>(null);
   const [metrics, setMetrics] = useState<MetricsSnapshot[]>([]);
   const [pools, setPools] = useState<PoolRecord[]>([]);
@@ -68,17 +70,26 @@ export default function OverviewPage() {
   const [copied, setCopied] = useState(false);
 
   const load = useCallback(
-    async (signal?: AbortSignal) => {
-      if (!password && !authenticated) {
+    async () => {
+      if (!canRead) {
         setLoading(false);
         return;
       }
+      if (inFlightRef.current) {
+        inFlightRef.current.abort();
+        inFlightRef.current = null;
+      }
+      const controller = new AbortController();
+      inFlightRef.current = controller;
+      const signal = controller.signal;
+
       try {
         const [statusData, metricsData, poolsData] = await Promise.all([
-          fetchStatus(password, signal),
-          fetchMetrics(password, hours, signal),
-          fetchPools(password, "active", signal),
+          fetchStatus(password || undefined, signal),
+          fetchMetrics(password || undefined, hours, signal),
+          fetchPools(password || undefined, "active", signal),
         ]);
+        if (signal.aborted) return;
         setStatus(statusData);
         setMetrics(metricsData);
         setPools(poolsData);
@@ -89,30 +100,32 @@ export default function OverviewPage() {
         );
         setError("");
       } catch (err) {
-        if (signal?.aborted || isAbortError(err)) return;
+        if (signal.aborted || isAbortError(err)) return;
         setError(err instanceof Error ? err.message : String(err));
       } finally {
-        if (!signal?.aborted) {
+        if (!signal.aborted) {
           setLoading(false);
           setRefreshing(false);
         }
       }
     },
-    [password, authenticated, hours]
+    [password, canRead, hours]
   );
 
   useEffect(() => {
-    if (!password && !authenticated) return;
-    const controller = new AbortController();
-    void load(controller.signal).catch(() => {});
+    if (!canRead) return;
+    void load();
     const timer = setInterval(() => {
-      void load(controller.signal).catch(() => {});
+      void load();
     }, 15000);
     return () => {
-      controller.abort();
       clearInterval(timer);
+      if (inFlightRef.current) {
+        inFlightRef.current.abort();
+        inFlightRef.current = null;
+      }
     };
-  }, [password, authenticated, load]);
+  }, [canRead, load]);
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -120,14 +133,15 @@ export default function OverviewPage() {
   }
 
   async function handleSync() {
-    if (!password && !authenticated) return;
+    if (!canRead || status?.running) return;
     setNotice("");
+    setError("");
     try {
-      await syncPools(password);
+      await syncPools(password || undefined);
       setNotice("Pool sync triggered. Ranking fastest routes and synchronizing 9Router...");
       window.setTimeout(() => load(), 1500);
     } catch (err) {
-      setNotice((err as Error).message);
+      setError((err as Error).message);
     }
   }
 
@@ -155,11 +169,43 @@ export default function OverviewPage() {
             </span>
             <span className="text-muted-foreground/40">•</span>
             <div className="flex items-center gap-1.5">
-              <span className="relative flex size-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                <span className="relative inline-flex rounded-full size-2 bg-emerald-500" />
-              </span>
-              <span className="font-mono text-xs text-emerald-400 font-medium">9Router Core Live</span>
+              {loading ? (
+                <>
+                  <span className="size-2 rounded-full bg-muted-foreground animate-pulse" />
+                  <span className="font-mono text-xs text-muted-foreground font-medium">Checking 9Router</span>
+                </>
+              ) : !status ? (
+                <>
+                  <span className="size-2 rounded-full bg-muted-foreground" />
+                  <span className="font-mono text-xs text-muted-foreground font-medium">9Router Unknown</span>
+                </>
+              ) : !status.configured ? (
+                <>
+                  <span className="size-2 rounded-full bg-amber-400" />
+                  <span className="font-mono text-xs text-amber-300 font-medium">9Router Unconfigured</span>
+                </>
+              ) : status.lastError ? (
+                <>
+                  <span className="size-2 rounded-full bg-destructive" />
+                  <span className="font-mono text-xs text-destructive font-medium">9Router Degraded</span>
+                </>
+              ) : status.running ? (
+                <>
+                  <span className="relative flex size-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
+                    <span className="relative inline-flex rounded-full size-2 bg-primary" />
+                  </span>
+                  <span className="font-mono text-xs text-primary font-medium">9Router Syncing</span>
+                </>
+              ) : (
+                <>
+                  <span className="relative flex size-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full size-2 bg-emerald-500" />
+                  </span>
+                  <span className="font-mono text-xs text-emerald-400 font-medium">9Router Core Live</span>
+                </>
+              )}
             </div>
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-ink">
@@ -175,7 +221,7 @@ export default function OverviewPage() {
             type="button"
             variant="outline"
             size="sm"
-            disabled={!password || refreshing}
+            disabled={!canRead || refreshing}
             onClick={handleRefresh}
             className="h-9 px-3 gap-1.5 font-medium border-border-subtle bg-surface/50 hover:bg-surface-raised"
           >
@@ -186,7 +232,7 @@ export default function OverviewPage() {
           <Button
             type="button"
             size="sm"
-            disabled={!password || status?.running}
+            disabled={!canRead || status?.running}
             onClick={handleSync}
             className="h-9 px-4 gap-1.5 font-semibold bg-gradient-to-r from-primary to-accent-violet hover:opacity-95 shadow-xs"
           >
@@ -220,7 +266,7 @@ export default function OverviewPage() {
         </Alert>
       )}
 
-      {!status?.configured && password && (
+      {status && !status.configured && (
         <Alert className="border-warning/40 bg-warning/10 text-ink">
           <AlertTriangle className="size-4 text-warning" />
           <AlertDescription className="text-xs sm:text-sm">
@@ -244,10 +290,10 @@ export default function OverviewPage() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <MetricCard
             label="Active Proxies"
-            value={status?.stats.active ?? 0}
-            sub={`Prioritized top ${status?.activeLimit ?? 50} on 9Router`}
+            value={status?.stats.active ?? (loading ? "—" : 0)}
+            sub={status ? `Prioritized top ${status.activeLimit} on 9Router` : "Active routing target"}
             delta={
-              sparkActive.length > 1
+              sparkActive.length >= 2
                 ? `${sparkActive.at(-1)! - sparkActive.at(-2)! >= 0 ? "+" : ""}${sparkActive.at(-1)! - sparkActive.at(-2)!}`
                 : undefined
             }
@@ -258,7 +304,7 @@ export default function OverviewPage() {
           />
           <MetricCard
             label="Reserve Proxies"
-            value={status?.stats.reserve ?? 0}
+            value={status?.stats.reserve ?? (loading ? "—" : 0)}
             sub="Healthy fallback, slower latency"
             sparkData={sparkReserve}
             sparkColor="oklch(0.58 0.22 295)"
@@ -267,7 +313,7 @@ export default function OverviewPage() {
           />
           <MetricCard
             label="Dead Proxies"
-            value={status?.stats.dead ?? 0}
+            value={status?.stats.dead ?? (loading ? "—" : 0)}
             sub="Excluded from active cluster routing"
             sparkData={sparkDead}
             sparkColor="oklch(0.72 0.14 195)"
@@ -551,7 +597,7 @@ export default function OverviewPage() {
               <Button
                 type="button"
                 size="sm"
-                disabled={!password || status?.running}
+                disabled={!canRead || status?.running}
                 onClick={handleSync}
                 className="text-xs h-8 px-3 gap-1.5 font-medium bg-primary hover:bg-primary-hover text-white"
               >

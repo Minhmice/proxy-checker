@@ -75,3 +75,21 @@ export function formatRelativeTime(timestamp: number): string {
   const diffDays = Math.floor(diffHour / 24);
   return `${diffDays}d ago`;
 }
+
+export function formatHeartbeatStatus(timestamp: number | null): {
+  label: string;
+  severity: "normal" | "warning" | "critical";
+} {
+  if (!timestamp) return { label: "Never", severity: "critical" };
+  const diffSec = Math.floor((Date.now() - timestamp) / 1000);
+  const label = formatRelativeTime(timestamp);
+  if (diffSec < 300) return { label, severity: "normal" };
+  if (diffSec < 3600) return { label, severity: "warning" };
+  return { label, severity: "critical" };
+}
+
+export function formatPlatform(os: string | null, arch: string | null): string {
+  const o = (os || "unknown").toLowerCase().replace("win32", "windows");
+  const a = (arch || "unknown").toLowerCase().replace("x64", "amd64");
+  return `${o}/${a}`;
+}

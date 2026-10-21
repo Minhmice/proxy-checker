@@ -1,12 +1,14 @@
 import "./load-env.js";
-import { getSettingsSecrets } from "./app-config.js";
+import { getSettingsSecrets, normalizeNineRouterUrl } from "./app-config.js";
 
 let authCookie: string | null = null;
 
 function readConfig(overrides?: { url?: string; password?: string; apiKey?: string }) {
   const stored = getSettingsSecrets();
+  const rawUrl = overrides?.url ?? stored.nineRouterUrl;
+  const url = rawUrl ? normalizeNineRouterUrl(rawUrl) : "";
   return {
-    url: (overrides?.url ?? stored.nineRouterUrl).replace(/\/$/, ""),
+    url,
     password: overrides?.password ?? stored.nineRouterPassword,
     apiKey: overrides?.apiKey ?? stored.nineRouterApiKey,
   };
@@ -62,9 +64,7 @@ async function buildHeaders(config: ReturnType<typeof readConfig>, cookieRef: { 
 }
 
 function isReportedTransportFailure(body: Record<string, unknown>): boolean {
-  if (body.failureKind === "transport") return true;
-  const error = typeof body.error === "string" ? body.error : "";
-  return error.startsWith("fetch failed:") && error.includes("ECONNRESET");
+  return body.failureKind === "transport";
 }
 
 async function request<T>(

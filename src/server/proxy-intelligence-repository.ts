@@ -215,6 +215,7 @@ export interface ProxyIntelligenceRepository {
   syncWorkingPools(pools: Array<{
     endpoint?: string;
     proxyUrl: string;
+    remoteId?: string | null;
     tier?: string;
     status?: string;
     isActiveOnRouter?: boolean;
@@ -230,6 +231,32 @@ export interface ProxyIntelligenceRepository {
   recordTestResult(proxyKey: string, ok: boolean, latencyMs?: number, errorMessage?: string): Promise<void>;
   softDeleteFromRouter(proxyKey: string, errorMessage?: string): Promise<void>;
   hardDeleteProxy(proxyKey: string, force?: boolean): Promise<{ deleted: boolean; remoteId: string | null }>;
+  syncManagedFleetEndpoints(rows: Array<{
+    nodeId: string;
+    endpointId: string;
+    proxyUrl: string;
+  }>): Promise<number>;
+  unlinkManagedFleetNode(nodeId: string, options?: {
+    cleanupRemoteRef?: (remoteId: string, proxyKey: string) => Promise<void>;
+    force?: boolean;
+  }): Promise<void>;
+  listManagedFleetAuditTargets(): Promise<Array<{
+    nodeId: string;
+    endpointId: string;
+    proxyKey: string;
+    proxyUrl: string;
+    remoteId: string | null;
+  }>>;
+  cleanupPendingManagedFleetEndpoints(options?: {
+    cleanupRemoteRef?: (remoteId: string, proxyKey: string) => Promise<void>;
+    force?: boolean;
+  }): Promise<{ cleaned: number; pendingRemaining: number }>;
+  getManagedFleetNodeRemoteRefs?(nodeId: string): Promise<Array<{
+    endpointId: string;
+    proxyKey: string;
+    remoteId: string | null;
+    isPinned: boolean;
+  }>>;
 }
 
 function computeProxyKey(protocol: string, host: string, port: number, username?: string | null): string {
@@ -399,11 +426,16 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
            p.updated_at,
            p.last_verdict AS latest_verdict,
            NULL AS latest_score,
-           p.last_checked_at AS latest_audit_at
+           p.last_checked_at AS latest_audit_at,
+           p.is_pinned,
+           p.tags,
+           p.remote_id,
+           p.router_state,
+           p.removed_at,
+           p.last_latency_ms
          FROM proxies p
          WHERE ${whereSql}
          ORDER BY
-           CASE WHEN (p.status = 'dead' OR p.lifecycle_state = 'dead') THEN 1 ELSE 0 END ASC,
            CASE WHEN (p.status = 'dead' OR p.lifecycle_state = 'dead') AND COALESCE(p.checked_at, 0) = 0 THEN 0
                 WHEN (p.status = 'dead' OR p.lifecycle_state = 'dead') THEN 1
                 ELSE 0 END ASC,
@@ -458,6 +490,12 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
           latestVerdict: r.latest_verdict ? String(r.latest_verdict) : null,
           latestScore: r.latest_score !== null ? Number(r.latest_score) : null,
           latestAuditAt: r.latest_audit_at ? Number(r.latest_audit_at) : null,
+          isPinned: Boolean(r.is_pinned),
+          tags: typeof r.tags === "string" && r.tags ? r.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
+          remoteId: r.remote_id ? String(r.remote_id) : null,
+          routerState: typeof r.router_state === "string" ? r.router_state : "unmanaged",
+          removedAt: r.removed_at ? Number(r.removed_at) : null,
+          lastLatencyMs: r.last_latency_ms !== null && r.last_latency_ms !== undefined ? Number(r.last_latency_ms) : null,
         };
       });
 
@@ -490,6 +528,10 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
            CASE WHEN p.password IS NOT NULL AND p.password != '' THEN 1 ELSE 0 END AS has_password,
            p.created_at,
            p.updated_at,
+           p.last_verdict,
+           p.last_verdict AS latest_verdict,
+           NULL AS latest_score,
+           p.last_checked_at AS latest_audit_at,
            p.is_pinned,
            p.tags,
            p.remote_id,
@@ -557,10 +599,13 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
         checkedAt: row.checked_at ? Number(row.checked_at) : null,
         createdAt: row.created_at ? Number(row.created_at) : null,
         updatedAt: row.updated_at ? Number(row.updated_at) : null,
+        latestVerdict: (row.latest_verdict ?? row.last_verdict) ? String(row.latest_verdict ?? row.last_verdict) : null,
+        latestScore: row.latest_score !== null && row.latest_score !== undefined ? Number(row.latest_score) : null,
+        latestAuditAt: row.latest_audit_at !== null && row.latest_audit_at !== undefined ? Number(row.latest_audit_at) : null,
         isPinned: Boolean(row.is_pinned),
         tags: typeof row.tags === "string" && row.tags ? row.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
         remoteId: row.remote_id ? String(row.remote_id) : null,
-        routerState: (row.router_state as string) || "unmanaged",
+        routerState: typeof row.router_state === "string" ? row.router_state : "unmanaged",
         removedAt: row.removed_at ? Number(row.removed_at) : null,
         lastLatencyMs: row.last_latency_ms !== null && row.last_latency_ms !== undefined ? Number(row.last_latency_ms) : null,
         latestAudit,
@@ -712,6 +757,7 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
           const key = computeProxyKey(p.protocol, p.host, p.port, p.username);
           proxyKeys.push(key);
 
+          const routerState = item.tier === "active" ? "active" : item.tier === "reserve" ? "reserve" : "unmanaged";
           const existing = db.get<{ proxy_key: string }>("SELECT proxy_key FROM proxies WHERE proxy_key = ?", [key]);
           if (existing) {
             db.run(
@@ -719,20 +765,24 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
                 source = '9router-working',
                 lifecycle_state = 'working',
                 status = 'usable',
+                last_verdict = 'PASS',
+                ever_passed = 1,
                 latency_ms = COALESCE(?, latency_ms),
                 exit_ip = COALESCE(?, exit_ip),
                 password = COALESCE(?, password),
+                remote_id = COALESCE(?, remote_id),
+                router_state = ?,
                 updated_at = ?
               WHERE proxy_key = ?`,
-              [item.latency_ms ?? null, item.exit_ip ?? null, p.password ?? null, now, key]
+              [item.latency_ms ?? null, item.exit_ip ?? null, p.password ?? null, item.remoteId ?? null, routerState, now, key]
             );
           } else {
             db.run(
               `INSERT INTO proxies (
                 proxy_key, endpoint, protocol, host, port, status, exit_ip,
                 latency_ms, checked_at, successes, failures, last_error,
-                source, lifecycle_state, username, password, created_at, updated_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                source, lifecycle_state, last_verdict, ever_passed, username, password, remote_id, router_state, created_at, updated_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [
                 key,
                 `${p.host}:${p.port}`,
@@ -748,8 +798,12 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
                 null,
                 "9router-working",
                 "working",
+                "PASS",
+                1,
                 p.username ?? null,
                 p.password ?? null,
+                item.remoteId ?? null,
+                routerState,
                 now,
                 now,
               ]
@@ -1204,19 +1258,50 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
       const serialized = tags.map((t) => t.trim()).filter(Boolean).join(",");
       db.run("UPDATE proxies SET tags = ?, updated_at = ? WHERE proxy_key = ?", [serialized, Date.now(), proxyKey]);
     },
-    async recordTestResult(proxyKey: string, ok: boolean, latencyMs?: number, errorMessage?: string): Promise<void> {
+    async recordTestResult(proxyKeyOrUrl: string, ok: boolean, latencyMs?: number, errorMessage?: string): Promise<void> {
       const testedAt = Date.now();
+      let resolvedKey = proxyKeyOrUrl;
+      try {
+        const parsed = parseProxyInput(proxyKeyOrUrl);
+        if (parsed?.parsed) {
+          resolvedKey = computeProxyKey(parsed.parsed.protocol, parsed.parsed.host, parsed.parsed.port, parsed.parsed.username);
+        }
+      } catch {}
+
+      let matchedKey = resolvedKey;
+      const existing = db.get<{ proxy_key: string }>("SELECT proxy_key FROM proxies WHERE proxy_key = ?", [resolvedKey]);
+      if (!existing) {
+        const fallbackRow = db.get<{ proxy_key: string }>("SELECT proxy_key FROM proxies WHERE proxy_key = ?", [proxyKeyOrUrl]);
+        if (fallbackRow) {
+          matchedKey = fallbackRow.proxy_key;
+        } else {
+          try {
+            const u = new URL(proxyKeyOrUrl.includes("://") ? proxyKeyOrUrl : `http://${proxyKeyOrUrl}`);
+            const hostPort = u.host;
+            const epRow = db.get<{ proxy_key: string }>(
+              "SELECT proxy_key FROM proxies WHERE endpoint = ? ORDER BY CASE WHEN source = '9router-working' THEN 0 ELSE 1 END LIMIT 1",
+              [hostPort]
+            );
+            if (epRow) matchedKey = epRow.proxy_key;
+          } catch {}
+        }
+      }
+
       db.transaction(() => {
         db.run(
           `INSERT INTO proxy_test_history (proxy_key, tested_at, ok, latency_ms, error_message)
            VALUES (?, ?, ?, ?, ?)`,
-          [proxyKey, testedAt, ok ? 1 : 0, latencyMs ?? null, errorMessage ?? null]
+          [matchedKey, testedAt, ok ? 1 : 0, latencyMs ?? null, errorMessage ?? null]
         );
         if (ok) {
           db.run(
             `UPDATE proxies SET
               status = 'usable',
+              lifecycle_state = 'working',
               last_verdict = 'PASS',
+              last_error = NULL,
+              last_failure_code = NULL,
+              last_checked_at = ?,
               last_latency_ms = ?,
               latency_ms = ?,
               successes = successes + 1,
@@ -1224,19 +1309,23 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
               checked_at = ?,
               updated_at = ?
              WHERE proxy_key = ?`,
-            [latencyMs ?? null, latencyMs ?? null, testedAt, testedAt, proxyKey]
+            [testedAt, latencyMs ?? null, latencyMs ?? null, testedAt, testedAt, matchedKey]
           );
         } else {
           db.run(
             `UPDATE proxies SET
               status = 'dead',
               last_verdict = 'FAIL',
+              lifecycle_state = CASE WHEN ever_passed = 1 THEN 'regressed' ELSE 'dead' END,
+              latency_ms = NULL,
+              last_latency_ms = NULL,
+              last_checked_at = ?,
               last_error = ?,
               failures = failures + 1,
               checked_at = ?,
               updated_at = ?
              WHERE proxy_key = ?`,
-            [errorMessage ?? null, testedAt, testedAt, proxyKey]
+            [testedAt, errorMessage ?? null, testedAt, testedAt, matchedKey]
           );
         }
       });
@@ -1271,6 +1360,493 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
         db.run("DELETE FROM proxies WHERE proxy_key = ?", [proxyKey]);
       });
       return { deleted: true, remoteId: row.remote_id ? String(row.remote_id) : null };
+    },
+    async syncManagedFleetEndpoints(rows: Array<{
+      nodeId: string;
+      endpointId: string;
+      proxyUrl: string;
+    }>): Promise<number> {
+      if (!rows || rows.length === 0) return 0;
+      const now = Date.now();
+      let count = 0;
+
+      db.transaction(() => {
+        for (const row of rows) {
+          let parsedResult;
+          try {
+            parsedResult = parseProxyInput(row.proxyUrl, "http");
+          } catch {
+            continue;
+          }
+          if (!parsedResult?.parsed) continue;
+
+          const p = parsedResult.parsed;
+          const key = computeProxyKey(p.protocol, p.host, p.port, p.username);
+          const userPart = p.username ? `${encodeURIComponent(p.username)}@` : "";
+          const endpointDisplay = `${p.protocol}://${userPart}${p.host}:${p.port}`;
+
+          const existing = db.get<{
+            proxy_key: string;
+            source: string;
+            is_pinned: number;
+            remote_id: string | null;
+            router_state: string;
+            tags: string;
+            password: string | null;
+          }>(
+            "SELECT proxy_key, source, is_pinned, remote_id, router_state, tags, password FROM proxies WHERE proxy_key = ?",
+            [key]
+          );
+
+          const isPreExistingShared = Boolean(
+            existing &&
+            existing.source !== "proxyfleet" &&
+            existing.source !== "9router-working"
+          );
+          const ownedExclusive = isPreExistingShared ? 0 : 1;
+
+          if (existing) {
+            if (existing.source === "proxyfleet") {
+              const updatedPassword = p.password ?? existing.password;
+              db.run(
+                `UPDATE proxies SET
+                  endpoint = ?,
+                  password = ?,
+                  updated_at = ?
+                 WHERE proxy_key = ?`,
+                [endpointDisplay, updatedPassword, now, key]
+              );
+            } else {
+              db.run(
+                `UPDATE proxies SET updated_at = ? WHERE proxy_key = ?`,
+                [now, key]
+              );
+            }
+          } else {
+            db.run(
+              `INSERT INTO proxies (
+                proxy_key, endpoint, protocol, host, port, username, password,
+                source, lifecycle_state, status, latency_ms, exit_ip,
+                successes, failures, last_error, checked_at, created_at, updated_at,
+                ever_passed, is_pinned, tags, remote_id, router_state
+              ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?,
+                'proxyfleet', 'unknown', 'dead', NULL, NULL,
+                0, 0, NULL, 0, ?, ?,
+                0, 0, 'fleet', NULL, 'unmanaged'
+              )`,
+              [
+                key,
+                endpointDisplay,
+                p.protocol,
+                p.host,
+                p.port,
+                p.username ?? null,
+                p.password ?? null,
+                now,
+                now,
+              ]
+            );
+          }
+
+          const existingMappings = db.all<{ proxy_key: string; pending_cleanup: number }>(
+            "SELECT proxy_key, pending_cleanup FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ?",
+            [row.nodeId, row.endpointId]
+          );
+
+          const activeMapping = existingMappings.find((m) => m.pending_cleanup === 0);
+
+          if (activeMapping) {
+            if (activeMapping.proxy_key !== key) {
+              const oldProxyKey = activeMapping.proxy_key;
+              const oldProxy = db.get<{ source: string; remote_id: string | null; is_pinned: number; router_state: string }>(
+                "SELECT source, remote_id, is_pinned, router_state FROM proxies WHERE proxy_key = ?",
+                [oldProxyKey]
+              );
+              const hasExternalRefs = oldProxy && (oldProxy.remote_id || oldProxy.is_pinned === 1 || oldProxy.router_state === "active");
+
+              if (hasExternalRefs) {
+                db.run(
+                  "UPDATE fleet_managed_endpoints SET pending_cleanup = 1, updated_at = ? WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ?",
+                  [now, row.nodeId, row.endpointId, oldProxyKey]
+                );
+              } else {
+                db.run(
+                  "DELETE FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ?",
+                  [row.nodeId, row.endpointId, oldProxyKey]
+                );
+                const otherMappings = db.get<{ count: number }>(
+                  "SELECT COUNT(*) as count FROM fleet_managed_endpoints WHERE proxy_key = ?",
+                  [oldProxyKey]
+                );
+                if (!otherMappings || otherMappings.count === 0) {
+                  if (oldProxy && oldProxy.source === "proxyfleet") {
+                    db.run("DELETE FROM proxy_test_history WHERE proxy_key = ?", [oldProxyKey]);
+                    db.run("DELETE FROM proxies WHERE proxy_key = ?", [oldProxyKey]);
+                  }
+                }
+              }
+
+              db.run(
+                `INSERT INTO fleet_managed_endpoints (node_id, endpoint_id, proxy_key, created_at, updated_at, pending_cleanup, owned_exclusive)
+                 VALUES (?, ?, ?, ?, ?, 0, ?)
+                 ON CONFLICT (node_id, endpoint_id, proxy_key) DO UPDATE SET updated_at = ?, pending_cleanup = 0`,
+                [row.nodeId, row.endpointId, key, now, now, ownedExclusive, now]
+              );
+            } else {
+              db.run(
+                "UPDATE fleet_managed_endpoints SET updated_at = ?, pending_cleanup = 0 WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ?",
+                [now, row.nodeId, row.endpointId, key]
+              );
+            }
+          } else {
+            db.run(
+              `INSERT INTO fleet_managed_endpoints (node_id, endpoint_id, proxy_key, created_at, updated_at, pending_cleanup, owned_exclusive)
+               VALUES (?, ?, ?, ?, ?, 0, ?)
+               ON CONFLICT (node_id, endpoint_id, proxy_key) DO UPDATE SET updated_at = ?, pending_cleanup = 0`,
+              [row.nodeId, row.endpointId, key, now, now, ownedExclusive, now]
+            );
+          }
+
+          count++;
+        }
+      });
+
+      return count;
+    },
+    async unlinkManagedFleetNode(nodeId: string, options?: {
+      cleanupRemoteRef?: (remoteId: string, proxyKey: string) => Promise<void>;
+      force?: boolean;
+    }): Promise<void> {
+      const mappings = db.all<{
+        node_id: string;
+        endpoint_id: string;
+        proxy_key: string;
+        pending_cleanup: number;
+        owned_exclusive: number;
+      }>(
+        "SELECT node_id, endpoint_id, proxy_key, pending_cleanup, owned_exclusive FROM fleet_managed_endpoints WHERE node_id = ?",
+        [nodeId]
+      );
+
+      if (!mappings || mappings.length === 0) {
+        return;
+      }
+
+      for (const m of mappings) {
+        const proxy = db.get<{
+          proxy_key: string;
+          source: string;
+          is_pinned: number;
+          remote_id: string | null;
+          router_state: string;
+        }>(
+          "SELECT proxy_key, source, is_pinned, remote_id, router_state FROM proxies WHERE proxy_key = ?",
+          [m.proxy_key]
+        );
+
+        if (!proxy) {
+          db.run(
+            "DELETE FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ?",
+            [m.node_id, m.endpoint_id, m.proxy_key]
+          );
+          continue;
+        }
+
+        const otherFleetRefsBefore = db.get<{ count: number }>(
+          "SELECT COUNT(*) as count FROM fleet_managed_endpoints WHERE proxy_key = ? AND NOT (node_id = ? AND endpoint_id = ?)",
+          [m.proxy_key, m.node_id, m.endpoint_id]
+        );
+        const isSharedAcrossFleet = Boolean(otherFleetRefsBefore && otherFleetRefsBefore.count > 0);
+
+        if (isSharedAcrossFleet) {
+          db.run(
+            "DELETE FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ?",
+            [m.node_id, m.endpoint_id, m.proxy_key]
+          );
+          continue;
+        }
+
+        const isFleetExclusive = m.owned_exclusive === 1;
+        const hasRemoteRef = Boolean(proxy.remote_id || proxy.router_state === "active");
+
+        if (hasRemoteRef) {
+          if (!isFleetExclusive) {
+            db.run(
+              "DELETE FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ?",
+              [m.node_id, m.endpoint_id, m.proxy_key]
+            );
+            continue;
+          }
+
+          if (options?.cleanupRemoteRef && proxy.remote_id) {
+            try {
+              await options.cleanupRemoteRef(proxy.remote_id, proxy.proxy_key);
+            } catch (cleanupErr) {
+              const reason = cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr);
+              throw new Error(
+                `Cannot unlink fleet node ${nodeId}: endpoint ${m.endpoint_id} (proxy ${m.proxy_key}) remote cleanup failed: ${reason}`
+              );
+            }
+
+            let deleteSucceeded = false;
+            db.transaction(() => {
+              const current = db.get<{ remote_id: string | null }>(
+                "SELECT remote_id FROM proxies WHERE proxy_key = ?",
+                [m.proxy_key]
+              );
+              const otherRefs = db.get<{ count: number }>(
+                "SELECT COUNT(*) as count FROM fleet_managed_endpoints WHERE proxy_key = ? AND NOT (node_id = ? AND endpoint_id = ?)",
+                [m.proxy_key, m.node_id, m.endpoint_id]
+              );
+              if (current?.remote_id !== proxy.remote_id || (otherRefs?.count ?? 0) > 0) return;
+              const deleteRes = db.run(
+                "DELETE FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ? AND pending_cleanup = ? AND owned_exclusive = 1",
+                [m.node_id, m.endpoint_id, m.proxy_key, m.pending_cleanup]
+              );
+              if (deleteRes.changes > 0) {
+                deleteSucceeded = true;
+                db.run(
+                  "UPDATE proxies SET remote_id = NULL, router_state = 'unmanaged' WHERE proxy_key = ? AND remote_id = ?",
+                  [m.proxy_key, proxy.remote_id]
+                );
+              }
+            });
+
+            if (!deleteSucceeded) {
+              continue;
+            }
+          } else if (!options?.force) {
+            throw new Error(
+              `Cannot unlink fleet node ${nodeId}: endpoint ${m.endpoint_id} (proxy ${m.proxy_key}) has active remote reference '${proxy.remote_id ?? proxy.router_state}' pending cleanup`
+            );
+          } else {
+            db.run(
+              "DELETE FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ?",
+              [m.node_id, m.endpoint_id, m.proxy_key]
+            );
+          }
+        } else {
+          db.run(
+            "DELETE FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ?",
+            [m.node_id, m.endpoint_id, m.proxy_key]
+          );
+        }
+
+        const otherRefs = db.get<{ count: number }>(
+          "SELECT COUNT(*) as count FROM fleet_managed_endpoints WHERE proxy_key = ?",
+          [m.proxy_key]
+        );
+        if (!otherRefs || otherRefs.count === 0) {
+          const freshProxy = db.get<{ source: string; is_pinned: number; remote_id: string | null }>(
+            "SELECT source, is_pinned, remote_id FROM proxies WHERE proxy_key = ?",
+            [m.proxy_key]
+          );
+          if (freshProxy && freshProxy.source === "proxyfleet" && !freshProxy.is_pinned && !freshProxy.remote_id) {
+            db.run("DELETE FROM proxy_test_history WHERE proxy_key = ?", [m.proxy_key]);
+            db.run("DELETE FROM proxies WHERE proxy_key = ?", [m.proxy_key]);
+          }
+        }
+      }
+    },
+    async cleanupPendingManagedFleetEndpoints(options?: {
+      cleanupRemoteRef?: (remoteId: string, proxyKey: string) => Promise<void>;
+      force?: boolean;
+    }): Promise<{ cleaned: number; pendingRemaining: number }> {
+      const pending = db.all<{
+        node_id: string;
+        endpoint_id: string;
+        proxy_key: string;
+        owned_exclusive: number;
+      }>(
+        "SELECT node_id, endpoint_id, proxy_key, owned_exclusive FROM fleet_managed_endpoints WHERE pending_cleanup = 1"
+      );
+
+      let cleaned = 0;
+      let pendingRemaining = 0;
+
+      for (const m of pending) {
+        const otherActive = db.get<{ count: number }>(
+          "SELECT COUNT(*) as count FROM fleet_managed_endpoints WHERE proxy_key = ? AND pending_cleanup = 0",
+          [m.proxy_key]
+        );
+
+        if (otherActive && otherActive.count > 0) {
+          db.run(
+            "DELETE FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ? AND pending_cleanup = 1",
+            [m.node_id, m.endpoint_id, m.proxy_key]
+          );
+          cleaned++;
+          continue;
+        }
+
+        const proxy = db.get<{
+          proxy_key: string;
+          source: string;
+          is_pinned: number;
+          remote_id: string | null;
+          router_state: string;
+        }>(
+          "SELECT proxy_key, source, is_pinned, remote_id, router_state FROM proxies WHERE proxy_key = ?",
+          [m.proxy_key]
+        );
+
+        if (!proxy) {
+          db.run(
+            "DELETE FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ? AND pending_cleanup = 1",
+            [m.node_id, m.endpoint_id, m.proxy_key]
+          );
+          cleaned++;
+          continue;
+        }
+
+        const isFleetExclusive = m.owned_exclusive === 1;
+        const hasRemoteRef = Boolean(proxy.remote_id || proxy.router_state === "active");
+
+        if (!isFleetExclusive) {
+          db.run(
+            "DELETE FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ? AND pending_cleanup = 1",
+            [m.node_id, m.endpoint_id, m.proxy_key]
+          );
+          cleaned++;
+          continue;
+        }
+        if (hasRemoteRef) {
+          if (options?.cleanupRemoteRef && proxy.remote_id) {
+            try {
+              await options.cleanupRemoteRef(proxy.remote_id, proxy.proxy_key);
+              let deleteSucceeded = false;
+              db.transaction(() => {
+                const current = db.get<{ remote_id: string | null }>(
+                  "SELECT remote_id FROM proxies WHERE proxy_key = ?",
+                  [m.proxy_key]
+                );
+                const otherActive = db.get<{ count: number }>(
+                  "SELECT COUNT(*) as count FROM fleet_managed_endpoints WHERE proxy_key = ? AND pending_cleanup = 0",
+                  [m.proxy_key]
+                );
+                if (current?.remote_id !== proxy.remote_id || (otherActive?.count ?? 0) > 0) return;
+                const res = db.run(
+                  "DELETE FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ? AND pending_cleanup = 1 AND owned_exclusive = 1",
+                  [m.node_id, m.endpoint_id, m.proxy_key]
+                );
+                if (res.changes > 0) {
+                  deleteSucceeded = true;
+                  db.run(
+                    "UPDATE proxies SET remote_id = NULL, router_state = 'unmanaged' WHERE proxy_key = ? AND remote_id = ?",
+                    [m.proxy_key, proxy.remote_id]
+                  );
+                }
+              });
+              if (deleteSucceeded) {
+                cleaned++;
+                const otherRefs = db.get<{ count: number }>(
+                  "SELECT COUNT(*) as count FROM fleet_managed_endpoints WHERE proxy_key = ?",
+                  [m.proxy_key]
+                );
+                if (!otherRefs || otherRefs.count === 0) {
+                  if (proxy.is_pinned === 0) {
+                    db.run("DELETE FROM proxy_test_history WHERE proxy_key = ?", [m.proxy_key]);
+                    db.run("DELETE FROM proxies WHERE proxy_key = ?", [m.proxy_key]);
+                  }
+                }
+              } else {
+                pendingRemaining++;
+              }
+            } catch {
+              pendingRemaining++;
+            }
+          } else if (options?.force) {
+            db.run(
+              "DELETE FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ? AND pending_cleanup = 1",
+              [m.node_id, m.endpoint_id, m.proxy_key]
+            );
+            cleaned++;
+          } else {
+            pendingRemaining++;
+          }
+        } else {
+          db.run(
+            "DELETE FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ? AND pending_cleanup = 1",
+            [m.node_id, m.endpoint_id, m.proxy_key]
+          );
+          cleaned++;
+          const otherRefs = db.get<{ count: number }>(
+            "SELECT COUNT(*) as count FROM fleet_managed_endpoints WHERE proxy_key = ?",
+            [m.proxy_key]
+          );
+          if (!otherRefs || otherRefs.count === 0) {
+            if (proxy.is_pinned === 0) {
+              db.run("DELETE FROM proxy_test_history WHERE proxy_key = ?", [m.proxy_key]);
+              db.run("DELETE FROM proxies WHERE proxy_key = ?", [m.proxy_key]);
+            }
+          }
+        }
+      }
+
+      return { cleaned, pendingRemaining };
+    },
+    async listManagedFleetAuditTargets(): Promise<Array<{
+      nodeId: string;
+      endpointId: string;
+      proxyKey: string;
+      proxyUrl: string;
+      remoteId: string | null;
+    }>> {
+      const rows = db.all<{
+        node_id: string;
+        endpoint_id: string;
+        proxy_key: string;
+        endpoint: string;
+        remote_id: string | null;
+      }>(`
+        SELECT
+          f.node_id,
+          f.endpoint_id,
+          f.proxy_key,
+          p.endpoint,
+          p.remote_id
+        FROM fleet_managed_endpoints f
+        JOIN proxies p ON f.proxy_key = p.proxy_key
+        WHERE f.pending_cleanup = 0
+        ORDER BY f.node_id, f.endpoint_id
+      `);
+      return rows.map((r) => ({
+        nodeId: r.node_id,
+        endpointId: r.endpoint_id,
+        proxyKey: r.proxy_key,
+        proxyUrl: r.endpoint,
+        remoteId: r.remote_id ? String(r.remote_id) : null,
+      }));
+    },
+    async getManagedFleetNodeRemoteRefs(nodeId: string): Promise<Array<{
+      endpointId: string;
+      proxyKey: string;
+      remoteId: string | null;
+      isPinned: boolean;
+    }>> {
+      const rows = db.all<{
+        endpoint_id: string;
+        proxy_key: string;
+        remote_id: string | null;
+        is_pinned: number;
+      }>(`
+        SELECT
+          f.endpoint_id,
+          f.proxy_key,
+          p.remote_id,
+          p.is_pinned
+        FROM fleet_managed_endpoints f
+        JOIN proxies p ON f.proxy_key = p.proxy_key
+        WHERE f.node_id = ?
+        ORDER BY f.endpoint_id
+      `, [nodeId]);
+      return rows.map((r) => ({
+        endpointId: r.endpoint_id,
+        proxyKey: r.proxy_key,
+        remoteId: r.remote_id ? String(r.remote_id) : null,
+        isPinned: Boolean(r.is_pinned),
+      }));
     },
   };
 

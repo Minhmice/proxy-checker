@@ -4,12 +4,7 @@ import tseslint from "typescript-eslint";
 export default tseslint.config(
   { ignores: ["node_modules/**", ".next/**", ".next-build/**", "dist/**", ".superpowers/**"] },
   {
-    files: ["src/auditor/**/*.ts"],
+    files: ["src/**/*.{ts,tsx}", "scripts/**/*.{ts,js,mjs}"],
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
-  },
-  {
-    files: ["scripts/proxy-audit.mjs"],
-    extends: [js.configs.recommended],
-    languageOptions: { globals: { process: "readonly", console: "readonly" } },
   },
 );

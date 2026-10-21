@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   Check,
@@ -11,12 +11,8 @@ import {
   HelpCircle,
   Info,
   Loader2,
-  Network,
   RotateCcw,
-  Shield,
   ShieldAlert,
-  ShieldCheck,
-  Wifi,
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -66,47 +62,70 @@ export function ProxyDetailDrawer({
   onOpenChange,
   onProxyUpdated,
 }: ProxyDetailDrawerProps) {
+  // ponytail: Local state + Promise.all handles audit detail & history together. Keep unified load until detail payload splits into lazy tabs.
   const [checking, setChecking] = useState(false);
   const [history, setHistory] = useState<UnifiedProxyHistoryEntry[]>([]);
   const [auditDetail, setAuditDetail] = useState<ProxyAuditDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-
   const proxyKey = proxy?.key || proxy?.proxyKey;
+  const activeControllerRef = useRef<AbortController | null>(null);
+
+  const loadDetailsAndHistory = async () => {
+    if (!proxyKey) return;
+
+    if (activeControllerRef.current) {
+      activeControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    activeControllerRef.current = controller;
+    const signal = controller.signal;
+
+    setLoadingDetail(true);
+    setDetailError(null);
+
+    try {
+      const [detailRes, histRes] = await Promise.all([
+        fetchProxyAuditDetail(proxyKey, undefined, signal),
+        fetchProxyHistory(proxyKey, signal),
+      ]);
+      if (!signal.aborted) {
+        setAuditDetail(detailRes.auditDetail);
+        setHistory(histRes.history);
+        setDetailError(null);
+      }
+    } catch (err) {
+      if (!signal.aborted && !isAbortError(err)) {
+        console.error("Failed to load proxy details:", err);
+        setDetailError((err as Error).message || "Failed to load audit details and history");
+      }
+    } finally {
+      if (!signal.aborted) {
+        setLoadingDetail(false);
+      }
+    }
+  };
 
   useEffect(() => {
     if (!open || !proxyKey) {
+      if (activeControllerRef.current) {
+        activeControllerRef.current.abort();
+        activeControllerRef.current = null;
+      }
       setHistory([]);
       setAuditDetail(null);
+      setDetailError(null);
       return;
     }
 
-    const controller = new AbortController();
-    setLoadingDetail(true);
-
-    Promise.all([
-      fetchProxyAuditDetail(proxyKey, undefined, controller.signal),
-      fetchProxyHistory(proxyKey, controller.signal),
-    ])
-      .then(([detailRes, histRes]) => {
-        if (!controller.signal.aborted) {
-          setAuditDetail(detailRes.auditDetail);
-          setHistory(histRes.history);
-        }
-      })
-      .catch((err) => {
-        if (!controller.signal.aborted && !isAbortError(err)) {
-          console.error("Failed to load proxy details:", err);
-        }
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) {
-          setLoadingDetail(false);
-        }
-      });
+    loadDetailsAndHistory();
 
     return () => {
-      controller.abort();
+      if (activeControllerRef.current) {
+        activeControllerRef.current.abort();
+        activeControllerRef.current = null;
+      }
     };
   }, [open, proxyKey]);
 
@@ -121,14 +140,9 @@ export function ProxyDetailDrawer({
       }
 
       // Refresh detail and history
-      const [detailRes, histRes] = await Promise.all([
-        fetchProxyAuditDetail(proxyKey),
-        fetchProxyHistory(proxyKey),
-      ]);
-      setAuditDetail(detailRes.auditDetail);
-      setHistory(histRes.history);
+      await loadDetailsAndHistory();
     } catch (err) {
-      toast.error((err as Error).message);
+      toast.error((err as Error).message || "Proxy check failed");
     } finally {
       setChecking(false);
     }
@@ -215,21 +229,22 @@ export function ProxyDetailDrawer({
     { label: "Reliability", value: scores.reliability },
   ];
 
-  const exitIp = auditDetail?.exit?.ip || proxy.exitIp || proxy.host;
+  // ponytail: Exit node verified only when probe or audit returns explicit exit IP. Host address must never masquerade as verified exit.
+  const verifiedExitIp = auditDetail?.exit?.ip || proxy.exitIp || null;
   const locationText = [
     auditDetail?.exit?.city || proxy.geo?.city,
     auditDetail?.exit?.country || proxy.geo?.country,
   ]
     .filter(Boolean)
-    .join(", ") || "Unknown Location";
+    .join(", ") || (verifiedExitIp ? "Unknown Location" : "Unmeasured");
 
-  const ispText = auditDetail?.exit?.isp || proxy.isp || "Unknown ISP";
+  const ispText = auditDetail?.exit?.isp || proxy.isp || (verifiedExitIp ? "Unknown ISP" : "Unmeasured");
   const asnText = auditDetail?.exit?.asn ? ` • ${auditDetail.exit.asn}` : "";
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-md md:max-w-lg lg:max-w-xl flex flex-col p-6 overflow-hidden bg-card border-border/80">
-        <SheetHeader className="border-b border-border/50 pb-4">
+      <SheetContent className="w-full sm:max-w-md md:max-w-lg lg:max-w-xl flex flex-col p-4 sm:p-6 h-full max-h-screen overflow-hidden bg-card border-border/80">
+        <SheetHeader className="shrink-0 border-b border-border/50 pb-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Badge variant="outline" className="text-[10px] uppercase font-mono tracking-wider">
@@ -243,7 +258,7 @@ export function ProxyDetailDrawer({
           </div>
 
           <div className="flex items-center justify-between gap-2 mt-2">
-            <SheetTitle className="text-base font-bold font-mono tracking-tight text-foreground truncate">
+            <SheetTitle className="text-base font-bold font-mono tracking-tight text-foreground break-all">
               {endpoint}
             </SheetTitle>
             <Button
@@ -258,7 +273,7 @@ export function ProxyDetailDrawer({
           </div>
 
           <SheetDescription className="text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5">
-            <Clock className="h-3 w-3" />
+            <Clock className="h-3 w-3 shrink-0" />
             <span>
               {auditDetail?.checkedAt
                 ? new Date(auditDetail.checkedAt).toLocaleString()
@@ -269,8 +284,33 @@ export function ProxyDetailDrawer({
           </SheetDescription>
         </SheetHeader>
 
-        <ScrollArea className="flex-1 mt-4 pr-3">
-          <div className="space-y-6 text-xs">
+        <ScrollArea className="flex-1 mt-4 pr-3 -mr-3 overflow-y-auto min-h-0">
+          <div className="space-y-6 text-xs pr-2">
+            {/* Error Banner if Load Failed */}
+            {detailError && (
+              <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 p-3.5 space-y-2 text-xs animate-in fade-in duration-150">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-rose-400 font-semibold">
+                    <AlertTriangle className="h-4 w-4 shrink-0" />
+                    <span>Audit Details Load Error</span>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => loadDetailsAndHistory()}
+                    disabled={loadingDetail}
+                    className="h-7 text-xs border-rose-500/40 text-rose-300 hover:bg-rose-500/20"
+                  >
+                    {loadingDetail ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <RotateCcw className="h-3 w-3 mr-1" />}
+                    Retry
+                  </Button>
+                </div>
+                <p className="text-[11px] text-rose-300/90 font-mono break-all">
+                  {detailError}
+                </p>
+              </div>
+            )}
+
             {/* Regression Banner if Regressed */}
             {isRegressed && (
               <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3.5 space-y-1.5 animate-in fade-in duration-200">
@@ -286,24 +326,36 @@ export function ProxyDetailDrawer({
 
             {/* Verified Exit Card */}
             <div className="rounded-lg border border-border/60 bg-surface/50 p-4 space-y-3">
-              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block">
-                Verified Exit Node
-              </span>
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block">
+                  Verified Exit Node
+                </span>
+                {!verifiedExitIp && (
+                  <Badge variant="outline" className="text-[10px] text-muted-foreground font-mono">
+                    Unmeasured
+                  </Badge>
+                )}
+              </div>
 
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="text-xl font-bold font-mono text-foreground">{exitIp}</span>
+              <div className="flex items-baseline justify-between gap-2 flex-wrap">
+                <span className={cn(
+                  "font-bold font-mono break-all",
+                  verifiedExitIp ? "text-xl text-foreground" : "text-sm text-muted-foreground/80 italic"
+                )}>
+                  {verifiedExitIp || "Exit IP unverified (no probe recorded)"}
+                </span>
                 <Badge variant="secondary" className="text-xs font-normal">
                   <Globe2 className="h-3 w-3 mr-1 text-muted-foreground" />
                   {locationText}
                 </Badge>
               </div>
 
-              <div className="text-xs text-muted-foreground flex items-center justify-between pt-2 border-t border-border/40">
+              <div className="text-xs text-muted-foreground flex items-center justify-between pt-2 border-t border-border/40 gap-2">
                 <span className="truncate max-w-[240px]" title={`${ispText}${asnText}`}>
                   {ispText}
                   {asnText}
                 </span>
-                <span className="font-mono text-foreground font-medium">
+                <span className="font-mono text-foreground font-medium shrink-0">
                   {proxy.latencyMs !== null ? `${proxy.latencyMs} ms` : "—"}
                 </span>
               </div>
@@ -443,14 +495,30 @@ export function ProxyDetailDrawer({
 
             {/* Recent Checks History */}
             <div className="space-y-2.5 pt-2">
-              <h4 className="font-semibold text-foreground text-xs uppercase tracking-wider flex items-center justify-between">
-                <span>Recent Checks History</span>
+              <div className="flex items-center justify-between">
+                <h4 className="font-semibold text-foreground text-xs uppercase tracking-wider">
+                  Recent Checks History
+                </h4>
                 <span className="text-muted-foreground font-mono text-[11px]">
-                  {history.length} record{history.length === 1 ? "" : "s"}
+                  {loadingDetail ? "Loading..." : `${history.length} record${history.length === 1 ? "" : "s"}`}
                 </span>
-              </h4>
+              </div>
 
-              {history.length === 0 ? (
+              {detailError && history.length === 0 ? (
+                <div className="rounded-lg border border-rose-500/30 bg-rose-500/5 p-4 text-center space-y-2">
+                  <p className="text-rose-400 text-xs">Error loading history from server.</p>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => loadDetailsAndHistory()}
+                    disabled={loadingDetail}
+                    className="h-7 text-xs text-rose-300 hover:text-rose-200"
+                  >
+                    <RotateCcw className="h-3 w-3 mr-1.5" />
+                    Try again
+                  </Button>
+                </div>
+              ) : history.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-border/60 p-4 text-center text-muted-foreground">
                   No check history recorded yet.
                 </div>
@@ -459,14 +527,14 @@ export function ProxyDetailDrawer({
                   {history.map((entry) => (
                     <div
                       key={entry.id}
-                      className="rounded-lg border border-border/50 bg-surface/30 p-3 flex items-center justify-between text-xs"
+                      className="rounded-lg border border-border/50 bg-surface/30 p-3 flex items-start justify-between text-xs gap-3"
                     >
-                      <div className="space-y-0.5">
-                        <div className="flex items-center gap-2">
+                      <div className="space-y-1 min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <Badge
                             variant={entry.status === "passed" ? "default" : "destructive"}
                             className={cn(
-                              "text-[10px] uppercase font-mono py-0",
+                              "text-[10px] uppercase font-mono py-0 shrink-0",
                               entry.status === "passed"
                                 ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
                                 : ""
@@ -474,20 +542,29 @@ export function ProxyDetailDrawer({
                           >
                             {entry.status === "passed" ? "Passed" : "Failed"}
                           </Badge>
-                          <span className="font-mono text-xs text-foreground">
-                            {entry.exitIp || "—"}
+                          <span className="font-mono text-xs text-foreground break-all">
+                            {entry.exitIp || "Exit unmeasured"}
                           </span>
                         </div>
-                        <p className="text-[11px] text-muted-foreground truncate max-w-[220px]">
-                          {entry.isp || "Unknown ISP"} • UDP {entry.udp}
+
+                        {entry.errorMessage ? (
+                          <p className="text-[11px] text-rose-400 font-mono break-all leading-relaxed">
+                            {entry.errorMessage}
+                          </p>
+                        ) : null}
+
+                        <p className="text-[11px] text-muted-foreground">
+                          {entry.udp === "Unknown" || !entry.udp
+                            ? "UDP not measured"
+                            : `UDP: ${entry.udp}`}
                         </p>
                       </div>
 
-                      <div className="text-right">
+                      <div className="text-right shrink-0">
                         <div className="font-mono font-medium text-foreground">
                           {entry.latencyMs !== null ? `${entry.latencyMs} ms` : "—"}
                         </div>
-                        <span className="text-[10px] text-muted-foreground">
+                        <span className="text-[10px] text-muted-foreground block whitespace-nowrap">
                           {formatRelativeTime(entry.timestamp)}
                         </span>
                       </div>

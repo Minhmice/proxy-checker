@@ -28,36 +28,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setAuthenticated(true);
     }
 
+    let mounted = true;
     const controller = new AbortController();
-    checkSession(controller.signal)
-      .then((ok) => {
-        if (!controller.signal.aborted) {
-          setAuthenticated(ok || Boolean(saved));
-        }
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) {
-          setAuthenticated(Boolean(saved));
-        }
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) {
+
+    async function verifySession() {
+      try {
+        const ok = await checkSession(controller.signal);
+        if (!mounted || controller.signal.aborted) return;
+        setAuthenticated(ok || Boolean(saved));
+      } catch (err: unknown) {
+        if (!mounted || controller.signal.aborted || isAbortError(err)) return;
+        setAuthenticated(Boolean(saved));
+      } finally {
+        if (mounted && !controller.signal.aborted) {
           setHydrated(true);
         }
-      });
+      }
+    }
+
+    void verifySession();
 
     return () => {
+      mounted = false;
       controller.abort();
     };
-  }, []);
-  useEffect(() => {
-    const handleRejection = (event: PromiseRejectionEvent) => {
-      if (isAbortError(event.reason)) {
-        event.preventDefault();
-      }
-    };
-    window.addEventListener("unhandledrejection", handleRejection);
-    return () => window.removeEventListener("unhandledrejection", handleRejection);
   }, []);
 
 

@@ -16,7 +16,14 @@ func sanitizeLine(val string) error {
 	return nil
 }
 
-func RenderConfig(endpoints []controller.ProxyEndpointConfig) (string, string, error) {
+func RenderConfig(endpoints []controller.ProxyEndpointConfig, capacity *controller.FleetCapacitySettings) (string, string, error) {
+	var maxConn int
+	if capacity != nil && capacity.MaxConnections != nil {
+		if *capacity.MaxConnections <= 0 {
+			return "", "", fmt.Errorf("invalid capacity maxConnections: must be > 0, got %d", *capacity.MaxConnections)
+		}
+		maxConn = *capacity.MaxConnections
+	}
 	var sb strings.Builder
 
 	// Header
@@ -33,10 +40,10 @@ func RenderConfig(endpoints []controller.ProxyEndpointConfig) (string, string, e
 			continue
 		}
 		if err := sanitizeLine(ep.Username); err != nil {
-			return "", "", fmt.Errorf("invalid username: %w", err)
+			return "", "", fmt.Errorf("invalid username for endpoint %s: contains illegal characters", ep.ID)
 		}
 		if err := sanitizeLine(ep.Password); err != nil {
-			return "", "", fmt.Errorf("invalid password: %w", err)
+			return "", "", fmt.Errorf("invalid password for user %s: contains illegal characters", ep.Username)
 		}
 		users = append(users, fmt.Sprintf("%s:CL:%s", ep.Username, ep.Password))
 	}
@@ -45,7 +52,6 @@ func RenderConfig(endpoints []controller.ProxyEndpointConfig) (string, string, e
 		sb.WriteString("users " + strings.Join(users, " ") + "\n")
 		sb.WriteString("auth strong\n\n")
 	}
-
 	// Endpoints
 	for _, ep := range endpoints {
 		if !ep.Enabled {
@@ -63,10 +69,16 @@ func RenderConfig(endpoints []controller.ProxyEndpointConfig) (string, string, e
 		case "http", "connect":
 			// Allow authenticated users
 			sb.WriteString(fmt.Sprintf("allow %s\n", ep.Username))
+			if maxConn > 0 {
+				sb.WriteString(fmt.Sprintf("maxconn %d\n", maxConn))
+			}
 			sb.WriteString(fmt.Sprintf("proxy -p%d -i%s\n", ep.ListenPort, ep.ListenIP))
 			sb.WriteString("flush\n\n")
 		case "socks", "socks5":
 			sb.WriteString(fmt.Sprintf("allow %s\n", ep.Username))
+			if maxConn > 0 {
+				sb.WriteString(fmt.Sprintf("maxconn %d\n", maxConn))
+			}
 			sb.WriteString(fmt.Sprintf("socks -p%d -i%s\n", ep.ListenPort, ep.ListenIP))
 			sb.WriteString("flush\n\n")
 		default:

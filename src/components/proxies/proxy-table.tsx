@@ -97,7 +97,7 @@ export function ProxyTable({
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-rose-500/15 text-rose-400 border border-rose-500/30">
             <XCircle className="h-3 w-3 shrink-0" aria-hidden="true" />
-            <span>Never verified</span>
+            <span>Dead</span>
           </span>
         );
     }
@@ -130,66 +130,57 @@ export function ProxyTable({
 
   return (
     <div className="rounded-lg border border-border/70 bg-card overflow-hidden shadow-sm flex flex-col">
-      <div className="overflow-x-auto min-h-[380px]">
-        <Table>
-          <TableHeader className="bg-surface/80">
-            <TableRow className="border-border/60 hover:bg-transparent">
-              <TableHead className="w-10 px-3">
-                <Checkbox
-                  checked={allPageSelected}
-                  onCheckedChange={onToggleSelectAllPage}
-                  aria-label="Select all proxies on page"
-                />
-              </TableHead>
-              <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Proxy Endpoint
-              </TableHead>
-              <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Protocol
-              </TableHead>
-              <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Health
-              </TableHead>
-              <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Pool
-              </TableHead>
-              <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Exit / ISP
-              </TableHead>
-              <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground text-right">
-                Latency
-              </TableHead>
-              <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground text-right pr-4">
-                Actions
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-
-          <TableBody>
-            {loading && items.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={8} className="h-48 text-center text-muted-foreground">
-                  <div className="flex flex-col items-center justify-center gap-2">
-                    <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                    <span className="text-xs font-medium">Loading proxy fleet...</span>
-                  </div>
-                </TableCell>
+      {loading && items.length === 0 ? (
+        <div className="flex flex-col items-center justify-center gap-2 p-12 text-center text-muted-foreground min-h-[380px]">
+          <Loader2 className="h-6 w-6 animate-spin text-primary" />
+          <span className="text-xs font-medium">Loading proxy fleet...</span>
+        </div>
+      ) : items.length === 0 ? (
+        <div className="flex flex-col items-center justify-center gap-3 p-12 text-center text-muted-foreground min-h-[380px]">
+          <p className="text-xs">No proxies match the selected filters or search.</p>
+          {onResetFilters && (
+            <Button variant="outline" size="sm" onClick={onResetFilters} className="text-xs h-9 cursor-pointer">
+              Reset filters
+            </Button>
+          )}
+        </div>
+      ) : (
+        <div className="overflow-x-auto min-h-[380px] w-full">
+          <Table className="w-full">
+            <TableHeader className="bg-surface/80">
+              <TableRow className="border-border/60 hover:bg-transparent">
+                <TableHead className="w-10 px-3">
+                  <Checkbox
+                    checked={allPageSelected}
+                    onCheckedChange={onToggleSelectAllPage}
+                    aria-label="Select all proxies on page"
+                  />
+                </TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground min-w-[140px]">
+                  Proxy Endpoint
+                </TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground hidden sm:table-cell">
+                  Protocol
+                </TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Health
+                </TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground hidden sm:table-cell">
+                  Pool
+                </TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground hidden md:table-cell">
+                  Exit / ISP
+                </TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground text-right hidden sm:table-cell">
+                  Latency
+                </TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground text-right pr-4 min-w-[70px]">
+                  Actions
+                </TableHead>
               </TableRow>
-            ) : items.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={8} className="h-48 text-center text-muted-foreground">
-                  <div className="flex flex-col items-center justify-center gap-3">
-                    <p className="text-xs">No proxies match the selected filters or search.</p>
-                    {onResetFilters && (
-                      <Button variant="outline" size="sm" onClick={onResetFilters} className="text-xs h-8">
-                        Reset filters
-                      </Button>
-                    )}
-                  </div>
-                </TableCell>
-              </TableRow>
-            ) : (
-              items.map((item) => {
+            </TableHeader>
+            <TableBody>
+              {items.map((item) => {
                 const isSelected = selectedKeys.has(item.key || item.proxyKey);
                 const isChecking = checkingKey === (item.key || item.proxyKey);
                 const endpoint = `${item.host}:${item.port}`;
@@ -220,40 +211,42 @@ export function ProxyTable({
                       }}
                     >
                       {/* Checkbox */}
-                      <TableCell className="px-3" onClick={(e) => e.stopPropagation()}>
-                        <Checkbox
-                          checked={isSelected}
-                          onCheckedChange={() => onToggleSelectKey(item.key || item.proxyKey)}
-                          aria-label={`Select proxy ${endpoint}`}
-                        />
+                      <TableCell className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-center min-w-[24px] min-h-[36px]">
+                          <Checkbox
+                            checked={isSelected}
+                            onCheckedChange={() => onToggleSelectKey(item.key || item.proxyKey)}
+                            aria-label={`Select proxy ${endpoint}`}
+                          />
+                        </div>
                       </TableCell>
 
                       {/* Endpoint + Pin + Copy */}
-                      <TableCell className="font-mono text-xs font-medium text-foreground py-3">
-                        <div className="flex items-center gap-1.5">
+                      <TableCell className="font-mono text-xs font-medium text-foreground py-3 max-w-[180px] sm:max-w-[240px]">
+                        <div className="flex items-center gap-1.5 min-w-0">
                           {item.isPinned && (
                             <Pin className="h-3 w-3 text-amber-400 fill-amber-400/20 shrink-0" aria-label="Protected proxy" />
                           )}
-                          <span className="hover:text-primary transition-colors">{endpoint}</span>
+                          <span className="truncate hover:text-primary transition-colors block" title={endpoint}>{endpoint}</span>
                           <button
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
                               onCopyEndpoint(endpoint);
                             }}
-                            className="opacity-0 group-hover:opacity-100 p-1 hover:text-foreground text-muted-foreground transition-all cursor-pointer"
+                            className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 p-1.5 hover:text-foreground text-muted-foreground transition-all cursor-pointer shrink-0"
                             aria-label={`Copy endpoint ${endpoint}`}
                           >
                             {copiedKey === endpoint ? (
-                              <Check className="h-3 w-3 text-emerald-400" />
+                              <Check className="h-3.5 w-3.5 text-emerald-400" />
                             ) : (
-                              <Copy className="h-3 w-3" />
+                              <Copy className="h-3.5 w-3.5" />
                             )}
                           </button>
                         </div>
                       </TableCell>
                     {/* Protocol */}
-                    <TableCell>
+                    <TableCell className="hidden sm:table-cell">
                       <Badge variant="outline" className="text-[10px] uppercase font-mono tracking-wider py-0">
                         {item.protocol}
                       </Badge>
@@ -263,10 +256,10 @@ export function ProxyTable({
                     <TableCell>{renderHealthBadge(item.health || item.status)}</TableCell>
 
                     {/* Pool Tier */}
-                    <TableCell>{renderPoolBadge(item.poolTier ?? (item.sync as string), item.routerState)}</TableCell>
+                    <TableCell className="hidden sm:table-cell">{renderPoolBadge(item.poolTier ?? (item.sync as string), item.routerState)}</TableCell>
 
                     {/* Exit IP & Location / ISP */}
-                    <TableCell className="text-xs">
+                    <TableCell className="text-xs hidden md:table-cell">
                       {item.exitIp ? (
                         <div className="space-y-0.5">
                           <span className="font-mono text-xs font-medium text-foreground block">
@@ -283,7 +276,7 @@ export function ProxyTable({
                     </TableCell>
 
                     {/* Latency */}
-                    <TableCell className="text-right font-mono text-xs">
+                    <TableCell className="text-right font-mono text-xs hidden sm:table-cell">
                       {item.latencyMs !== null && item.health !== "dead" ? (
                         <span
                           className={cn(
@@ -309,7 +302,7 @@ export function ProxyTable({
                           size="sm"
                           onClick={() => onCheckSingle(item)}
                           disabled={isChecking}
-                          className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
+                          className="h-8 w-8 sm:h-7 sm:w-7 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
                           aria-label={`Test connectivity for ${endpoint}`}
                         >
                           {isChecking ? (
@@ -323,7 +316,7 @@ export function ProxyTable({
                           variant="ghost"
                           size="sm"
                           onClick={() => onOpenDetail(item)}
-                          className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
+                          className="h-8 w-8 sm:h-7 sm:w-7 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
                           aria-label={`Inspect details for ${endpoint}`}
                         >
                           <SlidersHorizontal className="h-3.5 w-3.5" />
@@ -333,15 +326,15 @@ export function ProxyTable({
                     </TableRow>
                   </ProxyContextMenu>
                 );
-              })
-            )}
-          </TableBody>
-        </Table>
-      </div>
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      )}
 
       {/* Pagination Footer */}
-      <div className="flex items-center justify-between px-4 py-3 border-t border-border/60 bg-surface/40 text-xs text-muted-foreground">
-        <div>
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t border-border/60 bg-surface/40 text-xs text-muted-foreground">
+        <div className="text-center sm:text-left">
           Showing{" "}
           <strong className="font-semibold text-foreground">
             {total > 0 ? (page - 1) * pageSize + 1 : 0}
@@ -359,7 +352,7 @@ export function ProxyTable({
             size="sm"
             onClick={() => onPageChange(Math.max(1, page - 1))}
             disabled={page <= 1 || loading}
-            className="h-7 w-7 p-0 border-border/70 cursor-pointer"
+            className="h-8 w-8 sm:h-7 sm:w-7 p-0 border-border/70 cursor-pointer"
             aria-label="Previous page"
           >
             <ChevronLeft className="h-3.5 w-3.5" />
@@ -374,7 +367,7 @@ export function ProxyTable({
             size="sm"
             onClick={() => onPageChange(Math.min(totalPages, page + 1))}
             disabled={page >= totalPages || loading}
-            className="h-7 w-7 p-0 border-border/70 cursor-pointer"
+            className="h-8 w-8 sm:h-7 sm:w-7 p-0 border-border/70 cursor-pointer"
             aria-label="Next page"
           >
             <ChevronRight className="h-3.5 w-3.5" />

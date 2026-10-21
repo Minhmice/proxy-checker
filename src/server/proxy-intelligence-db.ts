@@ -124,7 +124,55 @@ export function migrateProxyIntelligence(db: ProxyIntelligenceDb): void {
       CREATE INDEX IF NOT EXISTS proxies_source_lifecycle_idx ON proxies(source, lifecycle_state);
       CREATE INDEX IF NOT EXISTS proxies_last_checked_idx ON proxies(last_checked_at DESC);
     `);
+
+    // 5. Create fleet_managed_endpoints mapping table with pending_cleanup & owned_exclusive
+    const fleetCols = db.all<{ name: string }>("PRAGMA table_info(fleet_managed_endpoints)").map((c) => c.name);
+    if (fleetCols.length > 0) {
+      if (!fleetCols.includes("pending_cleanup")) {
+        db.exec("ALTER TABLE fleet_managed_endpoints ADD COLUMN pending_cleanup INTEGER NOT NULL DEFAULT 0;");
+      }
+      if (!fleetCols.includes("owned_exclusive")) {
+        db.exec("ALTER TABLE fleet_managed_endpoints ADD COLUMN owned_exclusive INTEGER NOT NULL DEFAULT 1;");
+      }
+    } else {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS fleet_managed_endpoints (
+          node_id TEXT NOT NULL,
+          endpoint_id TEXT NOT NULL,
+          proxy_key TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          pending_cleanup INTEGER NOT NULL DEFAULT 0,
+          owned_exclusive INTEGER NOT NULL DEFAULT 1,
+          PRIMARY KEY (node_id, endpoint_id, proxy_key),
+          FOREIGN KEY (proxy_key) REFERENCES proxies(proxy_key) ON DELETE CASCADE
+        );
+      `);
+    }
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_fleet_managed_proxy_key ON fleet_managed_endpoints(proxy_key);
+      CREATE INDEX IF NOT EXISTS idx_fleet_managed_node_id ON fleet_managed_endpoints(node_id);
+    `);
   });
+}
+
+function sleepSync(delayMs: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+}
+
+export function configureProxyIntelligenceDb(raw: { exec(sql: string): void }, sleep: (delayMs: number) => void = sleepSync): void {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      raw.exec("PRAGMA journal_mode = WAL;");
+      break;
+    } catch (error) {
+      const sqliteError = error as { code?: string; errcode?: number };
+      const retryable = sqliteError.code === "ERR_SQLITE_ERROR" && [5, 6, 1546].includes(sqliteError.errcode ?? 0);
+      if (!retryable || attempt >= 2) throw error;
+      sleep(25 * 2 ** attempt);
+    }
+  }
+  raw.exec("PRAGMA foreign_keys = ON;");
 }
 
 export function openProxyIntelligenceDb(dataDir: string): ProxyIntelligenceDb {
@@ -133,8 +181,7 @@ export function openProxyIntelligenceDb(dataDir: string): ProxyIntelligenceDb {
   const raw = new DatabaseSync(dbFile, { timeout: 3000 });
 
   // Enable WAL and foreign keys for durability and cascading
-  raw.exec("PRAGMA journal_mode = WAL;");
-  raw.exec("PRAGMA foreign_keys = ON;");
+  configureProxyIntelligenceDb(raw);
 
   const db: ProxyIntelligenceDb = {
     exec(sql: string): void {

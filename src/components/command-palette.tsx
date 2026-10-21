@@ -1,11 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Search } from "lucide-react";
-import { useAuth } from "./auth-provider";
+import { AlertCircle, Loader2, Server } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { fetchPools } from "@/lib/api";
 import type { PoolRecord } from "@/lib/types";
-import "./command-palette.css";
+import {
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 
 interface CommandPaletteProps {
   open: boolean;
@@ -13,90 +22,159 @@ interface CommandPaletteProps {
 }
 
 export function CommandPalette({ open, onClose }: CommandPaletteProps) {
-  const { password } = useAuth();
-  const [query, setQuery] = useState("");
+  const router = useRouter();
   const [pools, setPools] = useState<PoolRecord[]>([]);
-  const dialogRef = useRef<HTMLDialogElement>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const wasOpen = useRef(false);
+  const request = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    if (wasOpen.current && !open) document.querySelector<HTMLElement>("[data-command-trigger]")?.focus();
+    if (wasOpen.current && !open) {
+      const timer = setTimeout(() => {
+        document.querySelector<HTMLElement>("[data-command-trigger]")?.focus();
+      }, 0);
+      wasOpen.current = false;
+      return () => clearTimeout(timer);
+    }
     wasOpen.current = open;
   }, [open]);
 
-  useEffect(() => {
-    if (!open || !password) return;
-    fetchPools(password).then(setPools).catch(() => setPools([]));
-    setQuery("");
-  }, [open, password]);
-
-  const filtered = pools.filter(
-    (p) =>
-      p.name.toLowerCase().includes(query.toLowerCase()) ||
-      p.exit_ip?.includes(query) ||
-      p.proxyUrl.toLowerCase().includes(query.toLowerCase())
-  );
-
-  const handleKey = useCallback(
-    (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key === "k") {
-        event.preventDefault();
-        if (open) onClose();
+  const loadPools = useCallback(async (controller: AbortController) => {
+    request.current?.abort();
+    request.current = controller;
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await fetchPools(controller.signal);
+      if (!controller.signal.aborted) setPools(data ?? []);
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      const message = err instanceof Error ? err.message.toLowerCase() : "";
+      if (message.includes("password") || message.includes("401") || message.includes("unauthorized")) {
+        setError("Session expired or unauthorized. Please sign in again.");
+      } else {
+        setError("Unable to load proxy pools. Check your session and try again.");
       }
-      if (event.key === "Escape" && open) onClose();
-      if (event.key === "Tab" && open) {
-        const focusable = dialogRef.current?.querySelectorAll<HTMLElement>("input, a[href], button:not([disabled])");
-        if (!focusable?.length) return;
-        const first = focusable[0];
-        const last = focusable[focusable.length - 1];
-        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-      }
-    },
-    [open, onClose]
-  );
+    } finally {
+      if (!controller.signal.aborted) setLoading(false);
+      if (request.current === controller) request.current = null;
+    }
+  }, []);
+
+  const retryLoad = useCallback(() => {
+    const controller = new AbortController();
+    void loadPools(controller);
+  }, [loadPools]);
 
   useEffect(() => {
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [handleKey]);
+    if (!open) return;
+    const controller = new AbortController();
+    void loadPools(controller);
+    return () => {
+      request.current?.abort();
+      request.current = null;
+    };
+  }, [open, loadPools]);
 
-  useEffect(() => {
-    if (open) requestAnimationFrame(() => dialogRef.current?.querySelector<HTMLElement>("input")?.focus());
-  }, [open]);
-
-  if (!open) return null;
+  const handleSelect = (pool: PoolRecord) => {
+    onClose();
+    router.push(`/proxies?search=${encodeURIComponent(pool.name)}`);
+  };
 
   return (
-    <div className="command-backdrop" onClick={onClose} role="presentation">
-      <dialog ref={dialogRef} className="command-dialog" open aria-modal="true" aria-labelledby="command-dialog-title" onClick={(e) => e.stopPropagation()}>
-        <h2 id="command-dialog-title" className="sr-only">Search proxy pools</h2>
-        <div className="command-input-wrap">
-          <Search size={18} aria-hidden />
-          <label className="sr-only" htmlFor="command-search">Search proxy pools</label>
-          <input
-            id="command-search"
-            autoFocus
-            className="command-input"
-            placeholder="Search pools by name, IP, or URL…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          <kbd className="command-kbd">Esc</kbd>
-        </div>
-        <ul className="command-results">
-          {filtered.length === 0 && <li className="command-empty">No pools match</li>}
-          {filtered.slice(0, 12).map((pool) => (
-            <li key={pool.localId}>
-              <a href="/proxies" className="command-item" onClick={onClose}>
-                <span className="command-item-name">{pool.name}</span>
-                <span className="command-item-meta mono">{pool.exit_ip ?? pool.tier}</span>
-              </a>
-            </li>
-          ))}
-        </ul>
-      </dialog>
-    </div>
+    <CommandDialog
+      open={open}
+      onOpenChange={(isOpen) => {
+        if (!isOpen) onClose();
+      }}
+      title="Search proxy pools"
+      description="Quickly jump to a proxy pool by name, IP, URL, or tier"
+    >
+      <CommandInput placeholder="Search proxy pools by name, IP, URL, tier..." />
+      <CommandList className="max-h-[360px] overflow-y-auto">
+        {loading && (
+          <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground">
+            <Loader2 className="size-4 animate-spin text-primary" />
+            <span>Loading proxy pools...</span>
+          </div>
+        )}
+        {!loading && error && (
+          <div className="flex flex-col items-center justify-center gap-2 py-8 px-4 text-center">
+            <AlertCircle className="size-5 text-destructive" />
+            <p className="text-xs text-destructive font-medium">{error}</p>
+            <div className="flex items-center gap-2 mt-1">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={retryLoad}
+              >
+                Retry
+              </Button>
+              <Button
+                asChild
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs text-muted-foreground"
+                onClick={onClose}
+              >
+                <a href="/auth">Sign in</a>
+              </Button>
+            </div>
+          </div>
+        )}
+        {!loading && !error && pools.length === 0 && (
+          <div className="flex flex-col items-center justify-center gap-1.5 py-8 px-4 text-center text-xs text-muted-foreground">
+            <Server className="size-5 opacity-40 mb-1" />
+            <p className="font-medium text-foreground">No proxy pools configured</p>
+            <p className="text-muted-foreground/80">
+              No router pools found for this session.
+            </p>
+          </div>
+        )}
+        {!loading && !error && pools.length > 0 && (
+          <>
+            <CommandEmpty>No matching pools found.</CommandEmpty>
+            <CommandGroup heading={`Proxy Pools (${pools.length})`}>
+              {pools.map((pool) => (
+                <CommandItem
+                  key={pool.localId ?? pool.name}
+                  value={`${pool.name} ${pool.exit_ip ?? ""} ${pool.proxyUrl ?? ""} ${pool.tier ?? ""}`}
+                  onSelect={() => handleSelect(pool)}
+                  className="flex items-center justify-between gap-3 px-3 py-2 cursor-pointer"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <Server className="size-4 shrink-0 text-muted-foreground" />
+                    <span className="font-medium text-sm text-foreground truncate">
+                      {pool.name}
+                    </span>
+                    {pool.tier && (
+                      <Badge
+                        variant="outline"
+                        className="text-[10px] uppercase font-mono px-1.5 py-0 h-4"
+                      >
+                        {pool.tier}
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {pool.exit_ip && (
+                      <span className="font-mono text-xs text-muted-foreground">
+                        {pool.exit_ip}
+                      </span>
+                    )}
+                    <span className="text-[11px] text-muted-foreground/70 hidden sm:inline">
+                      Jump &rarr;
+                    </span>
+                  </div>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </>
+        )}
+      </CommandList>
+    </CommandDialog>
   );
 }
 
@@ -105,7 +183,7 @@ export function useCommandPalette() {
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if ((event.metaKey || event.ctrlKey) && event.key === "k") {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setOpen((v) => !v);
       }

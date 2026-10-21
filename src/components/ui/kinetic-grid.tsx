@@ -40,7 +40,7 @@ export default function KineticGrid({
   const ripplesRef = useRef<Ripple[]>([]);
   const rafRef = useRef<number>(0);
   const sizeRef = useRef({ w: 0, h: 0 });
-
+  const reducedMotionRef = useRef<boolean>(false);
   const getWarpedPoint = useCallback((gx: number, gy: number, col: number, row: number, mouse: Point, ripples: Ripple[], cols: number, rows: number) => {
     const edgeMargin = 1.5;
     const colPin = Math.min(col / edgeMargin, (cols - 1 - col) / edgeMargin, 1);
@@ -141,21 +141,120 @@ export default function KineticGrid({
     }
   }, [getWarpedPoint, globalColor]);
 
+  const drawStatic = useCallback(() => {
+    mouseRef.current = { x: -9999, y: -9999 };
+    targetMouseRef.current = { x: -9999, y: -9999 };
+    ripplesRef.current = [];
+    draw(0);
+  }, [draw]);
+
+  const stopLoop = useCallback(() => {
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = 0;
+    }
+  }, []);
+
   const animate = useCallback((now: number) => {
+    if (document.hidden || reducedMotionRef.current) {
+      rafRef.current = 0;
+      return;
+    }
     mouseRef.current.x = lerpN(mouseRef.current.x, targetMouseRef.current.x, LERP_SPEED);
     mouseRef.current.y = lerpN(mouseRef.current.y, targetMouseRef.current.y, LERP_SPEED);
-    draw(now); rafRef.current = requestAnimationFrame(animate);
+    draw(now);
+    rafRef.current = requestAnimationFrame(animate);
   }, [draw]);
+
+  const startLoop = useCallback(() => {
+    if (typeof window === "undefined") return;
+    if (reducedMotionRef.current || document.hidden) return;
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+    }
+    rafRef.current = requestAnimationFrame(animate);
+  }, [animate]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const setSize = () => { const w = window.innerWidth; const h = window.innerHeight; canvas.width = w; canvas.height = h; sizeRef.current = { w, h }; };
-    const onMouseMove = (event: MouseEvent) => { targetMouseRef.current = { x: event.clientX, y: event.clientY }; };
-    const onClick = (event: MouseEvent) => ripplesRef.current.push({ x: event.clientX, y: event.clientY, radius: 0, opacity: 1, born: performance.now() });
-    setSize(); window.addEventListener("resize", setSize); window.addEventListener("mousemove", onMouseMove); window.addEventListener("click", onClick); rafRef.current = requestAnimationFrame(animate);
-    return () => { window.removeEventListener("resize", setSize); window.removeEventListener("mousemove", onMouseMove); window.removeEventListener("click", onClick); cancelAnimationFrame(rafRef.current); };
-  }, [animate]);
 
+    // ponytail: unified motion-query and visibility loop manager; upgrade to worker-offloaded canvas if CPU budget tightens.
+    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    reducedMotionRef.current = mediaQuery.matches;
+
+    const setSize = () => {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      canvas.width = w;
+      canvas.height = h;
+      sizeRef.current = { w, h };
+      if (reducedMotionRef.current) {
+        drawStatic();
+      }
+    };
+
+    const onMouseMove = (event: MouseEvent) => {
+      if (reducedMotionRef.current) return;
+      targetMouseRef.current = { x: event.clientX, y: event.clientY };
+    };
+
+    const onClick = (event: MouseEvent) => {
+      if (reducedMotionRef.current) return;
+      ripplesRef.current.push({
+        x: event.clientX,
+        y: event.clientY,
+        radius: 0,
+        opacity: 1,
+        born: performance.now(),
+      });
+    };
+
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        stopLoop();
+      } else if (!reducedMotionRef.current) {
+        startLoop();
+      }
+    };
+
+    const onMotionChange = (event: MediaQueryListEvent) => {
+      reducedMotionRef.current = event.matches;
+      if (event.matches) {
+        stopLoop();
+        drawStatic();
+      } else {
+        startLoop();
+      }
+    };
+
+    setSize();
+    if (!reducedMotionRef.current && !document.hidden) {
+      startLoop();
+    }
+
+    window.addEventListener("resize", setSize);
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("click", onClick);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", onMotionChange);
+    } else {
+      mediaQuery.addListener(onMotionChange);
+    }
+
+    return () => {
+      stopLoop();
+      window.removeEventListener("resize", setSize);
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("click", onClick);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      if (typeof mediaQuery.removeEventListener === "function") {
+        mediaQuery.removeEventListener("change", onMotionChange);
+      } else {
+        mediaQuery.removeListener(onMotionChange);
+      }
+    };
+  }, [animate, drawStatic, startLoop, stopLoop]);
   return <div className={cn("relative min-h-screen w-full overflow-hidden", globalColor === "monochrome" ? "bg-black" : "bg-[#0b0b18]", className)}><canvas ref={canvasRef} className="pointer-events-none fixed inset-0 z-0 h-full w-full" /><div className="relative z-10 h-full w-full">{children}</div></div>;
 }

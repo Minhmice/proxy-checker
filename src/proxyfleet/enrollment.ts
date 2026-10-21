@@ -29,6 +29,7 @@ export interface EnrollNodeResult {
   wireguardIp: string;
   serverWireguardPublicKey: string;
   serverWireguardEndpoint: string;
+  agentToken: string;
 }
 
 export interface EnrollmentService {
@@ -45,16 +46,21 @@ export function createEnrollmentService(
 ): EnrollmentService {
   const serverWireguardPublicKey =
     options.serverWireguardPublicKey ||
-    process.env.WIREGUARD_SERVER_PUBLIC_KEY ||
-    "t7zO1q2R3s4T5u6V7w8X9y0Z1a2B3c4D5e6F7g8H9i0=";
+    process.env.WIREGUARD_SERVER_PUBLIC_KEY;
 
   const serverWireguardEndpoint =
     options.serverWireguardEndpoint ||
-    process.env.WIREGUARD_SERVER_ENDPOINT ||
-    "127.0.0.1:51820";
-
+    process.env.WIREGUARD_SERVER_ENDPOINT;
   return {
     async issueToken(input: IssueTokenInput): Promise<IssueTokenResult> {
+      if (input.assignedIp) {
+        const parts = input.assignedIp.split(".");
+        const octet = parts.length === 4 && parts[0] === "10" && parts[1] === "77" && parts[2] === "0" ? Number(parts[3]) : NaN;
+        if (!Number.isInteger(octet) || octet < 11 || octet > 254) {
+          throw new Error("Invalid assignedIp: must be within 10.77.0.11-10.77.0.254");
+        }
+      }
+
       const token = `flt_${generateRandomToken(20)}`;
       const tokenHash = hashToken(token);
       const ttlMs = Math.max(1, input.ttlMinutes || 15) * 60_000;
@@ -75,42 +81,37 @@ export function createEnrollmentService(
     },
 
     async enrollNode(input: EnrollNodeInput): Promise<EnrollNodeResult> {
-      const tokenHash = hashToken(input.token);
-      const consumed = await repo.consumeEnrollmentToken(tokenHash);
-
-      if (!consumed) {
-        throw new Error("Enrollment token already consumed or expired");
+      if (
+        !serverWireguardPublicKey ||
+        !serverWireguardEndpoint ||
+        !/^[A-Za-z0-9+/]{43}=$/.test(serverWireguardPublicKey) ||
+        Buffer.from(serverWireguardPublicKey, "base64").length !== 32 ||
+        !serverWireguardEndpoint.includes(":")
+      ) {
+        throw new Error(
+          "WireGuard server configuration missing or invalid: serverWireguardPublicKey (32-byte base64) and serverWireguardEndpoint (host:port) must be configured before enrolling nodes"
+        );
       }
 
-      const assignedWireguardIp = consumed.assignedIp || (await repo.getNextWireguardIp());
-
-      const node = await repo.createNode({
-        name: consumed.nodeName || input.nodeName,
-        wireguardIp: assignedWireguardIp,
-        publicIp: input.publicIp || null,
+      const agentToken = `fla_${generateRandomToken(32)}`;
+      const node = await repo.enrollNodeAtomic({
+        token: input.token,
+        nodeName: input.nodeName,
         wireguardPublicKey: input.wireguardPublicKey,
-        os: input.os || null,
-        arch: input.arch || null,
-        agentVersion: input.agentVersion || null,
-      });
-
-      await repo.recordEvent({
-        nodeId: node.id,
-        eventType: "node.enrolled",
-        level: "info",
-        payload: {
-          nodeName: node.name,
-          wireguardIp: assignedWireguardIp,
-          publicIp: input.publicIp || null,
-        },
+        publicIp: input.publicIp,
+        os: input.os,
+        arch: input.arch,
+        agentVersion: input.agentVersion,
+        agentToken,
       });
 
       return {
         nodeId: node.id,
         nodeName: node.name,
-        wireguardIp: assignedWireguardIp,
+        wireguardIp: node.wireguardIp,
         serverWireguardPublicKey,
         serverWireguardEndpoint,
+        agentToken,
       };
     },
   };

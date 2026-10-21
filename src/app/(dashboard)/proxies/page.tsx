@@ -1,15 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Loader2, RefreshCw, Zap, Trash2 } from "lucide-react";
+import { Loader2, RefreshCw, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/components/auth-provider";
 import {
   checkProxyValidity,
   downloadProxyExport,
   fetchUnifiedProxies,
-  syncPools,
   setProxyPin,
   unlinkProxyFromRouter,
   pushProxyToRouter,
@@ -52,7 +51,6 @@ export default function ProxiesPage() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { authenticated } = useAuth();
 
   // URL Query State
   const initialQuery = useMemo(() => parseProxyQuery(searchParams), [searchParams]);
@@ -110,10 +108,6 @@ export default function ProxiesPage() {
   // Selection
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [selectAllMatching, setSelectAllMatching] = useState(false);
-  const [auditing, setAuditing] = useState(false);
-
-  // Audit job tracking
-  const [activeJobId, setActiveJobId] = useState<string | null>(null);
 
   // Drawer
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -173,30 +167,37 @@ export default function ProxiesPage() {
     [query.health, debouncedSearch, query.protocol, query.source, query.sort, query.direction, query.page, query.pageSize]
   );
 
+  const abortRef = useRef<AbortController | null>(null);
+
   useEffect(() => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
     const controller = new AbortController();
+    abortRef.current = controller;
+
     void loadProxies(controller.signal).catch(() => {});
     return () => {
-      controller.abort();
+      if (abortRef.current) {
+        abortRef.current.abort();
+        abortRef.current = null;
+      }
     };
   }, [loadProxies]);
 
-  const handleJobFinished = useCallback(() => {
-    toast.success("Audit completed");
-    void loadProxies();
-  }, [loadProxies]);
 
   // Unified Sync (Check 9Router + Evict + Auto-Rename + Antigravity)
   const handleUnifiedSync = async () => {
     if (syncing) return;
     setSyncing(true);
     try {
-      toast.info("Đang bắt đầu chu kỳ đồng bộ và kiểm tra toàn bộ...");
+      toast.info("Starting sync and health check cycle...");
       const res = await triggerUnifiedSync();
       if (res.started) {
-        toast.success("Hoàn thành chu kỳ đồng bộ và kiểm tra 9Router");
+        toast.success("Completed 9Router sync and health check cycle");
       } else {
-        toast.info(res.error || "Đồng bộ đang chạy ngầm");
+        toast.info(res.error || "Sync running in background");
       }
       await loadProxies();
     } catch (err) {
@@ -213,9 +214,9 @@ export default function ProxiesPage() {
     try {
       const res = await triggerOptimizeAccountsBySpeed();
       if (res.ok) {
-        toast.success(`Đã tối ưu gán proxy tốc độ cao cho ${res.updated ?? 0} tài khoản`);
+        toast.success(`Optimized high-speed proxy assignment for ${res.updated ?? 0} accounts`);
       } else {
-        toast.error("Không thể tối ưu gán theo tốc độ");
+        toast.error("Failed to optimize assignment by speed");
       }
       await loadProxies();
     } catch (err) {
@@ -278,7 +279,7 @@ export default function ProxiesPage() {
     try {
       const nextState = !proxy.isPinned;
       await setProxyPin(proxy.proxyKey, nextState);
-      toast.success(nextState ? "Đã ghim bảo vệ proxy" : "Đã bỏ ghim bảo vệ proxy");
+      toast.success(nextState ? "Proxy protected (pinned)" : "Proxy protection removed (unpinned)");
       await loadProxies();
     } catch (err) {
       toast.error((err as Error).message);
@@ -289,7 +290,7 @@ export default function ProxiesPage() {
   const handleUnlinkRouter = async (proxy: UnifiedProxyItem) => {
     try {
       await unlinkProxyFromRouter(proxy.proxyKey);
-      toast.success("Đã gỡ proxy khỏi 9Router (vẫn lưu trong app)");
+      toast.success("Unlinked proxy from 9Router (retained in app)");
       await loadProxies();
     } catch (err) {
       toast.error((err as Error).message);
@@ -300,7 +301,7 @@ export default function ProxiesPage() {
   const handlePushRouter = async (proxy: UnifiedProxyItem) => {
     try {
       await pushProxyToRouter(proxy.proxyKey);
-      toast.success("Đã đẩy proxy lên 9Router thành công");
+      toast.success("Pushed proxy to 9Router successfully");
       await loadProxies();
     } catch (err) {
       toast.error((err as Error).message);
@@ -319,7 +320,7 @@ export default function ProxiesPage() {
       for (const key of selectedKeys) {
         await setProxyPin(key, true);
       }
-      toast.success(`Đã ghim bảo vệ ${selectedKeys.size} proxy`);
+      toast.success(`Protected ${selectedKeys.size} proxies (pinned)`);
       setSelectedKeys(new Set());
       await loadProxies();
     } catch (err) {
@@ -334,7 +335,7 @@ export default function ProxiesPage() {
       for (const key of selectedKeys) {
         await hardDeleteProxy(key, true);
       }
-      toast.success(`Đã xóa vĩnh viễn ${selectedKeys.size} proxy`);
+      toast.success(`Permanently deleted ${selectedKeys.size} proxies`);
       setSelectedKeys(new Set());
       await loadProxies();
     } catch (err) {
@@ -414,7 +415,7 @@ export default function ProxiesPage() {
   const allPageSelected = pageKeys.length > 0 && pageKeys.every((k) => selectedKeys.has(k));
 
   return (
-    <div className="flex flex-col gap-5 p-6 max-w-7xl mx-auto w-full">
+    <div className="flex flex-col gap-5 p-4 sm:p-6 max-w-7xl mx-auto w-full">
       {/* Page Title & Subtitle + Top Action Buttons */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex flex-col gap-1">
@@ -425,10 +426,10 @@ export default function ProxiesPage() {
             </span>
           </div>
           <p className="text-xs text-muted-foreground">
-            9Router Smart Wrapper: quản lý pool, kiểm tra sức khỏe và đồng bộ xoay tua Antigravity.
+            9Router smart wrapper: pool management, health checks, and Antigravity rotation sync.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
           <Button
             variant="outline"
             size="sm"
@@ -438,7 +439,7 @@ export default function ProxiesPage() {
             aria-label="Optimize accounts by proxy speed"
           >
             {optimizingSpeed ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5 text-amber-400" />}
-            <span>Tối ưu gán theo tốc độ</span>
+            <span>Optimize by speed</span>
           </Button>
           <Button
             size="sm"
@@ -448,7 +449,7 @@ export default function ProxiesPage() {
             aria-label="Unified 9Router sync & health check"
           >
             {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-            <span>Sync & Kiểm tra toàn bộ</span>
+            <span>Sync & check fleet</span>
           </Button>
         </div>
       </div>
@@ -570,14 +571,14 @@ export default function ProxiesPage() {
       <Dialog open={Boolean(confirmDeleteProxy)} onOpenChange={(open) => !open && setConfirmDeleteProxy(null)}>
         <DialogContent className="sm:max-w-md bg-card border-border/80">
           <DialogHeader>
-            <DialogTitle className="text-sm font-bold font-mono text-rose-400">Xác nhận xóa vĩnh viễn proxy</DialogTitle>
+            <DialogTitle className="text-sm font-bold font-mono text-rose-400">Confirm Permanent Proxy Deletion</DialogTitle>
             <DialogDescription className="text-xs text-muted-foreground">
               {confirmDeleteProxy?.isPinned ? (
                 <span className="text-rose-400 font-semibold block mt-1">
-                  Cảnh báo: Proxy này đang được GHIM BẢO VỆ (Protected). Xóa sẽ xóa vĩnh viễn cả trong SQLite và 9Router!
+                  Warning: This proxy is PINNED (Protected). Deleting will permanently remove it from both SQLite and 9Router!
                 </span>
               ) : (
-                "Proxy sẽ bị xóa hoàn toàn khỏi cơ sở dữ liệu SQLite và gỡ khỏi 9Router (nếu đang liên kết)."
+                "This proxy will be permanently deleted from the SQLite database and unlinked from 9Router (if linked)."
               )}
             </DialogDescription>
           </DialogHeader>
@@ -586,7 +587,7 @@ export default function ProxiesPage() {
           </div>
           <DialogFooter className="gap-2 sm:gap-0">
             <Button variant="outline" size="sm" onClick={() => setConfirmDeleteProxy(null)} className="text-xs">
-              Hủy
+              Cancel
             </Button>
             <Button
               variant="destructive"
@@ -596,7 +597,7 @@ export default function ProxiesPage() {
                 if (!confirmDeleteProxy) return;
                 try {
                   await hardDeleteProxy(confirmDeleteProxy.proxyKey, true);
-                  toast.success("Đã xóa vĩnh viễn proxy");
+                  toast.success("Proxy permanently deleted");
                   setConfirmDeleteProxy(null);
                   void loadProxies();
                 } catch (err) {
@@ -604,7 +605,7 @@ export default function ProxiesPage() {
                 }
               }}
             >
-              Xóa vĩnh viễn
+              Permanently delete
             </Button>
           </DialogFooter>
         </DialogContent>

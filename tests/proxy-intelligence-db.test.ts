@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
-import { openProxyIntelligenceDb, migrateProxyIntelligence } from "../src/server/proxy-intelligence-db.js";
+import { configureProxyIntelligenceDb, openProxyIntelligenceDb, migrateProxyIntelligence } from "../src/server/proxy-intelligence-db.js";
 
 test("migrates a fresh database with inventory and audit tables", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fresh-db-"));
@@ -30,6 +30,28 @@ test("migrates a fresh database with inventory and audit tables", () => {
     db.close();
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("retries transient SQLite I/O while enabling WAL", () => {
+  let attempts = 0;
+  const waits: number[] = [];
+  const raw = {
+    exec() {
+      attempts += 1;
+      if (attempts < 3) {
+        const error = Object.assign(new Error("disk I/O error"), {
+          code: "ERR_SQLITE_ERROR",
+          errcode: 1546,
+        });
+        throw error;
+      }
+    },
+  };
+
+  configureProxyIntelligenceDb(raw, (delayMs) => waits.push(delayMs));
+
+  assert.equal(attempts, 4);
+  assert.deepEqual(waits, [25, 50]);
 });
 
 test("preserves legacy rows and is idempotent across reopen", () => {

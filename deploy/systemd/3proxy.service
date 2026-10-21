@@ -1,6 +1,6 @@
 [Unit]
 Description=3proxy Tiny Proxy Server
-After=network.target
+After=network-online.target wg-quick@proxyfleet.service
 
 [Service]
 Type=simple

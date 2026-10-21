@@ -19,7 +19,7 @@ import {
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "./auth-provider";
 import { fetchMetrics, fetchStatus, formatTime, syncPools } from "@/lib/api";
 import { isAbortError } from "@/lib/request-lifecycle";
@@ -66,12 +66,13 @@ function Trend({ current, previous, positive }: { current?: number; previous?: n
   const direction = current > previous ? "up" : "down";
   const good = direction === positive;
   const Icon = direction === "up" ? TrendingUp : TrendingDown;
+  const diff = Math.abs(current - previous);
 
   return (
     <span className={cn("inline-flex items-center gap-0.5 text-[10px] font-semibold tabular-nums", good ? "text-emerald-400" : "text-destructive")}>
       <Icon className="size-3" aria-hidden />
-      {Math.abs(current - previous)}
-      <span className="sr-only">{direction}</span>
+      {diff}
+      <span className="sr-only">{direction === "up" ? `increase of ${diff}` : `decrease of ${diff}`}</span>
     </span>
   );
 }
@@ -115,7 +116,9 @@ function activityTone(level: ActivityEntry["level"]) {
 }
 
 export function RightPanel({ open = false, onOpenChange = () => {} }: RightPanelProps) {
-  const { password } = useAuth();
+  const { password, authenticated } = useAuth();
+  const canRead = authenticated || Boolean(password);
+  const inFlightRef = useRef<AbortController | null>(null);
   const [status, setStatus] = useState<PoolStatus | null>(null);
   const [metrics, setMetrics] = useState<MetricsSnapshot[]>([]);
   const [message, setMessage] = useState<Message>(null);
@@ -123,51 +126,63 @@ export function RightPanel({ open = false, onOpenChange = () => {} }: RightPanel
   const [refreshing, setRefreshing] = useState(false);
   const [syncSubmitting, setSyncSubmitting] = useState(false);
 
-  const load = useCallback(async (signal?: AbortSignal) => {
-    if (!password) {
+  const load = useCallback(async () => {
+    if (!canRead) {
       setInitialLoading(false);
       return;
     }
+    if (inFlightRef.current) {
+      inFlightRef.current.abort();
+      inFlightRef.current = null;
+    }
+    const controller = new AbortController();
+    inFlightRef.current = controller;
+    const signal = controller.signal;
 
     setRefreshing(true);
     try {
       const [statusData, metricData] = await Promise.all([
-        fetchStatus(password, signal),
-        fetchMetrics(password, 24, signal),
+        fetchStatus(password || undefined, signal),
+        fetchMetrics(password || undefined, 24, signal),
       ]);
+      if (signal.aborted) return;
       setStatus(statusData);
       setMetrics(metricData);
       setMessage((current) => current?.tone === "success" ? current : null);
     } catch (error) {
-      if (signal?.aborted || isAbortError(error)) return;
+      if (signal.aborted || isAbortError(error)) return;
       setMessage({ tone: "error", text: (error as Error).message });
     } finally {
-      setInitialLoading(false);
-      setRefreshing(false);
+      if (!signal.aborted) {
+        setInitialLoading(false);
+        setRefreshing(false);
+      }
     }
-  }, [password]);
+  }, [password, canRead]);
+  const isSyncRunning = Boolean(status?.running);
 
   useEffect(() => {
-    const controller = new AbortController();
-    void load(controller.signal).catch(() => {});
-    if (!password) return () => controller.abort();
+    if (!canRead) return;
+    void load();
 
-    const intervalMs = status?.running ? 3000 : 15000;
+    const intervalMs = isSyncRunning ? 3000 : 15000;
     const timer = window.setInterval(() => {
-      void load(controller.signal).catch(() => {});
+      void load();
     }, intervalMs);
     return () => {
-      controller.abort();
       window.clearInterval(timer);
+      if (inFlightRef.current) {
+        inFlightRef.current.abort();
+        inFlightRef.current = null;
+      }
     };
-  }, [load, password, status?.running]);
-
+  }, [load, canRead, isSyncRunning]);
   async function handleSync() {
-    if (!password || status?.running || syncSubmitting) return;
+    if (!canRead || status?.running || syncSubmitting) return;
     setSyncSubmitting(true);
     setMessage(null);
     try {
-      await syncPools(password);
+      await syncPools(password || undefined);
       setMessage({ tone: "success", text: "Sync started. Health checks and ranking are running." });
       await load();
     } catch (error) {
@@ -179,12 +194,21 @@ export function RightPanel({ open = false, onOpenChange = () => {} }: RightPanel
 
   const attention = useMemo<AttentionItem[]>(() => {
     const items: AttentionItem[] = [];
-    if (status?.stats.dead) {
+    if (!canRead) {
       items.push({
-        label: `${status.stats.dead} dead proxies`,
-        detail: "Review failed routes",
-        href: "/proxies",
-        tone: "error",
+        label: "Authentication required",
+        detail: "Sign in to inspect operations and fleet health",
+        href: "/auth",
+        tone: "warning",
+      });
+      return items;
+    }
+    if (status && !status.configured) {
+      items.push({
+        label: "9Router not configured",
+        detail: "Add credentials in Settings",
+        href: "/settings",
+        tone: "warning",
       });
     }
     if (status?.lastError) {
@@ -195,17 +219,16 @@ export function RightPanel({ open = false, onOpenChange = () => {} }: RightPanel
         tone: "warning",
       });
     }
-    if (status && !status.configured) {
+    if (status?.stats.dead) {
       items.push({
-        label: "9Router not configured",
-        detail: "Add credentials in Settings",
-        href: "/settings",
-        tone: "warning",
+        label: `${status.stats.dead} dead proxies`,
+        detail: "Review failed routes",
+        href: "/proxies",
+        tone: "error",
       });
     }
     return items;
-  }, [status]);
-
+  }, [status, canRead]);
   const latest = metrics.at(-1);
   const previous = metrics.at(-2);
   const progress = status?.syncProgress;
@@ -244,7 +267,7 @@ export function RightPanel({ open = false, onOpenChange = () => {} }: RightPanel
       syncSubmitting={syncSubmitting}
       progressValue={progressValue}
       progressLabel={progressLabel}
-      passwordAvailable={Boolean(password)}
+      passwordAvailable={canRead}
       onRetry={() => load()}
       onSync={handleSync}
     />
@@ -301,7 +324,34 @@ function OperationsContent({
   onSync: () => void;
 }) {
   const running = status?.running ?? false;
-  const statusTone = status?.lastError || attention.length ? "warning" : running ? "syncing" : "healthy";
+  // ponytail: inline truthful status mapping; avoid extra state machine for single-panel control room
+  const statusTone: "unauthenticated" | "loading" | "unknown" | "unconfigured" | "error" | "syncing" | "attention" | "healthy" =
+    !passwordAvailable
+      ? "unauthenticated"
+      : initialLoading
+      ? "loading"
+      : !status
+      ? "unknown"
+      : !status.configured
+      ? "unconfigured"
+      : status.lastError
+      ? "error"
+      : running
+      ? "syncing"
+      : attention.length > 0
+      ? "attention"
+      : "healthy";
+
+  const statusLabel = {
+    unauthenticated: "Auth required",
+    loading: "Checking...",
+    unknown: "Unknown",
+    unconfigured: "Unconfigured",
+    error: "Error",
+    syncing: "Syncing",
+    attention: "Attention",
+    healthy: "Healthy",
+  }[statusTone];
 
   return (
     <ScrollArea className="h-full w-full">
@@ -317,11 +367,23 @@ function OperationsContent({
               "gap-1.5 px-2 py-0.5 text-[10px] font-medium",
               statusTone === "healthy" && "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
               statusTone === "syncing" && "border-primary/30 bg-primary/10 text-primary",
-              statusTone === "warning" && "border-amber-400/30 bg-amber-400/10 text-amber-300"
+              (statusTone === "attention" || statusTone === "unconfigured") && "border-amber-400/30 bg-amber-400/10 text-amber-300",
+              statusTone === "error" && "border-destructive/30 bg-destructive/10 text-destructive",
+              (statusTone === "unauthenticated" || statusTone === "unknown" || statusTone === "loading") && "border-muted-foreground/30 bg-muted/20 text-muted-foreground"
             )}
           >
-            <span className={cn("size-1.5 rounded-full", statusTone === "healthy" && "bg-emerald-500", statusTone === "syncing" && "bg-primary animate-pulse", statusTone === "warning" && "bg-amber-400")} />
-            {statusTone === "healthy" ? "Healthy" : statusTone === "syncing" ? "Syncing" : "Attention"}
+            <span
+              className={cn(
+                "size-1.5 rounded-full",
+                statusTone === "healthy" && "bg-emerald-500",
+                statusTone === "syncing" && "bg-primary animate-pulse",
+                (statusTone === "attention" || statusTone === "unconfigured") && "bg-amber-400",
+                statusTone === "error" && "bg-destructive",
+                statusTone === "loading" && "bg-muted-foreground animate-pulse",
+                (statusTone === "unauthenticated" || statusTone === "unknown") && "bg-muted-foreground"
+              )}
+            />
+            {statusLabel}
           </Badge>
         </div>
 
@@ -368,14 +430,14 @@ function OperationsContent({
                 <Metric
                   label="Active"
                   value={status?.stats.active ?? "—"}
-                  tone="success"
+                  tone={status ? "success" : undefined}
                   trend={<Trend current={latest?.active} previous={previous?.active} positive="up" />}
                 />
-                <Metric label="Reserve" value={status?.stats.reserve ?? "—"} tone="primary" />
+                <Metric label="Reserve" value={status?.stats.reserve ?? "—"} tone={status ? "primary" : undefined} />
                 <Metric
                   label="Dead"
                   value={status?.stats.dead ?? "—"}
-                  tone="danger"
+                  tone={status && status.stats.dead > 0 ? "danger" : undefined}
                   trend={<Trend current={latest?.dead} previous={previous?.dead} positive="down" />}
                 />
                 <Metric label="Avg latency" value={latest?.avgLatencyMs != null ? `${latest.avgLatencyMs} ms` : "—"} />
@@ -414,7 +476,7 @@ function OperationsContent({
           </Card>
         )}
 
-        {attention.length ? (
+        {attention.length > 0 ? (
           <Card className="gap-3 border-amber-400/30 bg-amber-400/5 py-4 shadow-none">
             <CardHeader className="flex-row items-center gap-2 px-4">
               <AlertTriangle className="size-4 text-amber-300" aria-hidden />
@@ -433,13 +495,12 @@ function OperationsContent({
               ))}
             </CardContent>
           </Card>
-        ) : (
+        ) : status && status.configured ? (
           <div className="flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2.5 text-xs text-emerald-300">
             <CheckCircle2 className="size-4 shrink-0" aria-hidden />
             <span>All systems operational</span>
           </div>
-        )}
-
+        ) : null}
         <Card className="gap-3 border-border/60 bg-card/50 py-4 shadow-none">
           <CardHeader className="flex-row items-center justify-between gap-3 px-4 pb-2">
             <CardTitle className="flex items-center gap-2 text-sm">
@@ -607,27 +668,32 @@ function ActivityTabs({ activity }: { activity: ActivityEntry[] }) {
         {activity.length ? (
           <ScrollArea className="h-64 pr-2">
             <ol className="space-y-0 text-xs" aria-live="polite">
-              {activity.map((entry, index) => (
-                <li key={entry.id} className="relative flex gap-2.5 pb-2.5 last:pb-0">
-                  {index < activity.length - 1 && (
-                    <span className="absolute left-[3px] top-2 h-full w-px bg-border/70" aria-hidden />
-                  )}
-                  <span className={cn("relative mt-1.5 size-2 shrink-0 rounded-full ring-4 ring-card", activityTone(entry.level))} />
-                  <div className="min-w-0 flex-1">
-                    <time className="block text-[10px] tabular-nums text-muted-foreground" dateTime={new Date(entry.at).toISOString()}>
-                      {new Date(entry.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-                    </time>
-                    <p className={cn(
-                      "mt-0.5 break-words text-[11px] leading-snug",
-                      entry.level === "error" && "text-destructive font-medium",
-                      entry.level === "warn" && "text-amber-300",
-                      entry.level === "success" && "text-emerald-300"
-                    )}>
-                      {sanitizeLogMessage(entry.message)}
-                    </p>
-                  </div>
-                </li>
-              ))}
+              {activity.map((entry, index) => {
+                const atTime = typeof entry.at === "number" && Number.isFinite(entry.at) ? entry.at : Date.now();
+                const dateObj = new Date(atTime);
+                const isValidDate = Number.isFinite(dateObj.getTime());
+                return (
+                  <li key={entry.id} className="relative flex gap-2.5 pb-2.5 last:pb-0">
+                    {index < activity.length - 1 && (
+                      <span className="absolute left-[3px] top-2 h-full w-px bg-border/70" aria-hidden />
+                    )}
+                    <span className={cn("relative mt-1.5 size-2 shrink-0 rounded-full ring-4 ring-card", activityTone(entry.level))} />
+                    <div className="min-w-0 flex-1">
+                      <time className="block text-[10px] tabular-nums text-muted-foreground" dateTime={isValidDate ? dateObj.toISOString() : undefined}>
+                        {isValidDate ? dateObj.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—"}
+                      </time>
+                      <p className={cn(
+                        "mt-0.5 break-words text-[11px] leading-snug",
+                        entry.level === "error" && "text-destructive font-medium",
+                        entry.level === "warn" && "text-amber-300",
+                        entry.level === "success" && "text-emerald-300"
+                      )}>
+                        {sanitizeLogMessage(entry.message)}
+                      </p>
+                    </div>
+                  </li>
+                );
+              })}
             </ol>
           </ScrollArea>
         ) : (

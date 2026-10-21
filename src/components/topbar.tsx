@@ -14,7 +14,6 @@ import Link from "next/link";
 import { useAuth } from "./auth-provider";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -36,7 +35,7 @@ interface TopBarProps {
 }
 
 export function TopBar({ onSearchClick, onOperationsClick, operationsOpen }: TopBarProps) {
-  const { password, setPassword, clearPassword, authenticated } = useAuth();
+  const { clearPassword, authenticated, password } = useAuth();
   const [shortcutKey, setShortcutKey] = React.useState("⌘K");
 
   React.useEffect(() => {
@@ -50,7 +49,7 @@ export function TopBar({ onSearchClick, onOperationsClick, operationsOpen }: Top
       className="sticky top-0 z-20 flex h-14 w-full shrink-0 items-center justify-between gap-2 border-b border-border/60 bg-background/80 px-3 sm:px-4 backdrop-blur-md supports-[backdrop-filter]:bg-background/60"
     >
       <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
-        <SidebarTrigger className="-ml-1 size-8 text-muted-foreground hover:text-foreground hover:bg-accent/60 transition-colors" />
+        <SidebarTrigger className="-ml-1 size-11 sm:size-8 text-muted-foreground hover:text-foreground hover:bg-accent/60 transition-colors touch-manipulation" />
         <Separator orientation="vertical" className="mr-1 h-4 hidden sm:block" />
 
         {/* Adaptive search trigger: icon-only on very narrow mobile, full input on sm+ */}
@@ -58,13 +57,13 @@ export function TopBar({ onSearchClick, onOperationsClick, operationsOpen }: Top
           variant="outline"
           size="sm"
           onClick={onSearchClick}
-          aria-label="Search pools, routes, or actions"
+          aria-label="Search proxy pools"
           aria-keyshortcuts="Control+K"
-          className="relative h-8 w-8 p-0 sm:w-60 md:w-80 sm:px-3 sm:justify-start rounded-md border-border/60 bg-muted/30 text-xs text-muted-foreground font-normal shadow-none hover:bg-muted/60 hover:text-foreground hover:border-border transition-all"
+          className="relative h-11 w-11 p-0 sm:h-8 sm:w-60 md:w-80 sm:px-3 sm:justify-start rounded-md border-border/60 bg-muted/30 text-xs text-muted-foreground font-normal shadow-none hover:bg-muted/60 hover:text-foreground hover:border-border transition-all touch-manipulation"
           data-command-trigger
         >
           <Search className="size-3.5 sm:mr-2 shrink-0 text-muted-foreground" />
-          <span className="hidden sm:inline-block truncate">Search pools, routes, actions...</span>
+          <span className="hidden sm:inline-block truncate">Search proxy pools...</span>
           <kbd className="pointer-events-none absolute right-1.5 top-1.5 hidden h-5 select-none items-center gap-0.5 rounded border border-border/60 bg-background/80 px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-90 md:flex">
             {shortcutKey}
           </kbd>
@@ -72,30 +71,23 @@ export function TopBar({ onSearchClick, onOperationsClick, operationsOpen }: Top
       </div>
 
       <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
-        {/* Auth prompt if missing password */}
-        {!password && !authenticated ? (
-          <div className="flex items-center gap-1.5">
-            <Input
-              type="password"
-              placeholder="Control password"
-              className="h-8 w-32 sm:w-40 text-xs bg-muted/20 border-border/60 focus-visible:ring-1"
-              autoComplete="current-password"
-              onChange={(e) => setPassword(e.target.value)}
-            />
-            <Badge variant="destructive" className="h-6 text-[10px] font-medium px-2 shrink-0">
-              Auth Required
-            </Badge>
-          </div>
+        {/* Session status or sign-in link */}
+        {!authenticated && !password ? (
+          <Button
+            asChild
+            variant="outline"
+            size="sm"
+            className="h-11 text-xs border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 sm:h-8"
+          >
+            <Link href="/auth">Session Expired &bull; Sign in</Link>
+          </Button>
         ) : (
           <Badge
             variant="outline"
-            className="hidden sm:inline-flex items-center gap-1.5 border-emerald-500/30 bg-emerald-500/10 text-emerald-400 text-xs font-medium py-0.5 px-2.5 select-none"
+            className="hidden sm:inline-flex items-center gap-1.5 border-border/80 bg-muted/40 text-muted-foreground text-xs font-medium py-0.5 px-2.5 select-none"
           >
-            <span className="relative flex size-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-              <span className="relative inline-flex rounded-full size-2 bg-emerald-500" />
-            </span>
-            <span>Connected</span>
+            <span className="size-1.5 rounded-full bg-emerald-500 shrink-0" />
+            <span>Session Active</span>
           </Badge>
         )}
 
@@ -103,7 +95,7 @@ export function TopBar({ onSearchClick, onOperationsClick, operationsOpen }: Top
         <Button
           variant="ghost"
           size="icon"
-          className="relative size-8 text-muted-foreground hover:text-foreground hover:bg-accent/60 transition-colors"
+          className="relative size-11 sm:size-8 text-muted-foreground hover:text-foreground hover:bg-accent/60 transition-colors touch-manipulation"
           aria-label="Notifications"
         >
           <Bell className="size-4" />
@@ -115,13 +107,13 @@ export function TopBar({ onSearchClick, onOperationsClick, operationsOpen }: Top
         <Button
           variant="ghost"
           size="icon"
-          className="relative size-8 text-muted-foreground hover:bg-accent/60 hover:text-foreground xl:hidden"
+          className="relative size-11 sm:size-8 text-muted-foreground hover:bg-accent/60 hover:text-foreground xl:hidden touch-manipulation"
           onClick={onOperationsClick}
           aria-label={operationsOpen ? "Close operations" : "Open operations"}
           aria-expanded={operationsOpen}
         >
           <PanelRightOpen className="size-4" />
-          <span className={cn("absolute right-1 top-1 size-1.5 rounded-full ring-2 ring-background", password ? "bg-emerald-500" : "bg-amber-400")} />
+          <span className={cn("absolute right-1 top-1 size-1.5 rounded-full ring-2 ring-background", authenticated || Boolean(password) ? "bg-emerald-500" : "bg-amber-400")} />
         </Button>
 
         {/* User Account Dropdown */}
@@ -130,7 +122,7 @@ export function TopBar({ onSearchClick, onOperationsClick, operationsOpen }: Top
             <Button
               variant="ghost"
               size="sm"
-              className="relative h-8 gap-2 px-1.5 text-left font-normal hover:bg-accent/60 focus-visible:ring-1 transition-colors"
+              className="relative h-11 sm:h-8 gap-2 px-1.5 text-left font-normal hover:bg-accent/60 focus-visible:ring-1 transition-colors touch-manipulation"
             >
               <div className="relative">
                 <Avatar className="size-7 border border-border/80 ring-1 ring-primary/20">
@@ -188,7 +180,7 @@ export function TopBar({ onSearchClick, onOperationsClick, operationsOpen }: Top
               className="flex items-center gap-2 cursor-pointer text-xs text-destructive focus:text-destructive focus:bg-destructive/10"
             >
               <LogOut className="size-3.5" />
-              <span>Log out</span>
+              <span>Sign out</span>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

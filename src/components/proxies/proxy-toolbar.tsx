@@ -53,73 +53,75 @@ export function ProxyToolbar({
   };
 
   return (
-    <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+    <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
       {/* Search & Filter Group */}
-      <div className="flex flex-1 items-center gap-2 max-w-md">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+      <div className="flex flex-wrap sm:flex-nowrap flex-1 items-center gap-2 max-w-full lg:max-w-md">
+        <div className="relative flex-1 min-w-[160px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" aria-hidden="true" />
           <Input
             value={query.q}
             onChange={(e) => onQueryChange({ q: e.target.value, page: 1 })}
             placeholder="Search host, port, exit IP, ISP..."
-            className="pl-8.5 h-9 text-xs bg-surface border-border/60 focus-visible:ring-primary/40"
+            className="pl-8.5 h-9 text-xs bg-surface border-border/60 focus-visible:ring-primary/40 min-w-0 w-full"
             aria-label="Search proxies"
           />
         </div>
 
-        {/* Protocol Selector */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-9 px-3 text-xs bg-surface border-border/60 text-muted-foreground hover:text-foreground shrink-0"
-              aria-label="Filter by protocol"
-            >
-              {protocolLabels[query.protocol] || "Protocol"}
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="bg-popover border-border/80">
-            {Object.entries(protocolLabels).map(([proto, label]) => (
-              <DropdownMenuItem
-                key={proto}
-                onClick={() => onQueryChange({ protocol: proto as ProxyWorkspaceQuery["protocol"], page: 1 })}
-                className="text-xs cursor-pointer"
+        <div className="flex items-center gap-2 shrink-0">
+          {/* Protocol Selector */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 px-3 text-xs bg-surface border-border/60 text-muted-foreground hover:text-foreground shrink-0 cursor-pointer"
+                aria-label="Filter by protocol"
               >
-                {label}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+                {protocolLabels[query.protocol] || "Protocol"}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="bg-popover border-border/80">
+              {Object.entries(protocolLabels).map(([proto, label]) => (
+                <DropdownMenuItem
+                  key={proto}
+                  onClick={() => onQueryChange({ protocol: proto as ProxyWorkspaceQuery["protocol"], page: 1 })}
+                  className="text-xs cursor-pointer"
+                >
+                  {label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
 
-        {/* Sort Selector */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-9 px-3 text-xs bg-surface border-border/60 text-muted-foreground hover:text-foreground shrink-0"
-              aria-label="Sort proxies"
-            >
-              {sortLabels[query.sort] || "Sort"}
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="bg-popover border-border/80">
-            {Object.entries(sortLabels).map(([sortKey, label]) => (
-              <DropdownMenuItem
-                key={sortKey}
-                onClick={() => onQueryChange({ sort: sortKey as ProxyWorkspaceQuery["sort"] })}
-                className="text-xs cursor-pointer"
+          {/* Sort Selector */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 px-3 text-xs bg-surface border-border/60 text-muted-foreground hover:text-foreground shrink-0 cursor-pointer"
+                aria-label="Sort proxies"
               >
-                {label}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+                {sortLabels[query.sort] || "Sort"}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="bg-popover border-border/80">
+              {Object.entries(sortLabels).map(([sortKey, label]) => (
+                <DropdownMenuItem
+                  key={sortKey}
+                  onClick={() => onQueryChange({ sort: sortKey as ProxyWorkspaceQuery["sort"] })}
+                  className="text-xs cursor-pointer"
+                >
+                  {label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
 
       {/* Primary Actions */}
-      <div className="flex items-center gap-2 shrink-0">
+      <div className="flex flex-wrap items-center gap-2 shrink-0">
         <Button
           variant="outline"
           size="sm"

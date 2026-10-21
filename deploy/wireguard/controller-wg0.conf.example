@@ -1,5 +1,5 @@
-# WireGuard Hub Configuration (Controller - VPS #1)
-# Location: /etc/wireguard/wg0.conf
+# Reference only: controller-managed ProxyFleet tunnel.
+# Location: /etc/wireguard/proxyfleet.conf (never overwrite unrelated tunnels)
 # Mode: 0600
 
 [Interface]

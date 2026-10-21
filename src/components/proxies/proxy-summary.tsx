@@ -44,7 +44,7 @@ export function ProxySummary({ facets, activeHealth, onHealthChange }: ProxySumm
     },
     {
       id: "dead" as const,
-      label: "Never verified",
+      label: "Dead",
       icon: XCircle,
       count: facets.dead,
       activeClass: "bg-rose-500/20 text-rose-400 border-rose-500/50 shadow-sm",

@@ -2,12 +2,14 @@
 
 import * as React from "react";
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
-import { Gauge, RotateCw, Server, Clock, Zap, ShieldAlert, Cpu } from "lucide-react";
+import { Gauge, RotateCw, Clock, Cpu } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "./auth-provider";
+import { Button } from "@/components/ui/button";
 import { fetchAntigravityStatus, refreshAntigravityQuota } from "@/lib/api";
 import type { AntigravityRotatorSnapshot, AntigravityAccountState } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { isAbortError } from "@/lib/request-lifecycle";
 
 function formatCountdown(resetAt: string | null): string {
   if (!resetAt) return "No reset info";
@@ -51,38 +53,102 @@ export function AntigravityQuotaWidget() {
   const { password, authenticated } = useAuth();
   const [snapshot, setSnapshot] = useState<AntigravityRotatorSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
+  const [unavailable, setUnavailable] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
-  const closeTimerRef = useRef<NodeJS.Timeout | null>(null);
-
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const hoverTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const panelId = React.useId();
   const loadStatus = useCallback(
     async (signal?: AbortSignal) => {
       if (!password && !authenticated) return;
+      if (signal?.aborted) return;
+      setLoading(true);
       try {
         const data = await fetchAntigravityStatus(password, signal);
-        if (data) setSnapshot(data);
+        if (signal?.aborted) return;
+        if (data) {
+          setSnapshot(data);
+          setUnavailable(false);
+        } else {
+          setUnavailable(true);
+        }
       } catch (err) {
-        // Silent fail on background poll
+        if (signal?.aborted || isAbortError(err)) return;
+        setUnavailable(true);
+      } finally {
+        if (!signal?.aborted) setLoading(false);
       }
     },
     [password, authenticated]
   );
+  const handleMouseEnter = () => {
+    clearTimeout(hoverTimerRef.current ?? undefined);
+    hoverTimerRef.current = null;
+    setIsOpen(true);
+  };
+
+  const handleMouseLeave = () => {
+    clearTimeout(hoverTimerRef.current ?? undefined);
+    hoverTimerRef.current = setTimeout(() => {
+      setIsOpen(false);
+    }, 200);
+  };
 
   useEffect(() => {
+    return () => {
+      clearTimeout(hoverTimerRef.current ?? undefined);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setIsOpen(false);
+      triggerRef.current?.focus();
+    };
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (event.target instanceof Element && !event.target.closest("[data-quota-widget]")) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    return () => {
+      document.removeEventListener("keydown", closeOnEscape);
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!password && !authenticated) return;
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
     const controller = new AbortController();
+    abortRef.current = controller;
+
     void loadStatus(controller.signal);
 
     const interval = setInterval(() => {
-      void loadStatus(controller.signal);
+      if (!controller.signal.aborted) {
+        void loadStatus(controller.signal);
+      }
     }, 30_000);
 
     return () => {
-      controller.abort();
       clearInterval(interval);
+      if (abortRef.current) {
+        abortRef.current.abort();
+        abortRef.current = null;
+      }
     };
-  }, [loadStatus]);
+  }, [loadStatus, password, authenticated]);
 
-  const handleRefresh = async (e: React.MouseEvent) => {
+  const handleRefresh = async (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     if (refreshing) return;
     setRefreshing(true);
@@ -90,29 +156,17 @@ export function AntigravityQuotaWidget() {
       const res = await refreshAntigravityQuota(password);
       if (res.snapshot) {
         setSnapshot(res.snapshot);
+        setUnavailable(false);
       } else {
         await loadStatus();
       }
       toast.success("Antigravity quotas refreshed");
     } catch (err) {
+      setUnavailable(true);
       toast.error((err as Error).message || "Failed to refresh quotas");
     } finally {
       setRefreshing(false);
     }
-  };
-
-  const handleMouseEnter = () => {
-    if (closeTimerRef.current) {
-      clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = null;
-    }
-    setIsOpen(true);
-  };
-
-  const handleMouseLeave = () => {
-    closeTimerRef.current = setTimeout(() => {
-      setIsOpen(false);
-    }, 200);
   };
 
   const activeAccounts = useMemo(() => {
@@ -120,32 +174,36 @@ export function AntigravityQuotaWidget() {
     return snapshot.accounts.filter((a) => a.isActive);
   }, [snapshot]);
 
-  const totalQuota = snapshot?.totalSessionQuotaPercentage ?? 0;
-  const maxQuota = snapshot?.maxPossiblePercentage || (snapshot?.totalAccounts ? snapshot.totalAccounts * 100 : 100);
-  const overallRatio = maxQuota > 0 ? Math.min(100, Math.max(0, (totalQuota / maxQuota) * 100)) : 0;
-  const overallColors = quotaColor(overallRatio);
+  const totalQuota = snapshot?.totalSessionQuotaPercentage;
+  const maxQuota = snapshot?.maxPossiblePercentage || (snapshot?.totalAccounts ? snapshot.totalAccounts * 100 : 0);
+  const overallRatio = totalQuota !== undefined && maxQuota > 0 ? Math.min(100, Math.max(0, (totalQuota / maxQuota) * 100)) : null;
+  const overallColors = quotaColor(overallRatio ?? 50);
+  const quotaLabel = snapshot
+    ? unavailable
+      ? `${totalQuota}% (stale)`
+      : `${totalQuota}%`
+    : loading
+    ? "Loading"
+    : unavailable
+    ? "Unavailable"
+    : "Unknown";
 
   return (
     <div
       className="relative w-full"
+      data-quota-widget
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
-      onFocus={() => setIsOpen(true)}
-      onBlur={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget)) {
-          setIsOpen(false);
-        }
-      }}
     >
       {/* Drop-up Panel (Pops UP above the footer) */}
       <div
-        className={cn(
-          "absolute bottom-full left-0 mb-2 w-84 z-50 transition-all duration-200 ease-out origin-bottom",
-          "rounded-xl border border-border/80 bg-sidebar/95 backdrop-blur-md shadow-2xl p-3.5 space-y-3",
-          isOpen ? "opacity-100 scale-100 pointer-events-auto" : "opacity-0 scale-95 pointer-events-none"
-        )}
+        id={panelId}
+        hidden={!isOpen}
+        className="absolute bottom-full left-0 mb-2 z-50 w-[min(22rem,calc(100vw-1.5rem))] max-h-[min(28rem,calc(100dvh-2rem))] overflow-y-auto rounded-xl border border-border/80 bg-sidebar shadow-2xl p-3.5 space-y-3 origin-bottom"
         role="region"
-        aria-label="Antigravity Active Accounts Detail"
+        aria-label="Antigravity active accounts detail"
+        aria-hidden={!isOpen}
+        inert={!isOpen}
       >
         {/* Panel Header */}
         <div className="flex items-center justify-between pb-2 border-b border-border/60">
@@ -159,21 +217,27 @@ export function AntigravityQuotaWidget() {
             </span>
           </div>
 
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             onClick={handleRefresh}
-            disabled={refreshing}
-            className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-muted-foreground hover:text-sidebar-foreground hover:bg-surface-raised border border-border/60 transition-colors disabled:opacity-50 cursor-pointer"
+            disabled={refreshing || (!password && !authenticated)}
+            className="min-h-11 h-auto text-[11px] font-medium text-muted-foreground hover:text-sidebar-foreground hover:bg-surface-raised border-border/60"
             title="Refresh quotas now"
           >
             <RotateCw className={cn("size-3", refreshing && "animate-spin text-primary")} />
             <span>{refreshing ? "Checking…" : "Refresh"}</span>
-          </button>
+          </Button>
         </div>
 
         {/* Active Accounts List */}
         <div className="space-y-2 max-h-60 overflow-y-auto pr-0.5">
-          {activeAccounts.length === 0 ? (
+          {!snapshot ? (
+            <div className="py-4 text-center text-xs text-muted-foreground">
+              {loading ? "Loading active accounts…" : "Accounts data unavailable."}
+            </div>
+          ) : activeAccounts.length === 0 ? (
             <div className="py-4 text-center text-xs text-muted-foreground">
               No active accounts running.
             </div>
@@ -209,7 +273,7 @@ export function AntigravityQuotaWidget() {
                         )}
                         title="Gemini Session Quota (5h)"
                       >
-                        S: {acc.sessionPercentage.toFixed(0)}%
+                        S: {Number.isFinite(acc.sessionPercentage) ? `${acc.sessionPercentage.toFixed(0)}%` : "Unknown"}
                       </span>
 
                       <span
@@ -219,7 +283,7 @@ export function AntigravityQuotaWidget() {
                         )}
                         title="Gemini Weekly Quota"
                       >
-                        W: {acc.weeklyPercentage.toFixed(0)}%
+                        W: {Number.isFinite(acc.weeklyPercentage) ? `${acc.weeklyPercentage.toFixed(0)}%` : "Unknown"}
                       </span>
                     </div>
 
@@ -244,47 +308,60 @@ export function AntigravityQuotaWidget() {
         </div>
 
         {/* Panel Footer note */}
-        <div className="pt-2 border-t border-border/40 text-[10px] text-muted-foreground/80 flex items-center justify-between">
-          <span>Auto-rotates when Session ≤ 20%</span>
-          <span>Lowest reset prioritized</span>
+        <div className="pt-2 border-t border-border/40 text-[10px] text-muted-foreground/80">
+          Automatic rotation uses Gemini session quota only: deactivate at or below the configured threshold; activate reserves above it, earliest reset first. Weekly quota is informational only.
         </div>
       </div>
 
       {/* Collapsed Bar in SidebarFooter */}
-      <button
+      <Button
+        ref={triggerRef}
         type="button"
+        variant="ghost"
         onClick={() => setIsOpen((prev) => !prev)}
         className={cn(
-          "w-full text-left p-2 rounded-lg border border-border/60 transition-all cursor-pointer group",
+          "min-h-11 h-auto w-full p-2 flex flex-col items-stretch text-left justify-start rounded-lg border border-border/60 transition-colors cursor-pointer group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring whitespace-normal",
           isOpen ? "bg-surface-raised border-primary/40" : "bg-surface/40 hover:bg-surface-raised hover:border-border"
         )}
         aria-expanded={isOpen}
+        aria-controls={panelId}
+        aria-label={`Antigravity session quota: ${quotaLabel}. ${snapshot ? `${activeAccounts.length} active accounts` : "Quota details unavailable"}`}
       >
         <div className="flex items-center justify-between mb-1.5">
           <div className="flex items-center gap-1.5 min-w-0">
-            <Gauge className={cn("size-3.5 shrink-0 transition-colors", overallColors.text)} />
+            <Gauge className={cn("size-3.5 shrink-0 transition-colors", overallRatio === null ? "text-muted-foreground" : overallColors.text)} />
             <span className="text-[11px] font-semibold text-sidebar-foreground truncate tracking-tight">
-              Quota Antigravity
+              Antigravity quota
             </span>
           </div>
           <span className="text-[11px] font-mono font-bold text-ink shrink-0">
-            {totalQuota}% <span className="text-[10px] text-muted-foreground font-normal">/ {maxQuota}%</span>
+            {quotaLabel} {snapshot && <span className="text-[10px] text-muted-foreground font-normal">/ {maxQuota}%</span>}
           </span>
         </div>
 
         {/* Micro Progress Bar */}
         <div className="w-full h-1.5 rounded-full bg-surface-raised overflow-hidden">
           <div
-            className={cn("h-full rounded-full transition-all duration-500", overallColors.bar)}
-            style={{ width: `${overallRatio}%` }}
+            className={cn("h-full rounded-full transition-all duration-500", overallRatio === null ? "bg-muted-foreground/40" : overallColors.bar)}
+            style={{ width: `${overallRatio ?? 0}%` }}
           />
         </div>
 
         <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground font-mono">
-          <span>{snapshot?.totalAccounts ?? 0} accs</span>
-          <span className="text-emerald-400 font-medium">{activeAccounts.length} active</span>
+          <span>
+            {snapshot
+              ? unavailable
+                ? `${snapshot.totalAccounts} accounts (stale)`
+                : `${snapshot.totalAccounts} accounts`
+              : unavailable
+              ? "Status unavailable"
+              : loading
+              ? "Loading quota"
+              : "Status unknown"}
+          </span>
+          <span className="text-emerald-400 font-medium">{snapshot ? `${activeAccounts.length} active` : "—"}</span>
         </div>
-      </button>
+      </Button>
     </div>
   );
 }
