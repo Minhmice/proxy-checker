@@ -27,7 +27,7 @@ export function ProxySelectionBar({
   if (selectedCount === 0) return null;
 
   return (
-    <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-3 rounded-lg border border-primary/40 bg-primary/10 text-foreground animate-in fade-in duration-150">
+    <div className="sticky bottom-4 z-30 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-3.5 rounded-xl border border-primary/40 bg-card/95 shadow-2xl backdrop-blur-md text-foreground animate-in fade-in slide-in-from-bottom-2 duration-200">
       <div className="flex flex-wrap items-center gap-2 text-xs font-medium">
         <CheckSquare className="h-4 w-4 text-primary shrink-0" aria-hidden="true" />
         <span>

@@ -1,7 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertCircle, Loader2, Server } from "lucide-react";
+import {
+  Activity,
+  AlertCircle,
+  Gauge,
+  HelpCircle,
+  Layers,
+  Loader2,
+  Network,
+  Server,
+  Settings,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
 import { fetchPools } from "@/lib/api";
 import type { PoolRecord } from "@/lib/types";
@@ -79,7 +89,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
 
   const handleSelect = (pool: PoolRecord) => {
     onClose();
-    router.push(`/proxies?search=${encodeURIComponent(pool.name)}`);
+    router.push(`/proxies?q=${encodeURIComponent(pool.name)}`);
   };
 
   return (
@@ -135,7 +145,75 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
         )}
         {!loading && !error && pools.length > 0 && (
           <>
-            <CommandEmpty>No matching pools found.</CommandEmpty>
+            <CommandEmpty>No matching pools or commands found.</CommandEmpty>
+            <CommandGroup heading="Quick Navigation">
+              <CommandItem
+                value="overview dashboard traffic home"
+                onSelect={() => {
+                  onClose();
+                  router.push("/");
+                }}
+                className="flex items-center gap-2.5 px-3 py-2 cursor-pointer"
+              >
+                <Activity className="size-4 shrink-0 text-primary" />
+                <span className="font-medium text-sm text-foreground">Overview & Live Traffic</span>
+              </CommandItem>
+              <CommandItem
+                value="proxies fleet list table"
+                onSelect={() => {
+                  onClose();
+                  router.push("/proxies");
+                }}
+                className="flex items-center gap-2.5 px-3 py-2 cursor-pointer"
+              >
+                <Layers className="size-4 shrink-0 text-accent-violet" />
+                <span className="font-medium text-sm text-foreground">Proxy Fleet & Tables</span>
+              </CommandItem>
+              <CommandItem
+                value="nodes workers wireguard fleet mesh"
+                onSelect={() => {
+                  onClose();
+                  router.push("/nodes");
+                }}
+                className="flex items-center gap-2.5 px-3 py-2 cursor-pointer"
+              >
+                <Network className="size-4 shrink-0 text-emerald-400" />
+                <span className="font-medium text-sm text-foreground">Worker Nodes & Mesh</span>
+              </CommandItem>
+              <CommandItem
+                value="monitoring telemetry diagnostics health"
+                onSelect={() => {
+                  onClose();
+                  router.push("/monitoring");
+                }}
+                className="flex items-center gap-2.5 px-3 py-2 cursor-pointer"
+              >
+                <Gauge className="size-4 shrink-0 text-accent-teal" />
+                <span className="font-medium text-sm text-foreground">Fleet Telemetry & Diagnostics</span>
+              </CommandItem>
+              <CommandItem
+                value="settings configuration runtime"
+                onSelect={() => {
+                  onClose();
+                  router.push("/settings");
+                }}
+                className="flex items-center gap-2.5 px-3 py-2 cursor-pointer"
+              >
+                <Settings className="size-4 shrink-0 text-muted-foreground" />
+                <span className="font-medium text-sm text-foreground">System Settings</span>
+              </CommandItem>
+              <CommandItem
+                value="help reference runbook documentation"
+                onSelect={() => {
+                  onClose();
+                  router.push("/help");
+                }}
+                className="flex items-center gap-2.5 px-3 py-2 cursor-pointer"
+              >
+                <HelpCircle className="size-4 shrink-0 text-muted-foreground" />
+                <span className="font-medium text-sm text-foreground">Operations Reference & Guides</span>
+              </CommandItem>
+            </CommandGroup>
             <CommandGroup heading={`Proxy Pools (${pools.length})`}>
               {pools.map((pool) => (
                 <CommandItem

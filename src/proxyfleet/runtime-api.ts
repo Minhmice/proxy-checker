@@ -53,7 +53,7 @@ export function createFleetRuntimeApi(deps: FleetRuntimeApiDependencies) {
             let wireguard = null;
             let wireguardError: string | null = null;
             const isApproved = deps.repo.isOverlayApproved(nodeId);
-            if (configured && node && isApproved) {
+            if (configured && node && isApproved && !node.tailscale_ip) {
               try {
                 const preflight = await configured.manager.preflight();
                 wireguard = { interfaceName: configured.settings.interfaceName, addressCidr: `${node.wireguard_ip}/24`, controllerPublicKey: preflight.publicKey, controllerEndpoint: configured.settings.publicEndpoint, allowedIps: ["10.77.0.0/24"], persistentKeepaliveSeconds: 25, mtu: configured.settings.mtu };

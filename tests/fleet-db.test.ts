@@ -263,3 +263,91 @@ test("fleet repository handles durable node removal lifecycle, controller guard,
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+test("fleet repository stores Tailscale transport, encrypted SSH credentials, and public-IP validation state", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fleet-ts-db-test-"));
+  const dbPath = path.join(tmpDir, "fleet.sqlite3");
+  const repo = createFleetRepository({ sqlitePath: dbPath });
+
+  try {
+    await repo.migrate();
+
+    // Create Tailscale-based node
+    const node = await repo.createTailscaleNode({
+      name: "worker-ts-1",
+      tailscaleIp: "100.90.108.8",
+      expectedPublicIp: "1.1.1.1",
+    });
+
+    assert.equal(node.name, "worker-ts-1");
+    assert.equal(node.tailscale_ip, "100.90.108.8");
+    assert.equal(node.expected_public_ip, "1.1.1.1");
+    assert.equal(node.public_ip_status, "unknown");
+    assert.equal(node.proxy_activation, "disabled");
+    assert.equal(node.ssh_credentials_set, false);
+
+    // Store SSH credentials with pinned fingerprint
+    await repo.setNodeSshCredentials(node.id, {
+      username: "pi",
+      password: "secret_pi_password",
+      port: 22,
+      hostKeyFingerprint: "SHA256:abc123mockfingerprint",
+    });
+
+    const fetched = await repo.getNode(node.id);
+    assert.ok(fetched);
+    assert.equal(fetched.ssh_credentials_set, true);
+    assert.equal(JSON.stringify(fetched).includes("secret_pi_password"), false);
+
+    const creds = await repo.getNodeSshCredentials(node.id);
+    assert.ok(creds);
+    assert.equal(creds.username, "pi");
+    assert.equal(creds.password, "secret_pi_password");
+    assert.equal(creds.port, 22);
+    assert.equal(creds.hostKeyFingerprint, "SHA256:abc123mockfingerprint");
+
+    // Record observation: expected mismatch
+    const mismatchDecision = await repo.recordPublicIpObservation(node.id, "8.8.8.8");
+    assert.equal(mismatchDecision.status, "expected_mismatch");
+    const nodeAfterMismatch = await repo.getNode(node.id);
+    assert.equal(nodeAfterMismatch?.public_ip, "8.8.8.8");
+    assert.equal(nodeAfterMismatch?.public_ip_status, "expected_mismatch");
+    assert.equal(nodeAfterMismatch?.proxy_activation, "disabled");
+
+    // Attempt activation when status is expected_mismatch must reject
+    await assert.rejects(async () => {
+      await repo.activateNode(node.id);
+    }, /activate/i);
+
+    // Record observation: verified (matches expected 1.1.1.1 and unique)
+    const verifiedDecision = await repo.recordPublicIpObservation(node.id, "1.1.1.1");
+    assert.equal(verifiedDecision.status, "verified");
+    const nodeAfterVerified = await repo.getNode(node.id);
+    assert.equal(nodeAfterVerified?.public_ip_status, "verified");
+
+    // Now activate succeeds
+    await repo.recordProvisioningState(node.id, { status: "ready", error: null });
+    const activated = await repo.activateNode(node.id);
+    assert.equal(activated.proxy_activation, "enabled");
+
+    // A second node observing the same public IP must get duplicate status
+    const node2 = await repo.createTailscaleNode({
+      name: "worker-ts-2",
+      tailscaleIp: "100.90.108.9",
+      expectedPublicIp: null,
+    });
+    const dupDecision = await repo.recordPublicIpObservation(node2.id, "1.1.1.1");
+    assert.equal(dupDecision.status, "duplicate");
+    const node2AfterDup = await repo.getNode(node2.id);
+    assert.equal(node2AfterDup?.proxy_activation, "disabled");
+
+    // Disable first node
+    await repo.disableNode(node.id, "Manual operator pause");
+    const nodeAfterDisable = await repo.getNode(node.id);
+    assert.equal(nodeAfterDisable?.proxy_activation, "disabled");
+    assert.equal(nodeAfterDisable?.proxy_activation_reason, "Manual operator pause");
+  } finally {
+    repo.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});

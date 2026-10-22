@@ -3,6 +3,17 @@ export type FleetNodeRole = "controller-worker" | "worker";
 
 export type FleetNodeStatus = "online" | "offline" | "degraded";
 
+export type FleetPublicIpStatus =
+  | "unknown"
+  | "verified"
+  | "expected_mismatch"
+  | "duplicate"
+  | "lookup_failed";
+
+export type FleetProxyActivation = "enabled" | "disabled";
+
+export type FleetProvisionStatus = "pending" | "installing" | "ready" | "failed";
+
 export type FleetConfigurationStatus = "pending" | "applied" | "failed" | "unknown";
 
 export interface FleetNodeConfigurationView {
@@ -22,6 +33,24 @@ export interface FleetNodeRecord {
   public_ip: string | null;
   wireguard_ip: string;
   wireguard_public_key: string | null;
+  tailscale_ip?: string | null;
+  tailscaleIp?: string | null;
+  expected_public_ip?: string | null;
+  expectedPublicIp?: string | null;
+  public_ip_status?: FleetPublicIpStatus;
+  publicIpStatus?: FleetPublicIpStatus;
+  public_ip_checked_at?: number | null;
+  publicIpCheckedAt?: number | null;
+  proxy_activation?: FleetProxyActivation;
+  proxyActivation?: FleetProxyActivation;
+  proxy_activation_reason?: string | null;
+  proxyActivationReason?: string | null;
+  provision_status?: FleetProvisionStatus;
+  provisionStatus?: FleetProvisionStatus;
+  provision_error?: string | null;
+  provisionError?: string | null;
+  ssh_credentials_set?: boolean;
+  sshCredentialsSet?: boolean;
   os: string | null;
   arch: string | null;
   agent_version: string | null;

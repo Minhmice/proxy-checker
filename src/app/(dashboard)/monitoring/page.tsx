@@ -8,6 +8,7 @@ import { authHeaders } from "@/lib/api";
 import { isAbortError } from "@/lib/request-lifecycle";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Status, StatusIndicator, StatusLabel } from "@/components/ui/status";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -324,9 +325,18 @@ export default function MonitoringPage() {
                           </Link>
                         </TableCell>
                         <TableCell>
-                          <Badge variant={badgeVariant}>
-                            {statusInfo.label}
-                          </Badge>
+                          <Status
+                            variant={
+                              node.status === "online"
+                                ? "success"
+                                : node.status === "degraded"
+                                ? "warning"
+                                : "error"
+                            }
+                          >
+                            <StatusIndicator pulse={node.status === "online"} />
+                            <StatusLabel>{statusInfo.label}</StatusLabel>
+                          </Status>
                         </TableCell>
                         <TableCell>
                           <Badge

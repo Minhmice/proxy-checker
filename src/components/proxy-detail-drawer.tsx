@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { CopyButton } from "@/components/ui/copy-button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
@@ -68,7 +69,6 @@ export function ProxyDetailDrawer({
   const [auditDetail, setAuditDetail] = useState<ProxyAuditDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   const proxyKey = proxy?.key || proxy?.proxyKey;
   const activeControllerRef = useRef<AbortController | null>(null);
 
@@ -148,12 +148,6 @@ export function ProxyDetailDrawer({
     }
   };
 
-  const handleCopy = (text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    toast.success("Copied endpoint to clipboard");
-    setTimeout(() => setCopied(false), 2000);
-  };
 
   if (!proxy) return null;
 
@@ -261,15 +255,7 @@ export function ProxyDetailDrawer({
             <SheetTitle className="text-base font-bold font-mono tracking-tight text-foreground break-all">
               {endpoint}
             </SheetTitle>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => handleCopy(endpoint)}
-              className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground shrink-0 cursor-pointer"
-              aria-label={`Copy ${endpoint}`}
-            >
-              {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
-            </Button>
+            <CopyButton value={endpoint} label="Endpoint" className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground shrink-0" />
           </div>
 
           <SheetDescription className="text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5">

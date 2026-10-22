@@ -3,6 +3,7 @@ import "./globals.css";
 import "@/components/dashboard-shell.css";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
+import { MockBootstrap } from "@/components/mock-bootstrap";
 export const metadata: Metadata = {
   title: "minhmiceProxy",
   description: "9Router proxy pool control dashboard",
@@ -19,8 +20,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body>
-        <TooltipProvider>{children}</TooltipProvider>
-        <Toaster richColors />
+        <MockBootstrap>
+          <TooltipProvider>{children}</TooltipProvider>
+          <Toaster richColors />
+        </MockBootstrap>
       </body>
     </html>
   );

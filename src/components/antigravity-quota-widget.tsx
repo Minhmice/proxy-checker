@@ -81,7 +81,7 @@ export function AntigravityQuotaWidget() {
         if (!signal?.aborted) setLoading(false);
       }
     },
-    [password, authenticated]
+    [password, authenticated],
   );
   const handleMouseEnter = () => {
     clearTimeout(hoverTimerRef.current ?? undefined);
@@ -175,18 +175,22 @@ export function AntigravityQuotaWidget() {
   }, [snapshot]);
 
   const totalQuota = snapshot?.totalSessionQuotaPercentage;
-  const maxQuota = snapshot?.maxPossiblePercentage || (snapshot?.totalAccounts ? snapshot.totalAccounts * 100 : 0);
-  const overallRatio = totalQuota !== undefined && maxQuota > 0 ? Math.min(100, Math.max(0, (totalQuota / maxQuota) * 100)) : null;
+  const maxQuota =
+    snapshot?.maxPossiblePercentage || (snapshot?.totalAccounts ? snapshot.totalAccounts * 100 : 0);
+  const overallRatio =
+    totalQuota !== undefined && maxQuota > 0
+      ? Math.min(100, Math.max(0, (totalQuota / maxQuota) * 100))
+      : null;
   const overallColors = quotaColor(overallRatio ?? 50);
   const quotaLabel = snapshot
     ? unavailable
       ? `${totalQuota}% (stale)`
       : `${totalQuota}%`
     : loading
-    ? "Loading"
-    : unavailable
-    ? "Unavailable"
-    : "Unknown";
+      ? "Loading"
+      : unavailable
+        ? "Unavailable"
+        : "Unknown";
 
   return (
     <div
@@ -252,7 +256,10 @@ export function AntigravityQuotaWidget() {
                   className="p-2.5 rounded-lg border border-border/60 bg-surface/50 hover:bg-surface transition-colors space-y-2"
                 >
                   <div className="flex items-center justify-between gap-1.5 min-w-0">
-                    <span className="truncate text-xs font-medium text-sidebar-foreground font-mono" title={acc.email}>
+                    <span
+                      className="truncate text-xs font-medium text-sidebar-foreground font-mono"
+                      title={acc.email}
+                    >
                       {acc.email}
                     </span>
                     <span className="shrink-0 text-[10px] text-muted-foreground flex items-center gap-1 font-mono">
@@ -269,21 +276,27 @@ export function AntigravityQuotaWidget() {
                           "px-1.5 py-0.5 rounded font-mono font-semibold text-[10px] border",
                           sessionColors.bg,
                           sessionColors.text,
-                          sessionColors.border
+                          sessionColors.border,
                         )}
                         title="Gemini Session Quota (5h)"
                       >
-                        S: {Number.isFinite(acc.sessionPercentage) ? `${acc.sessionPercentage.toFixed(0)}%` : "Unknown"}
+                        S:{" "}
+                        {Number.isFinite(acc.sessionPercentage)
+                          ? `${acc.sessionPercentage.toFixed(0)}%`
+                          : "Unknown"}
                       </span>
 
                       <span
                         className={cn(
                           "px-1.5 py-0.5 rounded font-mono text-[10px] border border-border/60 bg-surface-raised text-muted-foreground",
-                          weeklyColors.text
+                          weeklyColors.text,
                         )}
                         title="Gemini Weekly Quota"
                       >
-                        W: {Number.isFinite(acc.weeklyPercentage) ? `${acc.weeklyPercentage.toFixed(0)}%` : "Unknown"}
+                        W:{" "}
+                        {Number.isFinite(acc.weeklyPercentage)
+                          ? `${acc.weeklyPercentage.toFixed(0)}%`
+                          : "Unknown"}
                       </span>
                     </div>
 
@@ -295,7 +308,9 @@ export function AntigravityQuotaWidget() {
                       <span
                         className={cn(
                           "size-1.5 rounded-full shrink-0",
-                          acc.proxyHealthy ? "bg-emerald-500 shadow-[0_0_4px_var(--success)]" : "bg-rose-500"
+                          acc.proxyHealthy
+                            ? "bg-emerald-500 shadow-[0_0_4px_var(--success)]"
+                            : "bg-rose-500",
                         )}
                       />
                       <span className="truncate">{acc.proxyName || "Direct"}</span>
@@ -309,7 +324,9 @@ export function AntigravityQuotaWidget() {
 
         {/* Panel Footer note */}
         <div className="pt-2 border-t border-border/40 text-[10px] text-muted-foreground/80">
-          Automatic rotation uses Gemini session quota only: deactivate at or below the configured threshold; activate reserves above it, earliest reset first. Weekly quota is informational only.
+          Automatic rotation uses Gemini session quota only: deactivate at or below the configured
+          threshold; activate reserves above it, earliest reset first. Weekly quota is informational
+          only.
         </div>
       </div>
 
@@ -320,29 +337,41 @@ export function AntigravityQuotaWidget() {
         variant="ghost"
         onClick={() => setIsOpen((prev) => !prev)}
         className={cn(
-          "min-h-11 h-auto w-full p-2 flex flex-col items-stretch text-left justify-start rounded-lg border border-border/60 transition-colors cursor-pointer group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring whitespace-normal",
-          isOpen ? "bg-surface-raised border-primary/40" : "bg-surface/40 hover:bg-surface-raised hover:border-border"
+          "min-h-11 h-auto w-full p-2.5 flex flex-col items-stretch text-left justify-start rounded-xl border border-border/70 transition-all cursor-pointer group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring whitespace-normal",
+          isOpen
+            ? "bg-surface-raised border-primary/50 shadow-md"
+            : "bg-card/70 hover:bg-surface-raised hover:border-border/90 shadow-2xs",
         )}
         aria-expanded={isOpen}
         aria-controls={panelId}
-        aria-label={`Antigravity session quota: ${quotaLabel}. ${snapshot ? `${activeAccounts.length} active accounts` : "Quota details unavailable"}`}
       >
         <div className="flex items-center justify-between mb-1.5">
           <div className="flex items-center gap-1.5 min-w-0">
-            <Gauge className={cn("size-3.5 shrink-0 transition-colors", overallRatio === null ? "text-muted-foreground" : overallColors.text)} />
+            <Gauge
+              className={cn(
+                "size-3.5 shrink-0 transition-colors",
+                overallRatio === null ? "text-muted-foreground" : overallColors.text,
+              )}
+            />
             <span className="text-[11px] font-semibold text-sidebar-foreground truncate tracking-tight">
               Antigravity quota
             </span>
           </div>
           <span className="text-[11px] font-mono font-bold text-ink shrink-0">
-            {quotaLabel} {snapshot && <span className="text-[10px] text-muted-foreground font-normal">/ {maxQuota}%</span>}
+            {quotaLabel}{" "}
+            {snapshot && (
+              <span className="text-[10px] text-muted-foreground font-normal">/ {maxQuota}%</span>
+            )}
           </span>
         </div>
 
         {/* Micro Progress Bar */}
         <div className="w-full h-1.5 rounded-full bg-surface-raised overflow-hidden">
           <div
-            className={cn("h-full rounded-full transition-all duration-500", overallRatio === null ? "bg-muted-foreground/40" : overallColors.bar)}
+            className={cn(
+              "h-full rounded-full transition-all duration-500",
+              overallRatio === null ? "bg-muted-foreground/40" : overallColors.bar,
+            )}
             style={{ width: `${overallRatio ?? 0}%` }}
           />
         </div>
@@ -354,12 +383,14 @@ export function AntigravityQuotaWidget() {
                 ? `${snapshot.totalAccounts} accounts (stale)`
                 : `${snapshot.totalAccounts} accounts`
               : unavailable
-              ? "Status unavailable"
-              : loading
-              ? "Loading quota"
-              : "Status unknown"}
+                ? "Status unavailable"
+                : loading
+                  ? "Loading quota"
+                  : "Status unknown"}
           </span>
-          <span className="text-emerald-400 font-medium">{snapshot ? `${activeAccounts.length} active` : "—"}</span>
+          <span className="text-emerald-400 font-medium">
+            {snapshot ? `${activeAccounts.length} active` : "—"}
+          </span>
         </div>
       </Button>
     </div>

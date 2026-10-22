@@ -275,7 +275,7 @@ export function RightPanel({ open = false, onOpenChange = () => {} }: RightPanel
 
   return (
     <>
-      <aside className="hidden w-80 shrink-0 border-l border-border/60 bg-background/70 xl:flex" aria-label="Operations">
+      <aside className="hidden w-80 3xl:w-[var(--right-panel-width)] shrink-0 border-l border-border/60 bg-background/70 xl:flex" aria-label="Operations">
         {panel}
       </aside>
 

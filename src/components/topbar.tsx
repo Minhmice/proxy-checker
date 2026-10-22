@@ -15,6 +15,7 @@ import { useAuth } from "./auth-provider";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Status, StatusIndicator, StatusLabel } from "@/components/ui/status";
 import { Separator } from "@/components/ui/separator";
 import {
   DropdownMenu,
@@ -39,14 +40,15 @@ export function TopBar({ onSearchClick, onOperationsClick, operationsOpen }: Top
   const [shortcutKey, setShortcutKey] = React.useState("⌘K");
 
   React.useEffect(() => {
-    const isMac = typeof window !== "undefined" && /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform || "");
+    const isMac =
+      typeof window !== "undefined" && /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform || "");
     setShortcutKey(isMac ? "⌘K" : "Ctrl K");
   }, []);
 
   return (
     <header
       role="banner"
-      className="sticky top-0 z-20 flex h-14 w-full shrink-0 items-center justify-between gap-2 border-b border-border/60 bg-background/80 px-3 sm:px-4 backdrop-blur-md supports-[backdrop-filter]:bg-background/60"
+      className="sticky top-0 z-20 flex h-14 3xl:h-[var(--topbar-height,64px)] w-full shrink-0 items-center justify-between gap-2 border-b border-border/80 bg-background/85 px-3 sm:px-4 3xl:px-6 backdrop-blur-xl shadow-[0_4px_20px_-10px_oklch(0.04_0.02_260/0.8)]"
     >
       <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
         <SidebarTrigger className="-ml-1 size-11 sm:size-8 text-muted-foreground hover:text-foreground hover:bg-accent/60 transition-colors touch-manipulation" />
@@ -56,10 +58,9 @@ export function TopBar({ onSearchClick, onOperationsClick, operationsOpen }: Top
         <Button
           variant="outline"
           size="sm"
-          onClick={onSearchClick}
-          aria-label="Search proxy pools"
+          aria-label={`Search proxy pools... ${shortcutKey}`}
           aria-keyshortcuts="Control+K"
-          className="relative h-11 w-11 p-0 sm:h-8 sm:w-60 md:w-80 sm:px-3 sm:justify-start rounded-md border-border/60 bg-muted/30 text-xs text-muted-foreground font-normal shadow-none hover:bg-muted/60 hover:text-foreground hover:border-border transition-all touch-manipulation"
+          className="relative h-11 w-11 p-0 sm:h-8 sm:w-60 md:w-80 3xl:w-96 5xl:w-[28rem] sm:px-3 sm:justify-start rounded-md border-border/70 bg-surface/80 text-xs text-muted-foreground font-normal shadow-none hover:bg-surface-raised hover:text-foreground hover:border-primary/50 hover:shadow-[0_0_15px_-3px_oklch(0.78_0.17_205/0.25)] transition-all touch-manipulation"
           data-command-trigger
         >
           <Search className="size-3.5 sm:mr-2 shrink-0 text-muted-foreground" />
@@ -82,13 +83,15 @@ export function TopBar({ onSearchClick, onOperationsClick, operationsOpen }: Top
             <Link href="/auth">Session Expired &bull; Sign in</Link>
           </Button>
         ) : (
-          <Badge
-            variant="outline"
-            className="hidden sm:inline-flex items-center gap-1.5 border-border/80 bg-muted/40 text-muted-foreground text-xs font-medium py-0.5 px-2.5 select-none"
+          <Status
+            variant="success"
+            className="hidden sm:inline-flex py-0.5 px-2.5 select-none border-emerald-500/40 bg-emerald-500/10 shadow-[0_0_12px_oklch(0.82_0.22_145/0.25)]"
           >
-            <span className="size-1.5 rounded-full bg-emerald-500 shrink-0" />
-            <span>Session Active</span>
-          </Badge>
+            <StatusIndicator pulse />
+            <StatusLabel className="text-emerald-300 font-semibold text-[11px] uppercase tracking-wider">
+              Session Active
+            </StatusLabel>
+          </Status>
         )}
 
         {/* Notification indicator */}
@@ -113,7 +116,12 @@ export function TopBar({ onSearchClick, onOperationsClick, operationsOpen }: Top
           aria-expanded={operationsOpen}
         >
           <PanelRightOpen className="size-4" />
-          <span className={cn("absolute right-1 top-1 size-1.5 rounded-full ring-2 ring-background", authenticated || Boolean(password) ? "bg-emerald-500" : "bg-amber-400")} />
+          <span
+            className={cn(
+              "absolute right-1 top-1 size-1.5 rounded-full ring-2 ring-background",
+              authenticated || Boolean(password) ? "bg-emerald-500" : "bg-amber-400",
+            )}
+          />
         </Button>
 
         {/* User Account Dropdown */}

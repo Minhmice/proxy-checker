@@ -14,6 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
+import { CopyButton } from "@/components/ui/copy-button";
 import type { FleetWireGuardSettings } from "@/proxyfleet/wireguard";
 import type { FleetNodeRecord } from "@/proxyfleet/types";
 
@@ -300,14 +301,12 @@ export function WireGuardSettingsCard({
               <span className="font-semibold text-foreground flex items-center gap-1.5">
                 <Key className="size-3.5 text-primary" /> Controller Public Key
               </span>
-              <Button
-                variant="ghost"
+              <CopyButton
+                value={status.publicKey}
+                label="Public key"
                 size="sm"
-                className="h-6 px-2 text-[11px] gap-1"
-                onClick={() => void copyPublicKey(status.publicKey!)}
-              >
-                <Copy className="size-3" /> Copy
-              </Button>
+                className="h-6 px-2 text-[11px]"
+              />
             </div>
             <div className="font-mono text-xs text-muted-foreground break-all select-all">
               {status.publicKey}
@@ -337,7 +336,7 @@ export function WireGuardSettingsCard({
 
         {managementEnabled && (
           <div className="space-y-4 pt-1">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 3xl:grid-cols-4 gap-4">
               <div className="space-y-1.5">
                 <Label htmlFor="wg-iface" className="text-xs font-medium">
                   Interface Name

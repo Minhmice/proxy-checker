@@ -26,6 +26,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Status, StatusIndicator, StatusLabel } from "@/components/ui/status";
+import { CopyButton } from "@/components/ui/copy-button";
+import { LatencyIndicator } from "./latency-indicator";
 import type { UnifiedProxyItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ProxyContextMenu } from "./proxy-context-menu";
@@ -80,25 +83,25 @@ export function ProxyTable({
     switch (health) {
       case "working":
         return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-            <CheckCircle2 className="h-3 w-3 shrink-0" aria-hidden="true" />
-            <span>Healthy</span>
-          </span>
+          <Status variant="success">
+            <StatusIndicator />
+            <StatusLabel>Healthy</StatusLabel>
+          </Status>
         );
       case "regressed":
         return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30">
-            <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden="true" />
-            <span>Regressed</span>
-          </span>
+          <Status variant="warning">
+            <StatusIndicator />
+            <StatusLabel>Regressed</StatusLabel>
+          </Status>
         );
       case "dead":
       default:
         return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-rose-500/15 text-rose-400 border border-rose-500/30">
-            <XCircle className="h-3 w-3 shrink-0" aria-hidden="true" />
-            <span>Dead</span>
-          </span>
+          <Status variant="error">
+            <StatusIndicator />
+            <StatusLabel>Dead</StatusLabel>
+          </Status>
         );
     }
   };
@@ -171,6 +174,9 @@ export function ProxyTable({
                 <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground hidden md:table-cell">
                   Exit / ISP
                 </TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground hidden 3xl:table-cell">
+                  Safety Audit
+                </TableHead>
                 <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground text-right hidden sm:table-cell">
                   Latency
                 </TableHead>
@@ -185,7 +191,8 @@ export function ProxyTable({
                 const isChecking = checkingKey === (item.key || item.proxyKey);
                 const endpoint = `${item.host}:${item.port}`;
                 const locationText = [item.geo?.city, item.geo?.country].filter(Boolean).join(", ");
-                const privacyScore = item.lastAudit?.overallSafety ?? null;
+                const auditVerdict = item.lastAudit?.verdict;
+                const safetyScore = item.lastAudit?.overallSafety ?? null;
 
                 return (
                   <ProxyContextMenu
@@ -222,27 +229,20 @@ export function ProxyTable({
                       </TableCell>
 
                       {/* Endpoint + Pin + Copy */}
-                      <TableCell className="font-mono text-xs font-medium text-foreground py-3 max-w-[180px] sm:max-w-[240px]">
+                      <TableCell className="font-mono text-xs font-medium text-foreground py-3 max-w-[180px] sm:max-w-[240px] 3xl:max-w-md 5xl:max-w-xl">
                         <div className="flex items-center gap-1.5 min-w-0">
                           {item.isPinned && (
                             <Pin className="h-3 w-3 text-amber-400 fill-amber-400/20 shrink-0" aria-label="Protected proxy" />
                           )}
                           <span className="truncate hover:text-primary transition-colors block" title={endpoint}>{endpoint}</span>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onCopyEndpoint(endpoint);
-                            }}
-                            className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 p-1.5 hover:text-foreground text-muted-foreground transition-all cursor-pointer shrink-0"
-                            aria-label={`Copy endpoint ${endpoint}`}
-                          >
-                            {copiedKey === endpoint ? (
-                              <Check className="h-3.5 w-3.5 text-emerald-400" />
-                            ) : (
-                              <Copy className="h-3.5 w-3.5" />
-                            )}
-                          </button>
+                          <div onClick={(e) => e.stopPropagation()} className="shrink-0">
+                            <CopyButton
+                              value={endpoint}
+                              label={endpoint}
+                              size="icon-xs"
+                              className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 p-1 hover:text-foreground text-muted-foreground transition-all shrink-0"
+                            />
+                          </div>
                         </div>
                       </TableCell>
                     {/* Protocol */}
@@ -265,7 +265,7 @@ export function ProxyTable({
                           <span className="font-mono text-xs font-medium text-foreground block">
                             {item.exitIp}
                           </span>
-                          <span className="text-[11px] text-muted-foreground flex items-center gap-1 truncate max-w-[200px]" title={item.isp || locationText}>
+                          <span className="text-[11px] text-muted-foreground flex items-center gap-1 truncate max-w-[200px] 3xl:max-w-xs 5xl:max-w-md" title={item.isp || locationText}>
                             {locationText && <Globe2 className="h-2.5 w-2.5 shrink-0" />}
                             {locationText || item.isp || "Unknown location"}
                           </span>
@@ -274,24 +274,46 @@ export function ProxyTable({
                         <span className="text-muted-foreground/60 font-mono text-[11px]">—</span>
                       )}
                     </TableCell>
-
-                    {/* Latency */}
-                    <TableCell className="text-right font-mono text-xs hidden sm:table-cell">
-                      {item.latencyMs !== null && item.health !== "dead" ? (
-                        <span
+                    {/* 4K/Ultra-wide Safety Audit Score */}
+                    <TableCell className="hidden 3xl:table-cell font-mono text-xs">
+                      {safetyScore != null ? (
+                        <Badge
+                          variant="outline"
                           className={cn(
-                            item.latencyMs < 300
-                              ? "text-emerald-400 font-medium"
-                              : item.latencyMs < 1000
-                              ? "text-foreground"
-                              : "text-amber-400 font-medium"
+                            "text-[10px] font-mono px-1.5 py-0",
+                            safetyScore >= 80
+                              ? "text-emerald-400 border-emerald-500/30 bg-emerald-500/10"
+                              : safetyScore >= 60
+                              ? "text-amber-400 border-amber-500/30 bg-amber-500/10"
+                              : "text-rose-400 border-rose-500/30 bg-rose-500/10"
                           )}
                         >
-                          {item.latencyMs} ms
-                        </span>
+                          {safetyScore}%
+                        </Badge>
+                      ) : auditVerdict ? (
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            "text-[10px] font-mono uppercase px-1.5 py-0",
+                            auditVerdict === "PASS"
+                              ? "text-emerald-400 border-emerald-500/30 bg-emerald-500/10"
+                              : "text-amber-400 border-amber-500/30 bg-amber-500/10"
+                          )}
+                        >
+                          {auditVerdict}
+                        </Badge>
                       ) : (
-                        <span className="text-muted-foreground/60">—</span>
+                        <span className="text-muted-foreground/50 font-mono text-[11px]">—</span>
                       )}
+                    </TableCell>
+
+                    {/* Latency */}
+                    <TableCell className="text-right hidden sm:table-cell">
+                      <LatencyIndicator
+                        latencyMs={item.latencyMs}
+                        isDead={item.health === "dead"}
+                        showBar={false}
+                      />
                     </TableCell>
 
                     {/* Row Actions */}

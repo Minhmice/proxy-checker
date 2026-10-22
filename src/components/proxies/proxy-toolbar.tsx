@@ -1,13 +1,6 @@
 "use client";
 
-import {
-  Download,
-  Loader2,
-  Plus,
-  RotateCcw,
-  Search,
-  Upload,
-} from "lucide-react";
+import { Download, Loader2, Plus, RotateCcw, Search, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -17,6 +10,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { ProxyWorkspaceQuery } from "@/lib/proxy-url-state";
+import { cn } from "@/lib/utils";
 
 export interface ProxyToolbarProps {
   query: ProxyWorkspaceQuery;
@@ -55,9 +49,12 @@ export function ProxyToolbar({
   return (
     <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
       {/* Search & Filter Group */}
-      <div className="flex flex-wrap sm:flex-nowrap flex-1 items-center gap-2 max-w-full lg:max-w-md">
+      <div className="flex flex-wrap sm:flex-nowrap flex-1 items-center gap-2 max-w-full lg:max-w-md 3xl:max-w-xl 5xl:max-w-2xl">
         <div className="relative flex-1 min-w-[160px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" aria-hidden="true" />
+          <Search
+            className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none"
+            aria-hidden="true"
+          />
           <Input
             value={query.q}
             onChange={(e) => onQueryChange({ q: e.target.value, page: 1 })}
@@ -68,30 +65,57 @@ export function ProxyToolbar({
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          {/* Protocol Selector */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-9 px-3 text-xs bg-surface border-border/60 text-muted-foreground hover:text-foreground shrink-0 cursor-pointer"
-                aria-label="Filter by protocol"
-              >
-                {protocolLabels[query.protocol] || "Protocol"}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="bg-popover border-border/80">
-              {Object.entries(protocolLabels).map(([proto, label]) => (
-                <DropdownMenuItem
+          {/* Segmented Protocol Switcher (on wide screens) */}
+          <div className="hidden 2xl:flex items-center rounded-lg bg-surface border border-border/60 p-0.5 text-xs">
+            {Object.entries(protocolLabels).map(([proto, label]) => {
+              const active = query.protocol === proto;
+              return (
+                <button
                   key={proto}
-                  onClick={() => onQueryChange({ protocol: proto as ProxyWorkspaceQuery["protocol"], page: 1 })}
-                  className="text-xs cursor-pointer"
+                  type="button"
+                  onClick={() =>
+                    onQueryChange({ protocol: proto as ProxyWorkspaceQuery["protocol"], page: 1 })
+                  }
+                  className={cn(
+                    "px-2.5 py-1 rounded-md font-medium transition-all text-xs cursor-pointer",
+                    active
+                      ? "bg-primary text-primary-foreground shadow-xs"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
                 >
-                  {label}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
+                  {label === "All Protocols" ? "All" : label}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Protocol Selector Dropdown (mobile & compact) */}
+          <div className="2xl:hidden">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-9 px-3 text-xs bg-surface border-border/60 text-muted-foreground hover:text-foreground shrink-0 cursor-pointer"
+                >
+                  {protocolLabels[query.protocol] || "Protocol"}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="bg-popover border-border/80">
+                {Object.entries(protocolLabels).map(([proto, label]) => (
+                  <DropdownMenuItem
+                    key={proto}
+                    onClick={() =>
+                      onQueryChange({ protocol: proto as ProxyWorkspaceQuery["protocol"], page: 1 })
+                    }
+                    className="text-xs cursor-pointer"
+                  >
+                    {label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
 
           {/* Sort Selector */}
           <DropdownMenu>
@@ -100,7 +124,6 @@ export function ProxyToolbar({
                 variant="outline"
                 size="sm"
                 className="h-9 px-3 text-xs bg-surface border-border/60 text-muted-foreground hover:text-foreground shrink-0 cursor-pointer"
-                aria-label="Sort proxies"
               >
                 {sortLabels[query.sort] || "Sort"}
               </Button>
@@ -128,9 +151,12 @@ export function ProxyToolbar({
           onClick={onSync9Router}
           disabled={syncing}
           className="h-9 text-xs gap-1.5 border-border/60 bg-surface hover:bg-surface-raised cursor-pointer"
-          aria-label="Sync router pools"
         >
-          {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+          {syncing ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <RotateCcw className="h-3.5 w-3.5" />
+          )}
           <span>Sync 9Router</span>
         </Button>
 
@@ -139,7 +165,6 @@ export function ProxyToolbar({
           size="sm"
           onClick={onOpenImport}
           className="h-9 text-xs gap-1.5 border-border/60 bg-surface hover:bg-surface-raised cursor-pointer"
-          aria-label="Import proxies"
         >
           <Upload className="h-3.5 w-3.5" />
           <span>Import</span>
@@ -150,7 +175,6 @@ export function ProxyToolbar({
           size="sm"
           onClick={onOpenExport}
           className="h-9 text-xs gap-1.5 border-border/60 bg-surface hover:bg-surface-raised cursor-pointer"
-          aria-label="Export proxies"
         >
           <Download className="h-3.5 w-3.5" />
           <span>Export</span>
@@ -160,7 +184,6 @@ export function ProxyToolbar({
           size="sm"
           onClick={onOpenAdd}
           className="h-9 text-xs gap-1.5 bg-primary text-primary-foreground hover:bg-primary-hover shadow-sm cursor-pointer"
-          aria-label="Add proxy"
         >
           <Plus className="h-3.5 w-3.5" />
           <span>New proxy</span>

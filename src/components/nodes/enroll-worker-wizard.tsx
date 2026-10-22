@@ -60,6 +60,14 @@ export function EnrollWorkerWizard({
   const [enrolledNode, setEnrolledNode] = useState<FleetNodeRecord | null>(null);
   const [isHandshaking, setIsHandshaking] = useState(false);
   const [controllerUrl, setControllerUrl] = useState("");
+  const [tailscaleIp, setTailscaleIp] = useState("");
+  const [sshUser, setSshUser] = useState("root");
+  const [sshPassword, setSshPassword] = useState("");
+  const [sshPort, setSshPort] = useState("22");
+  const [expectedPublicIp, setExpectedPublicIp] = useState("");
+  const [hostFingerprint, setHostFingerprint] = useState("");
+  const [inspectingKey, setInspectingKey] = useState(false);
+  const [provisioningNode, setProvisioningNode] = useState(false);
   // ponytail: dynamic origin with manual override; upgrade to registered controller discovery endpoint if fleet topology becomes multi-region.
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -68,7 +76,6 @@ export function EnrollWorkerWizard({
   const pollingInFlightRef = useRef(false);
   const isMountedRef = useRef(true);
   const successRef = useRef(false);
-
 
   // Auto-generate name preset based on platform
   const generatePresetName = (p: PlatformTarget) => {
@@ -108,7 +115,6 @@ export function EnrollWorkerWizard({
     }
   };
 
-
   // Reset or initialize state on modal open
   useEffect(() => {
     if (open) {
@@ -123,7 +129,6 @@ export function EnrollWorkerWizard({
       successRef.current = false;
     }
   }, [open]);
-
 
   // Update preset name if user switches platform before typing custom name
   const handleSelectPlatform = (p: PlatformTarget) => {
@@ -171,13 +176,18 @@ export function EnrollWorkerWizard({
       const data = await res.json().catch(() => ({}));
       if (controller.signal.aborted || !isMountedRef.current) return;
       if (!res.ok) throw new Error(data.error || `Token request failed (${res.status}).`);
-      if (typeof data.token !== "string" || !data.token) throw new Error("Token response was incomplete. Try again.");
+      if (typeof data.token !== "string" || !data.token)
+        throw new Error("Token response was incomplete. Try again.");
       setEnrollToken(data.token);
       setStep(2);
       startHandshakePolling(nodeName.trim());
     } catch (error) {
       if (controller.signal.aborted || !isMountedRef.current) return;
-      setTokenError(error instanceof Error ? error.message : "Network error while requesting token. Check connection and try again.");
+      setTokenError(
+        error instanceof Error
+          ? error.message
+          : "Network error while requesting token. Check connection and try again.",
+      );
     } finally {
       if (!controller.signal.aborted && isMountedRef.current) {
         setTokenLoading(false);
@@ -185,8 +195,6 @@ export function EnrollWorkerWizard({
       }
     }
   };
-
-
 
   // Poll for the exact node name; unrelated fleet heartbeats must not complete this enrollment.
   // Poll for exact matching online node; unrelated heartbeats or offline records cannot complete enrollment.
@@ -212,7 +220,7 @@ export function EnrollWorkerWizard({
         if (controller.signal.aborted || !isMountedRef.current) return;
 
         const match = (data.nodes || []).find(
-          (node: FleetNodeRecord) => node.name === targetName && node.status === "online"
+          (node: FleetNodeRecord) => node.name === targetName && node.status === "online",
         );
         if (match && !successRef.current && isMountedRef.current) {
           successRef.current = true;
@@ -238,8 +246,6 @@ export function EnrollWorkerWizard({
     };
   }, []);
 
-
-
   const targetServer = parseValidatedServerUrl(controllerUrl);
 
   const getProvisionCommand = () => {
@@ -259,13 +265,14 @@ export function EnrollWorkerWizard({
   };
   const command = getProvisionCommand();
 
-
-
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
         {triggerButton || (
-          <Button size="sm" className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm">
+          <Button
+            size="sm"
+            className="gap-2 bg-emerald-700 hover:bg-emerald-800 text-white shadow-sm"
+          >
             <Plus className="size-4" />
             Enroll Device
           </Button>
@@ -289,7 +296,10 @@ export function EnrollWorkerWizard({
           </div>
 
           <div className="flex items-center gap-2">
-            <Badge variant="outline" className="border-border font-mono text-[10px] text-muted-foreground">
+            <Badge
+              variant="outline"
+              className="border-border font-mono text-[10px] text-muted-foreground"
+            >
               PHASE {step}/3
             </Badge>
           </div>
@@ -305,7 +315,8 @@ export function EnrollWorkerWizard({
                   Target Architecture & Identity
                 </DialogTitle>
                 <DialogDescription className="text-muted-foreground text-xs">
-                  Select target device platform and assign a unique identifier for cluster enrollment.
+                  Select target device platform and assign a unique identifier for cluster
+                  enrollment.
                 </DialogDescription>
               </DialogHeader>
 
@@ -313,14 +324,16 @@ export function EnrollWorkerWizard({
                 <Alert variant="destructive" id="enroll-token-error" className="py-2.5">
                   <AlertTriangle className="size-4" />
                   <AlertTitle>Enrollment Error</AlertTitle>
-                  <AlertDescription className="text-xs">
-                    {tokenError}
-                  </AlertDescription>
+                  <AlertDescription className="text-xs">{tokenError}</AlertDescription>
                 </Alert>
               )}
 
               {/* Platform Selector Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3" role="radiogroup" aria-label="Target Architecture">
+              <div
+                className="grid grid-cols-1 sm:grid-cols-3 gap-3"
+                role="radiogroup"
+                aria-label="Target Architecture"
+              >
                 <button
                   type="button"
                   role="radio"
@@ -334,15 +347,21 @@ export function EnrollWorkerWizard({
                 >
                   <div>
                     <div className="flex items-center justify-between mb-2">
-                      <Server className={`size-5 ${platform === "linux" ? "text-emerald-400" : "text-muted-foreground"}`} />
+                      <Server
+                        className={`size-5 ${platform === "linux" ? "text-emerald-400" : "text-muted-foreground"}`}
+                      />
                       <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[10px]">
                         Default
                       </Badge>
                     </div>
                     <div className="font-semibold text-sm">Linux VPS</div>
-                    <div className="text-[11px] text-muted-foreground mt-1">Ubuntu, Debian (amd64 / arm64)</div>
+                    <div className="text-[11px] text-muted-foreground mt-1">
+                      Ubuntu, Debian (amd64 / arm64)
+                    </div>
                   </div>
-                  <div className="mt-3 text-[10px] text-emerald-500 font-mono">Full stack: 3proxy + WG</div>
+                  <div className="mt-3 text-[10px] text-emerald-500 font-mono">
+                    Full stack: 3proxy + WG
+                  </div>
                 </button>
 
                 <button
@@ -358,15 +377,24 @@ export function EnrollWorkerWizard({
                 >
                   <div>
                     <div className="flex items-center justify-between mb-2">
-                      <Cpu className={`size-5 ${platform === "arm" ? "text-emerald-400" : "text-muted-foreground"}`} />
-                      <Badge variant="outline" className="border-border text-muted-foreground text-[10px]">
+                      <Cpu
+                        className={`size-5 ${platform === "arm" ? "text-emerald-400" : "text-muted-foreground"}`}
+                      />
+                      <Badge
+                        variant="outline"
+                        className="border-border text-muted-foreground text-[10px]"
+                      >
                         ARMv7
                       </Badge>
                     </div>
                     <div className="font-semibold text-sm">Raspberry Pi</div>
-                    <div className="text-[11px] text-muted-foreground mt-1">OpenWrt, Raspbian, ARM Boards</div>
+                    <div className="text-[11px] text-muted-foreground mt-1">
+                      OpenWrt, Raspbian, ARM Boards
+                    </div>
                   </div>
-                  <div className="mt-3 text-[10px] text-emerald-500 font-mono">Optimized binary</div>
+                  <div className="mt-3 text-[10px] text-emerald-500 font-mono">
+                    Optimized binary
+                  </div>
                 </button>
 
                 <button
@@ -382,23 +410,40 @@ export function EnrollWorkerWizard({
                 >
                   <div>
                     <div className="flex items-center justify-between mb-2">
-                      <Monitor className={`size-5 ${platform === "windows" ? "text-emerald-400" : "text-muted-foreground"}`} />
-                      <Badge variant="outline" className="border-border text-muted-foreground text-[10px]">
+                      <Monitor
+                        className={`size-5 ${platform === "windows" ? "text-emerald-400" : "text-muted-foreground"}`}
+                      />
+                      <Badge
+                        variant="outline"
+                        className="border-border text-muted-foreground text-[10px]"
+                      >
                         Dev Mode
                       </Badge>
                     </div>
                     <div className="font-semibold text-sm">Windows Host</div>
-                    <div className="text-[11px] text-muted-foreground mt-1">Local testing / Native CLI</div>
+                    <div className="text-[11px] text-muted-foreground mt-1">
+                      Local testing / Native CLI
+                    </div>
                   </div>
-                  <div className="mt-3 text-[10px] text-amber-500 font-mono">Loopback / Tailscale</div>
+                  <div className="mt-3 text-[10px] text-amber-500 font-mono">
+                    Loopback / Tailscale
+                  </div>
                 </button>
               </div>
 
               {/* Node Identifier Input */}
               <div className="space-y-2 pt-2">
-                <Label htmlFor="enroll-node-identifier" className="text-xs font-mono font-medium text-muted-foreground flex items-center justify-between">
+                <Label
+                  htmlFor="enroll-node-identifier"
+                  className="text-xs font-mono font-medium text-muted-foreground flex items-center justify-between"
+                >
                   <span>NODE IDENTIFIER</span>
-                  <span id="enroll-node-identifier-desc" className="text-[10px] text-muted-foreground">Unique cluster identifier</span>
+                  <span
+                    id="enroll-node-identifier-desc"
+                    className="text-[10px] text-muted-foreground"
+                  >
+                    Unique cluster identifier
+                  </span>
                 </Label>
                 <div className="relative">
                   <Input
@@ -423,11 +468,156 @@ export function EnrollWorkerWizard({
                 </div>
               </div>
 
+              {/* Tailscale IP and SSH Credentials */}
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <div className="space-y-1">
+                  <Label htmlFor="enroll-ts-ip" className="text-xs font-mono text-muted-foreground">
+                    TAILSCALE IP
+                  </Label>
+                  <Input
+                    id="enroll-ts-ip"
+                    className="bg-muted/40 font-mono text-xs text-foreground"
+                    placeholder="100.x.y.z"
+                    value={tailscaleIp}
+                    onChange={(e) => setTailscaleIp(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label
+                    htmlFor="enroll-ssh-port"
+                    className="text-xs font-mono text-muted-foreground"
+                  >
+                    SSH PORT
+                  </Label>
+                  <Input
+                    id="enroll-ssh-port"
+                    className="bg-muted/40 font-mono text-xs text-foreground"
+                    placeholder="22"
+                    value={sshPort}
+                    onChange={(e) => setSshPort(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                <div className="space-y-1">
+                  <Label
+                    htmlFor="enroll-ssh-user"
+                    className="text-xs font-mono text-muted-foreground"
+                  >
+                    SSH USERNAME
+                  </Label>
+                  <Input
+                    id="enroll-ssh-user"
+                    className="bg-muted/40 font-mono text-xs text-foreground"
+                    placeholder="root or pi"
+                    value={sshUser}
+                    onChange={(e) => setSshUser(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label
+                    htmlFor="enroll-ssh-pass"
+                    className="text-xs font-mono text-muted-foreground"
+                  >
+                    SSH PASSWORD
+                  </Label>
+                  <Input
+                    id="enroll-ssh-pass"
+                    type="password"
+                    className="bg-muted/40 font-mono text-xs text-foreground"
+                    placeholder="••••••••"
+                    value={sshPassword}
+                    onChange={(e) => setSshPassword(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1 pt-1">
+                <Label
+                  htmlFor="enroll-expected-ip"
+                  className="text-xs font-mono text-muted-foreground flex items-center justify-between"
+                >
+                  <span>EXPECTED PUBLIC IP (OPTIONAL)</span>
+                  <span className="text-[10px] text-muted-foreground">
+                    Leave empty to auto-detect
+                  </span>
+                </Label>
+                <Input
+                  id="enroll-expected-ip"
+                  className="bg-muted/40 font-mono text-xs text-foreground"
+                  placeholder="e.g. 1.2.3.4"
+                  value={expectedPublicIp}
+                  onChange={(e) => setExpectedPublicIp(e.target.value)}
+                />
+              </div>
+
+              {/* Host Key Inspection / Pinning */}
+              <div className="space-y-1.5 pt-1">
+                <div className="flex items-center justify-between">
+                  <Label
+                    htmlFor="enroll-host-key"
+                    className="text-xs font-mono text-muted-foreground"
+                  >
+                    HOST KEY FINGERPRINT (PINNED)
+                  </Label>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={!tailscaleIp.trim() || inspectingKey}
+                    onClick={async () => {
+                      setInspectingKey(true);
+                      try {
+                        const res = await fetch("/api/fleet/ssh/host-key", {
+                          method: "POST",
+                          headers: { ...authHeaders(password), "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            host: tailscaleIp.trim(),
+                            port: Number(sshPort || 22),
+                          }),
+                        });
+                        const data = await res.json();
+                        if (res.ok && data.fingerprint) {
+                          setHostFingerprint(data.fingerprint);
+                        } else {
+                          setTokenError(data.error || "Failed to inspect host key");
+                        }
+                      } catch (err: unknown) {
+                        setTokenError(
+                          err instanceof Error ? err.message : "Error inspecting host key",
+                        );
+                      } finally {
+                        setInspectingKey(false);
+                      }
+                    }}
+                    className="h-6 text-[10px] font-mono px-2"
+                  >
+                    {inspectingKey ? "Probing..." : "Probe Host Key"}
+                  </Button>
+                </div>
+                <Input
+                  id="enroll-host-key"
+                  className="bg-muted/40 font-mono text-xs text-foreground"
+                  placeholder="SHA256:..."
+                  value={hostFingerprint}
+                  onChange={(e) => setHostFingerprint(e.target.value)}
+                />
+              </div>
+
               {/* Controller Server Target (Tailscale Overlay) */}
               <div className="space-y-2 pt-1">
-                <Label htmlFor="enroll-controller-url" className="text-xs font-mono font-medium text-muted-foreground flex items-center justify-between">
+                <Label
+                  htmlFor="enroll-controller-url"
+                  className="text-xs font-mono font-medium text-muted-foreground flex items-center justify-between"
+                >
                   <span>CONTROLLER SERVER (TAILSCALE / OVERLAY)</span>
-                  <span id="enroll-controller-url-desc" className="text-[10px] text-muted-foreground">Worker connects to this URL during bootstrap</span>
+                  <span
+                    id="enroll-controller-url-desc"
+                    className="text-[10px] text-muted-foreground"
+                  >
+                    Worker connects to this URL during bootstrap
+                  </span>
                 </Label>
                 <div className="flex gap-2">
                   <Input
@@ -456,27 +646,75 @@ export function EnrollWorkerWizard({
               <div className="rounded-lg border border-border bg-muted/20 p-3 text-xs text-muted-foreground flex items-start gap-2.5">
                 <ShieldCheck className="size-4 text-emerald-400 shrink-0 mt-0.5" />
                 <div>
-                  <span className="text-foreground font-medium">Automated Security:</span> Controller issues a single-use token valid for 60 minutes and provisions an overlay WireGuard mesh address in <code className="text-emerald-400 font-mono">10.77.0.x</code>.
+                  <span className="text-foreground font-medium">Automated Security:</span>{" "}
+                  Controller connects via Tailscale IP over standard SSH with host key pinning,
+                  verifies direct Public IP, and installs agent.
                 </div>
               </div>
 
               {/* Submit CTA */}
               <div className="flex justify-end pt-2">
                 <Button
-                  onClick={handleGenerateToken}
-                  disabled={!nodeName.trim() || tokenLoading}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-5 gap-2"
+                  onClick={async () => {
+                    if (
+                      !tailscaleIp.trim() ||
+                      !sshUser.trim() ||
+                      !sshPassword ||
+                      !hostFingerprint.trim()
+                    ) {
+                      setTokenError(
+                        "Please provide Tailscale IP, SSH username/password, and pinned host key fingerprint.",
+                      );
+                      return;
+                    }
+                    setProvisioningNode(true);
+                    setTokenError("");
+                    try {
+                      const res = await fetch("/api/fleet/nodes/provision", {
+                        method: "POST",
+                        headers: { ...authHeaders(password), "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          name: nodeName.trim(),
+                          tailscaleIp: tailscaleIp.trim(),
+                          username: sshUser.trim(),
+                          password: sshPassword,
+                          sshPort: Number(sshPort || 22),
+                          hostKeyFingerprint: hostFingerprint.trim(),
+                          expectedPublicIp: expectedPublicIp.trim() || undefined,
+                          controllerUrl: controllerUrl.trim(),
+                        }),
+                      });
+                      const data = await res.json();
+                      if (res.ok) {
+                        onNodeEnrolled?.();
+                        setOpen(false);
+                      } else {
+                        setTokenError(data.error || "Provisioning failed");
+                      }
+                    } catch (err: unknown) {
+                      setTokenError(
+                        err instanceof Error ? err.message : "Network error during provisioning",
+                      );
+                    } finally {
+                      setProvisioningNode(false);
+                    }
+                  }}
+                  disabled={
+                    !nodeName.trim() ||
+                    !tailscaleIp.trim() ||
+                    !sshPassword ||
+                    !hostFingerprint.trim() ||
+                    provisioningNode
+                  }
+                  className="bg-emerald-700 hover:bg-emerald-800 text-white font-medium px-5 gap-2"
                 >
-                  {tokenLoading ? (
+                  {provisioningNode ? (
                     <>
-                      <Loader2 className="size-4 animate-spin" />
-                      Issuing Token...
+                      <Loader2 className="size-4 animate-spin mr-1.5" />
+                      Provisioning Node...
                     </>
                   ) : (
-                    <>
-                      Generate Provisioning CLI
-                      <ChevronRight className="size-4" />
-                    </>
+                    "Start Provisioning"
                   )}
                 </Button>
               </div>
@@ -497,7 +735,8 @@ export function EnrollWorkerWizard({
                   </Badge>
                 </DialogTitle>
                 <DialogDescription className="text-muted-foreground text-xs">
-                  Run the command below in the target terminal with root or administrator privileges to complete bootstrap.
+                  Run the command below in the target terminal with root or administrator privileges
+                  to complete bootstrap.
                 </DialogDescription>
               </DialogHeader>
 
@@ -506,7 +745,9 @@ export function EnrollWorkerWizard({
                 <div className="flex items-center justify-between pb-3 mb-3 border-b border-border text-[11px] text-muted-foreground">
                   <div className="flex items-center gap-2">
                     <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
-                    <span>TARGET: {nodeName} ({platform.toUpperCase()})</span>
+                    <span>
+                      TARGET: {nodeName} ({platform.toUpperCase()})
+                    </span>
                   </div>
                   <span className="text-[10px]">TTL: 60 mins (Single-Use)</span>
                 </div>
@@ -553,7 +794,8 @@ export function EnrollWorkerWizard({
                       <Loader2 className="size-3 animate-spin text-muted-foreground" />
                     </div>
                     <div className="text-[11px] text-muted-foreground mt-0.5">
-                      Controller listening for agent handshake heartbeat at <code className="text-foreground font-mono">/api/fleet/enroll</code>...
+                      Controller listening for agent handshake heartbeat at{" "}
+                      <code className="text-foreground font-mono">/api/fleet/enroll</code>...
                     </div>
                   </div>
                 </div>
@@ -575,7 +817,9 @@ export function EnrollWorkerWizard({
                 <div className="rounded-lg border border-amber-900/50 bg-amber-950/20 p-3 text-xs text-amber-300 flex items-start gap-2.5">
                   <AlertTriangle className="size-4 text-amber-400 shrink-0 mt-0.5" />
                   <div>
-                    <strong>Windows Notice:</strong> Ensure local proxy listens on an active port and local address (<code className="font-mono">127.0.0.1</code> or Tailscale IP). Do not bind WireGuard IP if interface driver is not configured.
+                    <strong>Windows Notice:</strong> Ensure local proxy listens on an active port
+                    and local address (<code className="font-mono">127.0.0.1</code> or Tailscale
+                    IP). Do not bind WireGuard IP if interface driver is not configured.
                   </div>
                 </div>
               )}
@@ -590,9 +834,12 @@ export function EnrollWorkerWizard({
               </div>
 
               <div className="space-y-1">
-                <h3 className="text-xl font-bold tracking-tight text-foreground">Device Successfully Enrolled!</h3>
+                <h3 className="text-xl font-bold tracking-tight text-foreground">
+                  Device Successfully Enrolled!
+                </h3>
                 <p className="text-xs text-muted-foreground">
-                  Worker node established WireGuard handshake and connected securely to fleet cluster.
+                  Worker node established WireGuard handshake and connected securely to fleet
+                  cluster.
                 </p>
               </div>
 
@@ -614,7 +861,9 @@ export function EnrollWorkerWizard({
                 </div>
                 <div className="flex justify-between items-center py-1">
                   <span className="text-muted-foreground">Platform OS:</span>
-                  <span className="text-foreground">{enrolledNode.os || platform} ({enrolledNode.arch || "amd64"})</span>
+                  <span className="text-foreground">
+                    {enrolledNode.os || platform} ({enrolledNode.arch || "amd64"})
+                  </span>
                 </div>
               </div>
 
@@ -631,7 +880,7 @@ export function EnrollWorkerWizard({
                     setOpen(false);
                     router.push(`/nodes/${enrolledNode.id}`);
                   }}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white gap-2 font-medium"
+                  className="bg-emerald-700 hover:bg-emerald-800 text-white gap-2 font-medium"
                 >
                   Configure Proxy Endpoints
                   <ExternalLink className="size-4" />
@@ -639,7 +888,6 @@ export function EnrollWorkerWizard({
               </div>
             </div>
           )}
-
         </div>
       </DialogContent>
     </Dialog>

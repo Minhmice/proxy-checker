@@ -1,4 +1,4 @@
-import type { FleetNodeStatus, FleetHealthStatus } from "../proxyfleet/types.js";
+import type { FleetNodeStatus, FleetHealthStatus, FleetPublicIpStatus, FleetProxyActivation } from "../proxyfleet/types.js";
 
 export function redactCredential(val: string): string {
   if (!val) return "";
@@ -18,6 +18,38 @@ export function formatFleetNodeStatus(status: FleetNodeStatus): {
       return { label: "Degraded", variant: "warning" };
     default:
       return { label: status, variant: "secondary" };
+  }
+}
+
+export function formatPublicIpStatus(status?: FleetPublicIpStatus): {
+  label: string;
+  variant: "default" | "success" | "destructive" | "warning" | "secondary";
+} {
+  switch (status) {
+    case "verified":
+      return { label: "IP Verified", variant: "success" };
+    case "expected_mismatch":
+      return { label: "IP Mismatch", variant: "destructive" };
+    case "duplicate":
+      return { label: "Duplicate IP", variant: "warning" };
+    case "lookup_failed":
+      return { label: "Lookup Failed", variant: "destructive" };
+    default:
+      return { label: "IP Unknown", variant: "secondary" };
+  }
+}
+
+export function formatProxyActivation(activation?: FleetProxyActivation): {
+  label: string;
+  variant: "default" | "success" | "destructive" | "warning" | "secondary";
+} {
+  switch (activation) {
+    case "enabled":
+      return { label: "Routing Active", variant: "success" };
+    case "disabled":
+      return { label: "Routing Disabled", variant: "warning" };
+    default:
+      return { label: "Disabled", variant: "secondary" };
   }
 }
 

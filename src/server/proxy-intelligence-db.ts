@@ -1,29 +1,43 @@
-import fs from "node:fs";
-import path from "node:path";
-import type { SQLInputValue } from "node:sqlite";
-import { DatabaseSync } from "node:sqlite";
+import fs from 'node:fs';
+import path from 'node:path';
+import Database from 'better-sqlite3';
+import { openProxyDb } from '../db/proxies/client.js';
+import { migrateDomain } from '../db/common/migrate.js';
 
-export type SqlParam = SQLInputValue;
+export type SqlParam = string | number | bigint | Buffer | null | undefined;
 
 export interface ProxyIntelligenceDb {
   exec(sql: string): void;
-  all<T = Record<string, unknown>>(sql: string, params?: readonly unknown[]): T[];
-  get<T = Record<string, unknown>>(sql: string, params?: readonly unknown[]): T | undefined;
-  run(sql: string, params?: readonly unknown[]): { changes: number; lastInsertRowid: number | bigint };
+  all<T = Record<string, unknown>>(
+    sql: string,
+    params?: readonly unknown[],
+  ): T[];
+  get<T = Record<string, unknown>>(
+    sql: string,
+    params?: readonly unknown[],
+  ): T | undefined;
+  run(
+    sql: string,
+    params?: readonly unknown[],
+  ): { changes: number; lastInsertRowid: number | bigint };
   transaction<T>(work: () => T): T;
   close(): void;
+  raw?: Database.Database;
 }
 
 export function migrateProxyIntelligence(db: ProxyIntelligenceDb): void {
+  if (db.raw) {
+    migrateDomain(db.raw, 'proxies');
+    return;
+  }
   db.transaction(() => {
-    // 1. Ensure proxies table exists if starting from completely empty DB
     db.exec(`
       CREATE TABLE IF NOT EXISTS proxies (
         proxy_key TEXT PRIMARY KEY,
         endpoint TEXT NOT NULL,
         protocol TEXT NOT NULL,
-        host TEXT NOT NULL,
-        port INTEGER NOT NULL,
+        host TEXT,
+        port INTEGER,
         status TEXT NOT NULL DEFAULT 'dead',
         latency_ms INTEGER,
         exit_ip TEXT,
@@ -34,68 +48,34 @@ export function migrateProxyIntelligence(db: ProxyIntelligenceDb): void {
       );
     `);
 
-    // 2. Add additive columns to proxies if not present
-    const columns = db.all<{ name: string }>("PRAGMA table_info(proxies)").map((c) => c.name);
-
-    if (!columns.includes("host")) {
-      db.exec("ALTER TABLE proxies ADD COLUMN host TEXT;");
-    }
-    if (!columns.includes("port")) {
-      db.exec("ALTER TABLE proxies ADD COLUMN port INTEGER;");
-    }
-    if (!columns.includes("source")) {
-      db.exec("ALTER TABLE proxies ADD COLUMN source TEXT NOT NULL DEFAULT 'legacy';");
-    }
-    if (!columns.includes("lifecycle_state")) {
-      db.exec("ALTER TABLE proxies ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'unknown';");
-    }
-    if (!columns.includes("username")) {
-      db.exec("ALTER TABLE proxies ADD COLUMN username TEXT;");
-    }
-    if (!columns.includes("password")) {
-      db.exec("ALTER TABLE proxies ADD COLUMN password TEXT;");
-    }
-    if (!columns.includes("created_at")) {
-      db.exec("ALTER TABLE proxies ADD COLUMN created_at INTEGER;");
-    }
-    if (!columns.includes("updated_at")) {
-      db.exec("ALTER TABLE proxies ADD COLUMN updated_at INTEGER;");
-    }
-    if (!columns.includes("last_verdict")) {
-      db.exec("ALTER TABLE proxies ADD COLUMN last_verdict TEXT;");
-    }
-    if (!columns.includes("last_checked_at")) {
-      db.exec("ALTER TABLE proxies ADD COLUMN last_checked_at INTEGER;");
-    }
-    if (!columns.includes("last_latency_ms")) {
-      db.exec("ALTER TABLE proxies ADD COLUMN last_latency_ms INTEGER;");
-    }
-    if (!columns.includes("last_exit_ip")) {
-      db.exec("ALTER TABLE proxies ADD COLUMN last_exit_ip TEXT;");
-    }
-    if (!columns.includes("last_failure_code")) {
-      db.exec("ALTER TABLE proxies ADD COLUMN last_failure_code TEXT;");
-    }
-    if (!columns.includes("ever_passed")) {
-      db.exec("ALTER TABLE proxies ADD COLUMN ever_passed INTEGER NOT NULL DEFAULT 0;");
-    }
-    if (!columns.includes("is_pinned")) {
-      db.exec("ALTER TABLE proxies ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0;");
-    }
-    if (!columns.includes("tags")) {
-      db.exec("ALTER TABLE proxies ADD COLUMN tags TEXT NOT NULL DEFAULT '';");
-    }
-    if (!columns.includes("remote_id")) {
-      db.exec("ALTER TABLE proxies ADD COLUMN remote_id TEXT;");
-    }
-    if (!columns.includes("router_state")) {
-      db.exec("ALTER TABLE proxies ADD COLUMN router_state TEXT NOT NULL DEFAULT 'unmanaged';");
-    }
-    if (!columns.includes("removed_at")) {
-      db.exec("ALTER TABLE proxies ADD COLUMN removed_at INTEGER;");
+    const columns = db
+      .all<{ name: string }>('PRAGMA table_info(proxies)')
+      .map((c) => c.name);
+    for (const [col, def] of [
+      ['host', 'TEXT'],
+      ['port', 'INTEGER'],
+      ['source', "TEXT NOT NULL DEFAULT 'legacy'"],
+      ['lifecycle_state', "TEXT NOT NULL DEFAULT 'unknown'"],
+      ['username', 'TEXT'],
+      ['password', 'TEXT'],
+      ['created_at', 'INTEGER'],
+      ['updated_at', 'INTEGER'],
+      ['last_verdict', 'TEXT'],
+      ['last_checked_at', 'INTEGER'],
+      ['last_latency_ms', 'INTEGER'],
+      ['last_exit_ip', 'TEXT'],
+      ['last_failure_code', 'TEXT'],
+      ['ever_passed', 'INTEGER NOT NULL DEFAULT 0'],
+      ['is_pinned', 'INTEGER NOT NULL DEFAULT 0'],
+      ['tags', "TEXT NOT NULL DEFAULT ''"],
+      ['remote_id', 'TEXT'],
+      ['router_state', "TEXT NOT NULL DEFAULT 'unmanaged'"],
+      ['removed_at', 'INTEGER'],
+    ]) {
+      if (!columns.includes(col))
+        db.exec(`ALTER TABLE proxies ADD COLUMN ${col} ${def};`);
     }
 
-    // Create proxy_test_history
     db.exec(`
       CREATE TABLE IF NOT EXISTS proxy_test_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -107,17 +87,10 @@ export function migrateProxyIntelligence(db: ProxyIntelligenceDb): void {
         FOREIGN KEY (proxy_key) REFERENCES proxies(proxy_key) ON DELETE CASCADE
       );
       CREATE INDEX IF NOT EXISTS idx_proxy_test_history_key ON proxy_test_history(proxy_key, tested_at DESC);
-    `);
-    // 3. Drop legacy auditor tables
-    db.exec(`
       DROP TABLE IF EXISTS proxy_audit_risks;
       DROP TABLE IF EXISTS proxy_audits;
       DROP TABLE IF EXISTS audit_jobs;
       DROP TABLE IF EXISTS proxy_diagnostics;
-    `);
-
-    // 4. Create indexes on proxies
-    db.exec(`
       CREATE INDEX IF NOT EXISTS proxies_lifecycle_idx ON proxies(lifecycle_state);
       CREATE INDEX IF NOT EXISTS proxies_source_idx ON proxies(source);
       CREATE INDEX IF NOT EXISTS proxies_protocol_lifecycle_idx ON proxies(protocol, lifecycle_state);
@@ -125,14 +98,19 @@ export function migrateProxyIntelligence(db: ProxyIntelligenceDb): void {
       CREATE INDEX IF NOT EXISTS proxies_last_checked_idx ON proxies(last_checked_at DESC);
     `);
 
-    // 5. Create fleet_managed_endpoints mapping table with pending_cleanup & owned_exclusive
-    const fleetCols = db.all<{ name: string }>("PRAGMA table_info(fleet_managed_endpoints)").map((c) => c.name);
+    const fleetCols = db
+      .all<{ name: string }>('PRAGMA table_info(fleet_managed_endpoints)')
+      .map((c) => c.name);
     if (fleetCols.length > 0) {
-      if (!fleetCols.includes("pending_cleanup")) {
-        db.exec("ALTER TABLE fleet_managed_endpoints ADD COLUMN pending_cleanup INTEGER NOT NULL DEFAULT 0;");
+      if (!fleetCols.includes('pending_cleanup')) {
+        db.exec(
+          'ALTER TABLE fleet_managed_endpoints ADD COLUMN pending_cleanup INTEGER NOT NULL DEFAULT 0;',
+        );
       }
-      if (!fleetCols.includes("owned_exclusive")) {
-        db.exec("ALTER TABLE fleet_managed_endpoints ADD COLUMN owned_exclusive INTEGER NOT NULL DEFAULT 1;");
+      if (!fleetCols.includes('owned_exclusive')) {
+        db.exec(
+          'ALTER TABLE fleet_managed_endpoints ADD COLUMN owned_exclusive INTEGER NOT NULL DEFAULT 1;',
+        );
       }
     } else {
       db.exec(`
@@ -160,67 +138,75 @@ function sleepSync(delayMs: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
 }
 
-export function configureProxyIntelligenceDb(raw: { exec(sql: string): void }, sleep: (delayMs: number) => void = sleepSync): void {
+export function configureProxyIntelligenceDb(
+  raw: { exec(sql: string): void },
+  sleep: (delayMs: number) => void = sleepSync,
+): void {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      raw.exec("PRAGMA journal_mode = WAL;");
+      raw.exec('PRAGMA journal_mode = WAL;');
       break;
     } catch (error) {
       const sqliteError = error as { code?: string; errcode?: number };
-      const retryable = sqliteError.code === "ERR_SQLITE_ERROR" && [5, 6, 1546].includes(sqliteError.errcode ?? 0);
+      const retryable =
+        sqliteError.code === 'ERR_SQLITE_ERROR' &&
+        [5, 6, 1546].includes(sqliteError.errcode ?? 0);
       if (!retryable || attempt >= 2) throw error;
       sleep(25 * 2 ** attempt);
     }
   }
-  raw.exec("PRAGMA foreign_keys = ON;");
+  raw.exec('PRAGMA foreign_keys = ON;');
 }
 
 export function openProxyIntelligenceDb(dataDir: string): ProxyIntelligenceDb {
   fs.mkdirSync(dataDir, { recursive: true });
-  const dbFile = path.join(dataDir, "proxies.sqlite3");
-  const raw = new DatabaseSync(dbFile, { timeout: 3000 });
-
-  // Enable WAL and foreign keys for durability and cascading
-  configureProxyIntelligenceDb(raw);
+  const dbFile = path.join(dataDir, 'proxies.sqlite3');
+  const client = openProxyDb(dbFile);
+  const raw = client.raw;
 
   const db: ProxyIntelligenceDb = {
     exec(sql: string): void {
       raw.exec(sql);
     },
-    all<T = Record<string, unknown>>(sql: string, params: readonly unknown[] = []): T[] {
+    all<T = Record<string, unknown>>(
+      sql: string,
+      params: readonly unknown[] = [],
+    ): T[] {
       const stmt = raw.prepare(sql);
-      const rows = stmt.all(...(params as readonly SQLInputValue[]));
-      return rows.map((r) => (r && typeof r === "object" ? { ...r } : r)) as T[];
+      const rows = stmt.all(...params);
+      return rows.map((r) =>
+        r && typeof r === 'object' ? { ...r } : r,
+      ) as T[];
     },
-    get<T = Record<string, unknown>>(sql: string, params: readonly unknown[] = []): T | undefined {
+    get<T = Record<string, unknown>>(
+      sql: string,
+      params: readonly unknown[] = [],
+    ): T | undefined {
       const stmt = raw.prepare(sql);
-      const row = stmt.get(...(params as readonly SQLInputValue[]));
-      return (row && typeof row === "object" ? { ...row } : row) as T | undefined;
+      const row = stmt.get(...params);
+      return (row && typeof row === 'object' ? { ...row } : row) as
+        | T
+        | undefined;
     },
-    run(sql: string, params: readonly unknown[] = []): { changes: number; lastInsertRowid: number | bigint } {
+    run(
+      sql: string,
+      params: readonly unknown[] = [],
+    ): { changes: number; lastInsertRowid: number | bigint } {
       const stmt = raw.prepare(sql);
-      const res = stmt.run(...(params as readonly SQLInputValue[]));
+      const res = stmt.run(...params);
       return {
         changes: Number(res.changes),
         lastInsertRowid: res.lastInsertRowid,
       };
     },
     transaction<T>(work: () => T): T {
-      raw.exec("BEGIN IMMEDIATE;");
-      try {
-        const result = work();
-        raw.exec("COMMIT;");
-        return result;
-      } catch (err) {
-        raw.exec("ROLLBACK;");
-        throw err;
-      }
+      return raw.transaction(work).immediate();
     },
     close(): void {
-      raw.close();
+      client.close();
     },
+    raw,
   };
 
-  migrateProxyIntelligence(db);
   return db;
 }

@@ -181,7 +181,7 @@ fi
 cat << EOF > /etc/systemd/system/3proxy.service
 [Unit]
 Description=3proxy Tiny Proxy Server
-After=network-online.target wg-quick@proxyfleet.service
+After=network-online.target
 
 [Service]
 Type=simple
@@ -243,7 +243,9 @@ table inet proxyfleet {
   chain input {
     type filter hook input priority 0; policy accept;
     # Only traffic arriving through the owned tunnel may reach managed ports.
-    iifname "proxyfleet" ip saddr 10.77.0.0/24 tcp dport 20000-39999 accept
+    # Allow proxy traffic arriving via Tailscale overlay or loopback
+    iifname "tailscale0" tcp dport 20000-39999 accept
+    ip saddr 100.64.0.0/10 tcp dport 20000-39999 accept
     iif "lo" tcp dport 20000-39999 accept
     tcp dport 20000-39999 drop
   }

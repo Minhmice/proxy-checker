@@ -580,8 +580,10 @@ export function createFleetWireGuardManager(
         if (serviceCheck.code === 0 && !readOwnership()) {
           throw new Error(`Foreign Windows service 'WireGuardTunnel$${settings.interfaceName}' detected without ProxyFleet ownership`);
         }
-        if (serviceCheck.code !== 0 && serviceCheck.code !== 1060) {
-          throw new Error(`Windows WireGuard service query failed: ${serviceCheck.stderr.trim() || `exit code ${serviceCheck.code}`}`);
+        const serviceOutput = `${serviceCheck.stdout}\n${serviceCheck.stderr}`;
+        const serviceAbsent = serviceCheck.code === 1060 || serviceOutput.includes("1060");
+        if (serviceCheck.code !== 0 && !serviceAbsent) {
+          throw new Error(`Windows WireGuard service query failed: ${serviceCheck.stderr.trim() || serviceCheck.stdout.trim() || `exit code ${serviceCheck.code}`}`);
         }
       } else if (binaries.ipPath) {
         const linkCheck = await exec(binaries.ipPath, ['link', 'show', settings.interfaceName]);
@@ -815,6 +817,7 @@ export function createFleetWireGuardManager(
       }
     },
 
+
     async observe(probeTargetIp?: string): Promise<OverlayObservation> {
       const binaries = detectBinaries();
       const wgBin = binaries.wgPath;
@@ -948,3 +951,52 @@ export function createFleetWireGuardManager(
     },
   };
 }
+
+export async function verifyFleetWireGuardAbsent(
+  options?: FleetWireGuardManagerOptions,
+  interfaceName = 'proxyfleet'
+): Promise<boolean> {
+  const isWindows = process.platform === 'win32';
+  const resolvedConfigDir =
+    options?.configDir ||
+    (isWindows
+      ? process.env.ProgramData
+        ? path.join(process.env.ProgramData, 'WireGuard')
+        : path.join(process.cwd(), 'data', 'wireguard')
+      : fs.existsSync('/etc/wireguard')
+        ? '/etc/wireguard'
+        : path.join(process.cwd(), 'data', 'wireguard'));
+
+  for (const filename of [`${interfaceName}.conf`, `${interfaceName}-owner.json`, `${interfaceName}.key`]) {
+    const candidate = path.join(resolvedConfigDir, filename);
+    if (fs.existsSync(candidate)) return false;
+  }
+
+  const exec = options?.commandExecutor || defaultCommandExecutor;
+  const binaries = detectBinaries();
+
+  if (isWindows) {
+    const scPath = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'sc.exe');
+    const serviceRes = await exec(scPath, ['query', `WireGuardTunnel$${interfaceName}`]);
+    if (serviceRes.code === 0) return false;
+    const serviceOutput = `${serviceRes.stdout}\n${serviceRes.stderr}`;
+    const serviceAbsent = serviceRes.code === 1060 || serviceOutput.includes("1060");
+    if (!serviceAbsent) {
+      throw new Error(`Windows WireGuard service query failed: ${serviceRes.stderr.trim() || serviceRes.stdout.trim() || `exit code ${serviceRes.code}`}`);
+    }
+  }
+
+  if (binaries.wgPath) {
+    const ifaceRes = await exec(binaries.wgPath, ['show', 'interfaces']);
+    if (ifaceRes.code === 0) {
+      const names = ifaceRes.stdout.trim().split(/\s+/).filter(Boolean);
+      if (names.includes(interfaceName)) return false;
+    } else if (!isWindows || ifaceRes.code !== 1) {
+      const diagnostic = ifaceRes.stderr.trim() || ifaceRes.stdout.trim() || `exit code ${ifaceRes.code}`;
+      throw new Error(`WireGuard interface inspection failed: ${diagnostic}`);
+    }
+  }
+
+  return true;
+}
+

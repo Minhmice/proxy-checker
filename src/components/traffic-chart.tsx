@@ -1,17 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { useMemo } from "react";
+import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { Activity, BarChart3 } from "lucide-react";
 import type { MetricsSnapshot } from "@/lib/types";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from "@/components/ui/chart";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Badge } from "@/components/ui/badge";
 
@@ -27,13 +26,14 @@ interface TrafficChartProps {
 }
 
 export function TrafficChart({ snapshots, hours, onHoursChange }: TrafficChartProps) {
-  const [, setActivePoint] = useState<number | null>(null);
-
   // ponytail: filter invalid dates/snapshots inline; add streaming windowing if multi-day data grows heavy
   const data = useMemo(
     () =>
       (snapshots || [])
-        .filter((s) => s && typeof s.active === "number" && !Number.isNaN(new Date(s.timestamp).getTime()))
+        .filter(
+          (s) =>
+            s && typeof s.active === "number" && !Number.isNaN(new Date(s.timestamp).getTime()),
+        )
         .map((s) => ({
           time: new Date(s.timestamp).toLocaleString(undefined, {
             month: "short",
@@ -45,7 +45,7 @@ export function TrafficChart({ snapshots, hours, onHoursChange }: TrafficChartPr
           reserve: s.reserve,
           latency: s.avgLatencyMs ?? 0,
         })),
-    [snapshots]
+    [snapshots],
   );
 
   const latestActive = data.length > 0 ? data[data.length - 1].active : null;
@@ -61,7 +61,10 @@ export function TrafficChart({ snapshots, hours, onHoursChange }: TrafficChartPr
               Pool Traffic & Capacity
             </CardTitle>
             {latestActive != null && data.length >= 2 && (
-              <Badge variant="outline" className="font-mono text-xs border-primary/30 text-primary bg-primary/5">
+              <Badge
+                variant="outline"
+                className="font-mono text-xs border-primary/30 text-primary bg-primary/5"
+              >
                 {latestActive} active (latest snapshot)
               </Badge>
             )}
@@ -78,13 +81,22 @@ export function TrafficChart({ snapshots, hours, onHoursChange }: TrafficChartPr
           className="bg-surface-raised/80 p-0.5 rounded-lg border border-border-subtle self-start sm:self-auto"
           aria-label="Metrics time range"
         >
-          <ToggleGroupItem value="24" className="text-xs px-2.5 py-1 h-7 data-[state=on]:bg-primary data-[state=on]:text-white data-[state=on]:font-medium">
+          <ToggleGroupItem
+            value="24"
+            className="text-xs px-2.5 py-1 h-7 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:font-medium"
+          >
             24 Hours
           </ToggleGroupItem>
-          <ToggleGroupItem value="168" className="text-xs px-2.5 py-1 h-7 data-[state=on]:bg-primary data-[state=on]:text-white data-[state=on]:font-medium">
+          <ToggleGroupItem
+            value="168"
+            className="text-xs px-2.5 py-1 h-7 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:font-medium"
+          >
             7 Days
           </ToggleGroupItem>
-          <ToggleGroupItem value="720" className="text-xs px-2.5 py-1 h-7 data-[state=on]:bg-primary data-[state=on]:text-white data-[state=on]:font-medium">
+          <ToggleGroupItem
+            value="720"
+            className="text-xs px-2.5 py-1 h-7 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:font-medium"
+          >
             30 Days
           </ToggleGroupItem>
         </ToggleGroup>
@@ -108,12 +120,10 @@ export function TrafficChart({ snapshots, hours, onHoursChange }: TrafficChartPr
             </p>
           </div>
         ) : (
-          <ChartContainer config={chartConfig} className="h-68 w-full">
+          <ChartContainer config={chartConfig} className="h-68 3xl:h-[400px] 5xl:h-[460px] w-full">
             <AreaChart
               accessibilityLayer
               data={data}
-              onMouseMove={(state) => setActivePoint(typeof state.activeTooltipIndex === "number" ? state.activeTooltipIndex : null)}
-              onMouseLeave={() => setActivePoint(null)}
               margin={{ top: 8, right: 8, left: -16, bottom: 0 }}
             >
               <defs>

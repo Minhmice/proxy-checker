@@ -1,12 +1,7 @@
 import Link from "next/link";
 import { LayoutDashboard, Network } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardFooter,
-  CardHeader,
-} from "@/components/ui/card";
+import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 
 interface StubPageProps {
   title: string;
@@ -35,7 +30,7 @@ export function StubPage({ title, description }: StubPageProps) {
               <span>Overview</span>
             </Link>
           </Button>
-          <Button asChild variant="default" className="min-h-[44px] flex-1">
+          <Button asChild variant="outline" className="min-h-[44px] flex-1">
             <Link href="/proxies" className="inline-flex items-center justify-center gap-2">
               <Network className="size-4" />
               <span>Proxies</span>

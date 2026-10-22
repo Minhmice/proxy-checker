@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "skills": {
+    "21st-ui": {
+      "source": "21st-dev/magic-mcp",
+      "sourceType": "github",
+      "skillPath": "skills/21st-ui/SKILL.md",
+      "computedHash": "c4d00010908d5144d483ae351005bdc73de4dea2d1e423e43c66a8a6aa9c4417"
+    },
+    "components-build": {
+      "source": "nolly-studio/cult-ui",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/components-build/SKILL.md",
+      "computedHash": "d3b576306fedc20455b0f2120d35215f150d911858907060183dd3964654b623"
+    },
+    "fixing-motion-performance": {
+      "source": "nolly-studio/cult-ui",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/fixing-motion-performance/SKILL.md",
+      "computedHash": "ea5c90830d2b3ff29dfa6199932b89b27028ee5404cb735ddd779bac7a1c3101"
+    },
+    "frontend-design": {
+      "source": "nolly-studio/cult-ui",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/frontend-design/SKILL.md",
+      "computedHash": "b664aede5a485650af808199ad1b3edfe4ac0f3ad53236d7095c39db6ced13fe"
+    },
+    "magic-ui": {
+      "source": "magicuidesign/magicui",
+      "sourceType": "github",
+      "skillPath": "skills/magic-ui/SKILL.md",
+      "computedHash": "751895d50c76490c6f92a68cdbe61100bd96b4963d1e91e37b5d82c8df0fc2d7"
+    }
+  }
+}

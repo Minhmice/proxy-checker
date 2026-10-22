@@ -11,7 +11,10 @@ export async function auditManagedFleetEndpoints(repo: FleetRepository, intellig
   for (let offset = 0; offset < endpoints.length; offset += 4) {
     await Promise.all(endpoints.slice(offset, offset + 4).map(async endpoint => {
       const node = await repo.getNode(endpoint.node_id);
-      if (!node || node.wireguard_ip !== endpoint.listen_ip || !net.isIPv4(endpoint.listen_ip)) return;
+      if (!node) return;
+      const validBindIp = (node.tailscale_ip && endpoint.listen_ip === node.tailscale_ip) || endpoint.listen_ip === node.wireguard_ip;
+      if (!validBindIp || !net.isIPv4(endpoint.listen_ip)) return;
+      if (node.tailscale_ip && node.proxy_activation === "disabled") return;
       const resolved = await resolveManagedEndpointForAudit(repo, endpoint.id);
       if (!resolved) return;
       const started = Date.now();
@@ -46,6 +49,14 @@ export async function auditManagedFleetEndpoints(repo: FleetRepository, intellig
         const parsed: unknown = JSON.parse(body);
         if (!parsed || typeof parsed !== "object" || !("ip" in parsed) || typeof parsed.ip !== "string" || !net.isIP(parsed.ip)) throw new Error("Managed proxy audit returned no valid exit IP");
         exitIp = parsed.ip;
+
+        // If node has an expected public IP, verify exit matches expected
+        if (node.expected_public_ip && exitIp !== node.expected_public_ip) {
+          throw new Error(`Exit IP ${exitIp} does not match expected public IP ${node.expected_public_ip}`);
+        }
+        if (node.public_ip && exitIp !== node.public_ip) {
+          throw new Error(`Exit IP ${exitIp} does not match verified worker public IP ${node.public_ip}`);
+        }
       } catch (error) {
         errorMessage = error instanceof Error ? error.message.slice(0, 256) : "Managed proxy audit failed";
       }

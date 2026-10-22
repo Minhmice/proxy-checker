@@ -27,7 +27,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { formatFleetNodeStatus, formatFleetNodeRole, formatHeartbeatStatus, formatPlatform, formatRelativeTime } from "@/lib/fleet-ui-utils";
+import { formatFleetNodeStatus, formatFleetNodeRole, formatHeartbeatStatus, formatPlatform, formatRelativeTime, formatPublicIpStatus, formatProxyActivation } from "@/lib/fleet-ui-utils";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -403,7 +403,7 @@ export default function NodesPage() {
                       >
                         <TableRow className="group cursor-context-menu border-b border-border/30 transition-colors duration-150 hover:bg-surface-raised/40">
                           <TableCell className="py-3.5 pl-4">
-                            <div className="flex flex-col gap-1 min-w-0 max-w-[180px] sm:max-w-[240px]">
+                            <div className="flex flex-col gap-1 min-w-0 max-w-[180px] sm:max-w-[240px] 3xl:max-w-md 5xl:max-w-xl">
                               <Link
                                 href={`/nodes/${node.id}`}
                                 className="font-semibold text-sm text-foreground hover:text-primary transition-colors truncate"
@@ -415,7 +415,7 @@ export default function NodesPage() {
                                 <Badge variant={roleInfo.badgeVariant} className="text-[10px] font-mono px-1.5 py-0 h-4 border-border/50 shrink-0">
                                   {roleInfo.label}
                                 </Badge>
-                                <span className="text-[10px] font-mono text-muted-foreground/60 truncate max-w-[120px]" title={node.id}>
+                                <span className="text-[10px] font-mono text-muted-foreground/60 truncate max-w-[120px] 3xl:max-w-xs" title={node.id}>
                                   {node.id}
                                 </span>
                               </div>
@@ -444,11 +444,19 @@ export default function NodesPage() {
                           </TableCell>
                           <TableCell className="py-3.5">
                             <div className="flex flex-col text-xs font-mono leading-tight">
-                              <span className="text-foreground tracking-tight">{node.wireguard_ip}</span>
-                              {node.public_ip ? (
-                                <span className="text-[11px] text-muted-foreground mt-0.5">{node.public_ip}</span>
-                              ) : (
-                                <span className="text-[11px] text-muted-foreground/40 mt-0.5">no public IP</span>
+                              <span className="text-foreground tracking-tight">{node.tailscale_ip || node.wireguard_ip}</span>
+                              <div className="flex items-center gap-1.5 mt-0.5">
+                                <span className="text-[11px] text-muted-foreground">{node.public_ip || "no public IP"}</span>
+                                {node.public_ip_status && node.public_ip_status !== "unknown" && (
+                                  <Badge variant="outline" className={`text-[9px] px-1 py-0 h-3.5 ${formatPublicIpStatus(node.public_ip_status).variant === "success" ? "text-emerald-400 border-emerald-500/40" : formatPublicIpStatus(node.public_ip_status).variant === "warning" ? "text-amber-400 border-amber-500/40" : "text-rose-400 border-rose-500/40"}`}>
+                                    {formatPublicIpStatus(node.public_ip_status).label}
+                                  </Badge>
+                                )}
+                              </div>
+                              {node.proxy_activation && (
+                                <span className={`text-[10px] mt-0.5 ${node.proxy_activation === "enabled" ? "text-emerald-400/80" : "text-amber-400/80"}`}>
+                                  {formatProxyActivation(node.proxy_activation).label}
+                                </span>
                               )}
                             </div>
                           </TableCell>

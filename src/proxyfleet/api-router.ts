@@ -5,12 +5,14 @@ import { createEnrollmentService, type EnrollmentService } from "./enrollment.js
 import type { FleetNodeStatus, FleetProxyProtocol, NodeRemovalService } from "./types.js";
 import { readSession } from "../server/session-auth.js";
 import { generateRandomToken } from "./security.js";
-
+import { inspectSshHostKey } from "./tailscale-ssh.js";
+import { createProvisioningService, type ProvisioningService } from "./provisioning.js";
 export interface FleetApiHandlerOptions {
   repo: FleetRepository;
   verifyAuth: (candidate: string) => boolean;
   nodeRemovalService?: NodeRemovalService;
   enrollmentService?: EnrollmentService;
+  provisioningService?: ProvisioningService;
   enrollmentOptions?: {
     serverWireguardPublicKey?: string;
     serverWireguardEndpoint?: string;
@@ -84,6 +86,8 @@ function readBody(req: IncomingMessage, maxBytes = 1_000_000): Promise<Record<st
 
 export function createFleetApiHandler(options: FleetApiHandlerOptions) {
   const { repo, verifyAuth, nodeRemovalService } = options;
+  const provisioningService =
+    options.provisioningService || createProvisioningService({ repo });
   const enrollmentService =
     options.enrollmentService || createEnrollmentService(repo, options.enrollmentOptions);
   async function authenticateAgent(req: IncomingMessage, res: ServerResponse, nodeId: string): Promise<boolean> {
@@ -262,6 +266,102 @@ export function createFleetApiHandler(options: FleetApiHandlerOptions) {
         const ttlMinutes = typeof body.ttlMinutes === "number" ? body.ttlMinutes : undefined;
         const result = await enrollmentService.issueToken({ nodeName, ttlMinutes });
         sendJson(res, 201, result);
+      } catch (err) {
+        sendJson(res, 400, { error: (err as Error).message });
+      }
+      return true;
+    }
+
+    if (req.method === "POST" && pathname === "/api/fleet/ssh/host-key") {
+      try {
+        const body = await readBody(req);
+        const host = String(body.host || "").trim();
+        const port = Number(body.port || 22);
+        if (!host) {
+          sendJson(res, 400, { error: "host is required" });
+          return true;
+        }
+        const keyInfo = await inspectSshHostKey({ host, port });
+        sendJson(res, 200, keyInfo);
+      } catch (err) {
+        sendJson(res, 400, { error: (err as Error).message });
+      }
+      return true;
+    }
+
+    if (req.method === "POST" && pathname === "/api/fleet/nodes/provision") {
+      try {
+        const body = await readBody(req);
+        const tailscaleIp = String(body.tailscaleIp || "").trim();
+        const username = String(body.username || "").trim();
+        const password = String(body.password || "");
+        const hostKeyFingerprint = String(body.hostKeyFingerprint || "").trim();
+        const controllerUrl = String(body.controllerUrl || "").trim();
+        const name = body.name ? String(body.name).trim() : undefined;
+        const expectedPublicIp = body.expectedPublicIp ? String(body.expectedPublicIp).trim() : undefined;
+        const sshPort = typeof body.sshPort === "number" ? body.sshPort : undefined;
+
+        if (!tailscaleIp || !username || !password || !hostKeyFingerprint || !controllerUrl) {
+          sendJson(res, 400, { error: "tailscaleIp, username, password, hostKeyFingerprint, and controllerUrl are required" });
+          return true;
+        }
+
+        const result = await provisioningService.provision({
+          name,
+          tailscaleIp,
+          username,
+          password,
+          hostKeyFingerprint,
+          expectedPublicIp,
+          sshPort,
+          controllerUrl,
+        });
+
+        sendJson(res, 202, { nodeId: result.nodeId, status: "provisioning" });
+      } catch (err) {
+        sendJson(res, 400, { error: (err as Error).message });
+      }
+      return true;
+    }
+
+    if (req.method === "POST" && /^\/api\/fleet\/nodes\/[^/]+\/provision\/retry$/.test(pathname)) {
+      try {
+        const parts = pathname.split("/");
+        const nodeId = decodeURIComponent(parts[4]);
+        const body = await readBody(req);
+        const controllerUrl = String(body.controllerUrl || "").trim();
+        if (!controllerUrl) {
+          sendJson(res, 400, { error: "controllerUrl is required" });
+          return true;
+        }
+        await provisioningService.retry(nodeId, controllerUrl);
+        sendJson(res, 202, { nodeId, status: "retrying" });
+      } catch (err) {
+        sendJson(res, 400, { error: (err as Error).message });
+      }
+      return true;
+    }
+
+    if (req.method === "POST" && /^\/api\/fleet\/nodes\/[^/]+\/verify-and-activate$/.test(pathname)) {
+      try {
+        const parts = pathname.split("/");
+        const nodeId = decodeURIComponent(parts[4]);
+        const node = await provisioningService.verifyAndActivate(nodeId);
+        sendJson(res, 200, { node });
+      } catch (err) {
+        sendJson(res, 400, { error: (err as Error).message });
+      }
+      return true;
+    }
+
+    if (req.method === "POST" && /^\/api\/fleet\/nodes\/[^/]+\/disable$/.test(pathname)) {
+      try {
+        const parts = pathname.split("/");
+        const nodeId = decodeURIComponent(parts[4]);
+        const body = await readBody(req);
+        const reason = body.reason ? String(body.reason) : undefined;
+        const node = await provisioningService.disable(nodeId, reason);
+        sendJson(res, 200, { node });
       } catch (err) {
         sendJson(res, 400, { error: (err as Error).message });
       }

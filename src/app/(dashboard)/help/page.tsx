@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { CodeBlock } from "@/components/ui/code-block";
 
 export default function HelpPage() {
   return (
-    <main className="max-w-4xl mx-auto space-y-8 p-4 sm:p-6 text-foreground">
+    <main className="max-w-4xl 3xl:max-w-5xl 5xl:max-w-6xl mx-auto space-y-8 p-4 sm:p-6 text-foreground">
       <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border pb-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Help & Operations Reference</h1>
@@ -20,6 +21,9 @@ export default function HelpPage() {
           </Button>
           <Button asChild variant="outline" size="sm" className="min-h-[44px]">
             <Link href="/settings">Settings</Link>
+          </Button>
+          <Button asChild variant="secondary" size="sm" className="min-h-[44px]">
+            <Link href="/help/components">UI Components</Link>
           </Button>
         </nav>
       </header>
@@ -145,14 +149,17 @@ export default function HelpPage() {
             The controller host is registered as an inventory node in <Link href="/nodes" className="text-primary underline">/nodes</Link>.
             Configuration changes advance <code className="font-mono">desired_revision</code>; if deployment fails, agent rolls back to <code className="font-mono">/etc/3proxy/3proxy.cfg.bak</code>.
           </p>
-          <div className="rounded-md border border-border bg-black/60 p-3 font-mono text-xs space-y-1 text-emerald-400 overflow-x-auto">
-            <div className="text-muted-foreground"># Status and logs</div>
-            <div>systemctl status proxyfleet-agent</div>
-            <div>journalctl -u proxyfleet-agent -f</div>
-            <div className="text-muted-foreground pt-1"># Service restarts</div>
-            <div>sudo systemctl restart proxyfleet-agent</div>
-            <div>sudo systemctl restart 3proxy</div>
-          </div>
+          <CodeBlock
+            title="systemd service runbook"
+            language="bash"
+            code={`# Status and logs
+systemctl status proxyfleet-agent
+journalctl -u proxyfleet-agent -f
+
+# Service restarts
+sudo systemctl restart proxyfleet-agent
+sudo systemctl restart 3proxy`}
+          />
         </div>
       </section>
     </main>

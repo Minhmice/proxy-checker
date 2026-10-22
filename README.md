@@ -25,6 +25,52 @@ After the first run, open **Settings** in the dashboard to change 9Router creden
 
 On first install, copy `.env.example` to `.env` to bootstrap — settings are then seeded into `data/settings.json` automatically.
 
+## Tooling & Architecture Operations
+
+The application uses an integrated modern toolchain:
+- **API Server:** [Hono](https://hono.dev) mounted inside the native Node.js HTTP server; Next.js handles pages, assets, and webpack-HMR.
+- **Database:** [Drizzle ORM](https://orm.drizzle.team) with `better-sqlite3` over domain SQLite databases (`data/proxies.sqlite3`, `data/fleet.sqlite3`, `data/antigravity-rotation.sqlite3`).
+- **Linter & Formatter:** [Biome v2](https://biomejs.dev) as the single code quality tool.
+- **API Mocking:** [MSW v3](https://mswjs.io) with strict separation: opt-in development browser worker (`NEXT_PUBLIC_ENABLE_API_MOCKS=true`) and Node test suite interception. Never activated in production builds.
+- **Accessibility:** [Axe-core](https://www.deque.com/axe/) via Playwright scanning all 14 dashboard routes against WCAG 2.0 / 2.1 A and AA standards.
+
+### Verification and Operational Commands
+
+```sh
+# Typecheck
+npm run typecheck
+
+# Lint and format checks (Biome)
+npm run lint
+npm run format:check
+
+# Run full test suite (Node test runner)
+npm test
+
+# Build production bundle
+npm run build
+
+# Run MSW browser contract suite
+npm run test:msw-browser
+
+# Run authenticated accessibility audit across all dashboard routes
+npm run test:a11y
+
+# Backup SQLite databases safely before migrations (using VACUUM INTO and exclusive lease)
+npm run db:preflight -- <data-dir> <backup-dir>
+
+# Verify database schema and table row digests
+npm run db:verify -- <before-dir> <after-dir>
+```
+
+### Rollback Procedure
+
+If a failure is encountered after deploying a database migration:
+1. Stop the application server process immediately.
+2. Preserve the current database files in `data/` for post-mortem diagnostics.
+3. Restore the preflight backup copies created via `npm run db:preflight`.
+4. Redeploy the prior known-good Git commit.
+5. Re-run `npm test` and `npm run test:a11y` to verify system health.
 ## Run without Docker
 
 1. Copy `.env.example` to `.env` and set at minimum:

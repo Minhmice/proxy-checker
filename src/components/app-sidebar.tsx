@@ -55,7 +55,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild className="hover:bg-sidebar-accent/70 transition-colors">
               <Link href="/" className="flex items-center gap-3">
-                <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-primary via-primary to-primary/80 text-primary-foreground font-bold text-xs shadow-xs ring-1 ring-primary/30">
+                <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-accent-violet text-primary-foreground font-extrabold text-xs shadow-[0_0_16px_oklch(0.78_0.17_205/0.45)] ring-1 ring-primary/50">
                   mP
                 </div>
                 <div className="grid flex-1 text-left text-sm leading-tight min-w-0">
@@ -87,13 +87,13 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
                       asChild
                       isActive={isActive}
                       tooltip={item.label}
-                      className="transition-all font-medium h-9 text-xs rounded-md data-[active=true]:font-semibold data-[active=true]:bg-primary/10 data-[active=true]:text-primary"
+                      className="transition-all font-medium h-9 text-xs rounded-md data-[active=true]:font-semibold data-[active=true]:bg-primary/15 data-[active=true]:text-primary data-[active=true]:border data-[active=true]:border-primary/40 data-[active=true]:shadow-[0_0_15px_-3px_oklch(0.78_0.17_205/0.25)]"
                     >
                       <Link href={item.href} className="flex items-center gap-2.5 w-full">
                         <Icon className="size-4 shrink-0" />
                         <span className="truncate flex-1">{item.label}</span>
                         {isActive && (
-                          <span className="size-1.5 rounded-full bg-primary shrink-0 group-data-[collapsible=icon]:hidden shadow-[0_0_6px_var(--primary)]" />
+                          <span className="size-1.5 rounded-full bg-primary shrink-0 group-data-[collapsible=icon]:hidden shadow-[0_0_8px_var(--primary)] animate-pulse" />
                         )}
                       </Link>
                     </SidebarMenuButton>
@@ -121,13 +121,13 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
                       asChild
                       isActive={isActive}
                       tooltip={item.label}
-                      className="transition-all font-medium h-9 text-xs rounded-md data-[active=true]:font-semibold data-[active=true]:bg-primary/10 data-[active=true]:text-primary"
+                      className="transition-all font-medium h-9 text-xs rounded-md data-[active=true]:font-semibold data-[active=true]:bg-primary/15 data-[active=true]:text-primary data-[active=true]:border data-[active=true]:border-primary/40 data-[active=true]:shadow-[0_0_15px_-3px_oklch(0.78_0.17_205/0.25)]"
                     >
                       <Link href={item.href} className="flex items-center gap-2.5 w-full">
                         <Icon className="size-4 shrink-0" />
                         <span className="truncate flex-1">{item.label}</span>
                         {isActive && (
-                          <span className="size-1.5 rounded-full bg-primary shrink-0 group-data-[collapsible=icon]:hidden shadow-[0_0_6px_var(--primary)]" />
+                          <span className="size-1.5 rounded-full bg-primary shrink-0 group-data-[collapsible=icon]:hidden shadow-[0_0_8px_var(--primary)] animate-pulse" />
                         )}
                       </Link>
                     </SidebarMenuButton>
@@ -150,13 +150,13 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
                   asChild
                   isActive={pathname.startsWith("/settings")}
                   tooltip="Settings"
-                  className="transition-all font-medium h-9 text-xs rounded-md data-[active=true]:font-semibold data-[active=true]:bg-primary/10 data-[active=true]:text-primary"
+                  className="transition-all font-medium h-9 text-xs rounded-md data-[active=true]:font-semibold data-[active=true]:bg-primary/15 data-[active=true]:text-primary data-[active=true]:border data-[active=true]:border-primary/40 data-[active=true]:shadow-[0_0_15px_-3px_oklch(0.78_0.17_205/0.25)]"
                 >
                   <Link href="/settings" className="flex items-center gap-2.5 w-full">
                     <Settings className="size-4 shrink-0" />
                     <span className="truncate flex-1">Settings</span>
                     {pathname.startsWith("/settings") && (
-                      <span className="size-1.5 rounded-full bg-primary shrink-0 group-data-[collapsible=icon]:hidden shadow-[0_0_6px_var(--primary)]" />
+                      <span className="size-1.5 rounded-full bg-primary shrink-0 group-data-[collapsible=icon]:hidden shadow-[0_0_8px_var(--primary)] animate-pulse" />
                     )}
                   </Link>
                 </SidebarMenuButton>

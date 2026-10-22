@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import Database from 'better-sqlite3';
 import '../src/server/load-env.js';
 import { testPool } from '../src/server/nine-router-client.js';
 
@@ -196,13 +196,12 @@ async function main() {
   let db = null;
   if (fs.existsSync(DB_PATH)) {
     try {
-      db = new DatabaseSync(DB_PATH);
+      db = new Database(DB_PATH, { readonly: true });
       const rows = db.prepare(`
         SELECT proxy_key, endpoint, protocol, host, port, username, password, remote_id, status 
         FROM proxies 
         WHERE source = '9router-working' OR remote_id IS NOT NULL OR status = 'usable'
       `).all();
-
       for (const r of rows) {
         let url = r.proxy_key;
         if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('socks5://') && !url.startsWith('socks4://')) {
@@ -223,6 +222,8 @@ async function main() {
       }
     } catch (e) {
       console.warn('Cảnh báo đọc sqlite:', e.message);
+    } finally {
+      if (db) db.close();
     }
   }
 
