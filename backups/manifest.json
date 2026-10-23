@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "timestamp": "2026-10-23T14:13:52.532Z",
+  "timestamp": "2026-10-23T14:43:55.259Z",
   "sourceDataDir": "C:\\Users\\minhmice\\Documents\\projects\\proxy-checker\\data",
   "files": [
     {
@@ -10,28 +10,28 @@
     },
     {
       "name": "databases/proxies.sqlite3",
-      "size": 159744,
-      "sha256": "c2700e94a5ff8d7461e2573ac947efe7dc50e008cd998b5d29790a6ca9adaf75"
+      "size": 163840,
+      "sha256": "e2c9c57a06954b3623c1f05a10e306305fd8b9dc015d6b5985ad051e5d9bb67c"
     },
     {
       "name": "databases/fleet.sqlite3",
-      "size": 679936,
-      "sha256": "e04b964c90ec232cf3532b1c6b3f02be6a115cee25dd9f6a8ecf5cdfa5cd2ea7"
+      "size": 692224,
+      "sha256": "dfbfa5bdd5bef3072b4b71a4b29225a068af5a94a6a4d8ef492940ec0d156e64"
     },
     {
       "name": "databases/antigravity-rotation.sqlite3",
       "size": 16384,
-      "sha256": "bbff63150d1de9034c646ba3712ba6e655618c8100f512fd36354cd4cd0a9a58"
+      "sha256": "e5006b310b3ed21f904d0bb911cb350f37db3ade83e5ea4df24bb1b1ee097684"
     },
     {
       "name": "antigravity-rotator.json",
-      "size": 8146,
-      "sha256": "14a187d9e1a120079a6179ed5a8087e8a22ad87461478c1f24c7f8714cce590d"
+      "size": 8985,
+      "sha256": "3bfd642c8eec31739c20c031d060463017544b35ef57cdd1c0c8e0a445727f6c"
     },
     {
       "name": "pool-state.json",
-      "size": 99203,
-      "sha256": "4c1d5a799a2661086e54b2ae5338703a0b7e15604bccc041e0dddf7aa8f5e9bc"
+      "size": 99556,
+      "sha256": "e59ac3c918e40aaebca3831b8da64707b696f86651b3f98c93699750c9568e02"
     }
   ]
 }
