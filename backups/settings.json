@@ -1,17 +1,1 @@
-{
-  "controlPassword": "minh2908",
-  "nineRouterUrl": "http://192.168.1.54:20128",
-  "nineRouterPassword": "minh2908",
-  "nineRouterApiKey": "",
-  "nineRouterAutoSync": true,
-  "activePoolLimit": 20,
-  "nineRouterSyncMinutes": 720,
-  "checkConcurrency": 5,
-  "checkTimeoutMs": 6000,
-  "proxyTtlMinutes": 15,
-  "antigravityRotatorEnabled": true,
-  "antigravityActiveLimit": 5,
-  "antigravityRotateMinutes": 10,
-  "antigravitySessionThreshold": 20,
-  "fleetWireguard": null
-}
+{"controlPassword":"test-pass-1792897011725-rry44e2qxzi","nineRouterUrl":"http://127.0.0.1:9","nineRouterPassword":"","nineRouterApiKey":"","nineRouterAutoSync":false,"antigravityRotatorEnabled":false,"activePoolLimit":10,"nineRouterSyncMinutes":60,"checkConcurrency":5,"checkTimeoutMs":5000,"proxyTtlMinutes":15,"antigravityActiveLimit":1,"antigravityRotateMinutes":60,"antigravitySessionThreshold":20}
