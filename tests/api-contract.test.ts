@@ -64,7 +64,10 @@ test("syncPools sends POST with authentication headers and returns 202", async (
   const result = await syncPools("secret");
   assert.equal(request.url, "/api/ninerouter/sync");
   assert.equal(request.init.method, "POST");
-  assert.equal((request.init.headers as Record<string, string>)["Authorization"], `Basic ${btoa("admin:secret")}`);
+  assert.equal(
+    (request.init.headers as Record<string, string>)["Authorization"],
+    `Basic ${btoa("admin:secret")}`,
+  );
   assert.deepEqual(result, { started: true });
 });
 
@@ -92,8 +95,14 @@ test("diagnostics sends exactly the selected scope", async () => {
 test("downloadProxyExport sends GET with auth headers and query params", async () => {
   const request = recordFetch("http://user:pass@1.1.1.1:8080");
   const result = await downloadProxyExport("secret", "txt", true);
-  assert.equal(request.url, "/api/settings/proxy-export?format=txt&includeCredentials=true&confirmCredentials=yes");
-  assert.equal((request.init.headers as Record<string, string>)["Authorization"], `Basic ${btoa("admin:secret")}`);
+  assert.equal(
+    request.url,
+    "/api/settings/proxy-export?format=txt&includeCredentials=true&confirmCredentials=yes",
+  );
+  assert.equal(
+    (request.init.headers as Record<string, string>)["Authorization"],
+    `Basic ${btoa("admin:secret")}`,
+  );
   assert.ok(result.blob);
 });
 

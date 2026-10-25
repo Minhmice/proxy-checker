@@ -41,14 +41,20 @@ test("evaluatePublicIp returns lookup_failed when observation is missing or inva
     status: "lookup_failed",
     reason: "Public IP lookup returned no result",
   });
-  assert.deepEqual(evaluatePublicIp({ observed: "invalid-ip", expected: null, activePeerIps: [] }), {
-    status: "lookup_failed",
-    reason: "Observed public IP is not valid global unicast IPv4",
-  });
-  assert.deepEqual(evaluatePublicIp({ observed: "192.168.1.1", expected: null, activePeerIps: [] }), {
-    status: "lookup_failed",
-    reason: "Observed public IP is not valid global unicast IPv4",
-  });
+  assert.deepEqual(
+    evaluatePublicIp({ observed: "invalid-ip", expected: null, activePeerIps: [] }),
+    {
+      status: "lookup_failed",
+      reason: "Observed public IP is not valid global unicast IPv4",
+    },
+  );
+  assert.deepEqual(
+    evaluatePublicIp({ observed: "192.168.1.1", expected: null, activePeerIps: [] }),
+    {
+      status: "lookup_failed",
+      reason: "Observed public IP is not valid global unicast IPv4",
+    },
+  );
 });
 
 test("evaluatePublicIp prioritizes expected_mismatch over duplicate", () => {

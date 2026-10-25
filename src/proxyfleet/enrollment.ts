@@ -42,20 +42,21 @@ export function createEnrollmentService(
   options: {
     serverWireguardPublicKey?: string;
     serverWireguardEndpoint?: string;
-  } = {}
+  } = {},
 ): EnrollmentService {
   const serverWireguardPublicKey =
-    options.serverWireguardPublicKey ||
-    process.env.WIREGUARD_SERVER_PUBLIC_KEY;
+    options.serverWireguardPublicKey || process.env.WIREGUARD_SERVER_PUBLIC_KEY;
 
   const serverWireguardEndpoint =
-    options.serverWireguardEndpoint ||
-    process.env.WIREGUARD_SERVER_ENDPOINT;
+    options.serverWireguardEndpoint || process.env.WIREGUARD_SERVER_ENDPOINT;
   return {
     async issueToken(input: IssueTokenInput): Promise<IssueTokenResult> {
       if (input.assignedIp) {
         const parts = input.assignedIp.split(".");
-        const octet = parts.length === 4 && parts[0] === "10" && parts[1] === "77" && parts[2] === "0" ? Number(parts[3]) : NaN;
+        const octet =
+          parts.length === 4 && parts[0] === "10" && parts[1] === "77" && parts[2] === "0"
+            ? Number(parts[3])
+            : NaN;
         if (!Number.isInteger(octet) || octet < 11 || octet > 254) {
           throw new Error("Invalid assignedIp: must be within 10.77.0.11-10.77.0.254");
         }
@@ -89,7 +90,7 @@ export function createEnrollmentService(
         !serverWireguardEndpoint.includes(":")
       ) {
         throw new Error(
-          "WireGuard server configuration missing or invalid: serverWireguardPublicKey (32-byte base64) and serverWireguardEndpoint (host:port) must be configured before enrolling nodes"
+          "WireGuard server configuration missing or invalid: serverWireguardPublicKey (32-byte base64) and serverWireguardEndpoint (host:port) must be configured before enrolling nodes",
         );
       }
 

@@ -4,7 +4,10 @@ export function endpoint(host: string, port: number): string {
   return `${host.includes(":") ? `[${host}]` : host}:${port}`;
 }
 
-export function parseProxy(token: string, defaultProtocol: ProxyProtocol = "http"): ParsedProxy | null {
+export function parseProxy(
+  token: string,
+  defaultProtocol: ProxyProtocol = "http",
+): ParsedProxy | null {
   try {
     const source = token.trim().replace(/^[,;"']+|[,;"']+$/g, "");
     if (!source) return null;

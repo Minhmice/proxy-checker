@@ -21,13 +21,20 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatBytes, formatRelativeTime } from "@/lib/fleet-ui-utils";
 import type { FleetNodeRecord, FleetNodeConfigurationView } from "@/proxyfleet/types";
-import type { FleetDeviceInfo, FleetRuntimeSnapshot, FleetCapacitySettings } from "@/proxyfleet/runtime";
+import type {
+  FleetDeviceInfo,
+  FleetRuntimeSnapshot,
+  FleetCapacitySettings,
+} from "@/proxyfleet/runtime";
 
 function formatRate(bytesPerSec: number | null | undefined): string {
   if (bytesPerSec == null) return "—";
   if (bytesPerSec <= 0) return "0 B/s";
   const units = ["B/s", "KB/s", "MB/s", "GB/s"];
-  const i = Math.max(0, Math.min(units.length - 1, Math.floor(Math.log(bytesPerSec) / Math.log(1024))));
+  const i = Math.max(
+    0,
+    Math.min(units.length - 1, Math.floor(Math.log(bytesPerSec) / Math.log(1024))),
+  );
   const val = (bytesPerSec / Math.pow(1024, i)).toFixed(1);
   return `${val} ${units[i]}`;
 }
@@ -61,7 +68,7 @@ export function NodeRuntimeCard({
   onRefresh,
   loading = false,
 }: NodeRuntimeCardProps) {
-  const isStale = runtimeReceivedAt ? (Date.now() - runtimeReceivedAt > 60_000) : false;
+  const isStale = runtimeReceivedAt ? Date.now() - runtimeReceivedAt > 60_000 : false;
 
   // Status axis 1: Agent liveness
   const agentStatus = node.status;
@@ -72,10 +79,7 @@ export function NodeRuntimeCard({
   // Status axis 4: Proxy listener health
   const proxyState = runtime?.proxy?.state ?? "unknown";
 
-  const cpuDisplay =
-    runtime?.cpuPercent == null
-      ? "—"
-      : `${runtime.cpuPercent.toFixed(1)}%`;
+  const cpuDisplay = runtime?.cpuPercent == null ? "—" : `${runtime.cpuPercent.toFixed(1)}%`;
 
   const memoryDisplay = useMemo(() => {
     if (!runtime) return { available: "—", total: "—", percent: null };
@@ -84,7 +88,10 @@ export function NodeRuntimeCard({
     if (avail == null && total == null) return { available: "—", total: "—", percent: null };
     const availStr = avail != null ? formatBytes(avail) : "—";
     const totalStr = total != null ? formatBytes(total) : "—";
-    const pct = total != null && total > 0 && avail != null ? Math.max(0, Math.min(100, Math.round(((total - avail) / total) * 100))) : null;
+    const pct =
+      total != null && total > 0 && avail != null
+        ? Math.max(0, Math.min(100, Math.round(((total - avail) / total) * 100)))
+        : null;
     return { available: availStr, total: totalStr, percent: pct };
   }, [runtime, device]);
 
@@ -97,9 +104,13 @@ export function NodeRuntimeCard({
               <Activity className="size-4 text-primary" />
               Runtime & Observability
               {isStale && (
-                <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-300 gap-1 text-[11px] font-normal">
+                <Badge
+                  variant="outline"
+                  className="border-amber-500/40 bg-amber-500/10 text-amber-300 gap-1 text-[11px] font-normal"
+                >
                   <AlertTriangle className="size-3" />
-                  Stale telemetry ({runtimeReceivedAt ? formatRelativeTime(runtimeReceivedAt) : ">60s"})
+                  Stale telemetry (
+                  {runtimeReceivedAt ? formatRelativeTime(runtimeReceivedAt) : ">60s"})
                 </Badge>
               )}
             </CardTitle>
@@ -136,11 +147,13 @@ export function NodeRuntimeCard({
                   agentStatus === "online"
                     ? "bg-emerald-400 ring-2 ring-emerald-500/20"
                     : agentStatus === "degraded"
-                    ? "bg-amber-400 ring-2 ring-amber-500/20"
-                    : "bg-rose-400 ring-2 ring-rose-500/20"
+                      ? "bg-amber-400 ring-2 ring-amber-500/20"
+                      : "bg-rose-400 ring-2 ring-rose-500/20"
                 }`}
               />
-              <span className="text-xs font-semibold capitalize text-foreground">{agentStatus}</span>
+              <span className="text-xs font-semibold capitalize text-foreground">
+                {agentStatus}
+              </span>
             </div>
             <div className="text-[10px] text-muted-foreground truncate">
               Heartbeat: {formatRelativeTime(node.last_heartbeat_at ?? 0)}
@@ -158,10 +171,10 @@ export function NodeRuntimeCard({
                   config?.status === "applied"
                     ? "bg-emerald-400 ring-2 ring-emerald-500/20"
                     : config?.status === "pending"
-                    ? "bg-amber-400 ring-2 ring-amber-500/20"
-                    : config?.status === "failed"
-                    ? "bg-rose-400 ring-2 ring-rose-500/20"
-                    : "bg-muted-foreground"
+                      ? "bg-amber-400 ring-2 ring-amber-500/20"
+                      : config?.status === "failed"
+                        ? "bg-rose-400 ring-2 ring-rose-500/20"
+                        : "bg-muted-foreground"
                 }`}
               />
               <span className="text-xs font-semibold capitalize text-foreground">
@@ -169,7 +182,8 @@ export function NodeRuntimeCard({
               </span>
             </div>
             <div className="text-[10px] text-muted-foreground truncate font-mono">
-              Rev {config?.appliedRevision ?? node.applied_revision ?? "—"}/{config?.desiredRevision ?? node.desired_revision}
+              Rev {config?.appliedRevision ?? node.applied_revision ?? "—"}/
+              {config?.desiredRevision ?? node.desired_revision}
             </div>
           </div>
 
@@ -184,8 +198,8 @@ export function NodeRuntimeCard({
                   overlayState === "healthy"
                     ? "bg-emerald-400 ring-2 ring-emerald-500/20"
                     : overlayState === "unhealthy"
-                    ? "bg-rose-400 ring-2 ring-rose-500/20"
-                    : "bg-muted-foreground"
+                      ? "bg-rose-400 ring-2 ring-rose-500/20"
+                      : "bg-muted-foreground"
                 }`}
               />
               <span className="text-xs font-semibold capitalize text-foreground">
@@ -209,7 +223,9 @@ export function NodeRuntimeCard({
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className="size-2 rounded-full bg-muted-foreground" />
-                    <span className="text-xs font-semibold capitalize text-foreground">Unknown</span>
+                    <span className="text-xs font-semibold capitalize text-foreground">
+                      Unknown
+                    </span>
                   </div>
                   <div className="text-[10px] text-muted-foreground truncate font-mono">
                     Listeners: Unknown
@@ -229,15 +245,13 @@ export function NodeRuntimeCard({
               proxyState === "stopped"
                 ? "bg-rose-400 ring-2 ring-rose-500/20"
                 : isMismatch
-                ? "bg-amber-400 ring-2 ring-amber-500/20"
-                : proxyState === "running"
-                ? "bg-emerald-400 ring-2 ring-emerald-500/20"
-                : "bg-muted-foreground";
+                  ? "bg-amber-400 ring-2 ring-amber-500/20"
+                  : proxyState === "running"
+                    ? "bg-emerald-400 ring-2 ring-emerald-500/20"
+                    : "bg-muted-foreground";
 
             const statusLabel =
-              proxyState === "running" && isMismatch
-                ? "Running (Degraded)"
-                : proxyState;
+              proxyState === "running" && isMismatch ? "Running (Degraded)" : proxyState;
 
             return (
               <div className="rounded-md border border-border/50 bg-background/50 p-2.5 space-y-1">
@@ -252,9 +266,7 @@ export function NodeRuntimeCard({
                 </div>
                 <div className="text-[10px] text-muted-foreground truncate font-mono">
                   Listeners: {listening ?? "—"}/{enabled}
-                  {isMismatch && (
-                    <span className="text-amber-400 ml-1">(! mismatch)</span>
-                  )}
+                  {isMismatch && <span className="text-amber-400 ml-1">(! mismatch)</span>}
                 </div>
               </div>
             );
@@ -272,7 +284,9 @@ export function NodeRuntimeCard({
               {cpuDisplay}
             </div>
             <div className="text-[10px] text-muted-foreground truncate font-mono">
-              {runtime?.loadAverage1m != null ? `1m load: ${runtime.loadAverage1m.toFixed(2)}` : "No load avg"}
+              {runtime?.loadAverage1m != null
+                ? `1m load: ${runtime.loadAverage1m.toFixed(2)}`
+                : "No load avg"}
             </div>
           </div>
 
@@ -318,7 +332,8 @@ export function NodeRuntimeCard({
               Conns: {runtime?.proxy?.activeConnections ?? "—"}
             </div>
             <div className="text-[10px] text-muted-foreground truncate">
-              Cap: {capacity?.maxConnections ? `${capacity.maxConnections} maxconn` : "engine default"}
+              Cap:{" "}
+              {capacity?.maxConnections ? `${capacity.maxConnections} maxconn` : "engine default"}
             </div>
           </div>
         </div>
@@ -371,18 +386,22 @@ export function NodeRuntimeCard({
               <div>
                 <span className="text-muted-foreground">Hardware: </span>
                 <span className="text-foreground">
-                  {device.vendor ? `${device.vendor} ` : ""}{device.model || "Unknown model"}
+                  {device.vendor ? `${device.vendor} ` : ""}
+                  {device.model || "Unknown model"}
                 </span>
               </div>
               <div>
                 <span className="text-muted-foreground">CPU Model: </span>
                 <span className="text-foreground truncate" title={device.cpuModel ?? ""}>
-                  {device.cpuModel || "—"} {device.logicalCpus ? `(${device.logicalCpus} cores)` : ""}
+                  {device.cpuModel || "—"}{" "}
+                  {device.logicalCpus ? `(${device.logicalCpus} cores)` : ""}
                 </span>
               </div>
               <div>
                 <span className="text-muted-foreground">Virtualization: </span>
-                <span className="text-foreground capitalize">{device.virtualization || "unknown"}</span>
+                <span className="text-foreground capitalize">
+                  {device.virtualization || "unknown"}
+                </span>
               </div>
             </div>
           ) : (

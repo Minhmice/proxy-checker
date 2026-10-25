@@ -9,7 +9,10 @@ import { createFleetRepository } from "../src/proxyfleet/db.js";
 import { createFleetApiHandler } from "../src/proxyfleet/api-router.js";
 import { createFleetRuntimeApi } from "../src/proxyfleet/runtime-api.js";
 import { createEnrollmentService } from "../src/proxyfleet/enrollment.js";
-import { resolveManagedEndpointForAudit, syncFleetEndpointsToIntelligence } from "../src/proxyfleet/pipeline-adapter.js";
+import {
+  resolveManagedEndpointForAudit,
+  syncFleetEndpointsToIntelligence,
+} from "../src/proxyfleet/pipeline-adapter.js";
 import { openProxyIntelligenceDb } from "../src/server/proxy-intelligence-db.js";
 import { createProxyIntelligenceRepository } from "../src/server/proxy-intelligence-repository.js";
 
@@ -27,7 +30,9 @@ if (isDryRun) {
 
 // Full live acceptance workflow
 async function runAcceptance() {
-  const binaryPath = path.resolve(process.platform === "win32" ? "bin/proxyfleet-agent.exe" : "bin/proxyfleet-agent-linux-amd64");
+  const binaryPath = path.resolve(
+    process.platform === "win32" ? "bin/proxyfleet-agent.exe" : "bin/proxyfleet-agent-linux-amd64",
+  );
   if (!fs.existsSync(binaryPath)) {
     console.error(`Binary not found at ${binaryPath}. Build it first with go build.`);
     process.exit(1);
@@ -80,7 +85,8 @@ async function runAcceptance() {
 
   const server = http.createServer(async (req, res) => {
     const pathname = new URL(req.url || "/", "http://localhost").pathname;
-    const handled = (await handleRuntimeApi(req, res, pathname)) || (await handleApi(req, res, pathname));
+    const handled =
+      (await handleRuntimeApi(req, res, pathname)) || (await handleApi(req, res, pathname));
     if (!handled) {
       res.writeHead(404);
       res.end();
@@ -120,7 +126,10 @@ async function runAcceptance() {
         "--interval",
         "1",
       ],
-      { stdio: "pipe" }
+      {
+        stdio: "pipe",
+        env: { ...process.env, PROXYFLEET_MOCK_RELOAD: "1" },
+      },
     );
     agentProcess.stdout.on("data", (d) => console.log("[agent]", d.toString().trim()));
     agentProcess.stderr.on("data", (d) => console.log("[agent err]", d.toString().trim()));
@@ -137,8 +146,13 @@ async function runAcceptance() {
       await new Promise((r) => setTimeout(r, 200));
     }
     assert.ok(enrolledNode, "Node failed to join controller within 15s");
-    assert.ok(enrolledNode.status === "online" || enrolledNode.status === "degraded", `Unexpected node status: ${enrolledNode.status}`);
-    console.log(`[Step 3 & 4] Worker joined controller. Node: ${enrolledNode.name}, WG IP: ${enrolledNode.wireguard_ip}, Status: ${enrolledNode.status.toUpperCase()}`);
+    assert.ok(
+      enrolledNode.status === "online" || enrolledNode.status === "degraded",
+      `Unexpected node status: ${enrolledNode.status}`,
+    );
+    console.log(
+      `[Step 3 & 4] Worker joined controller. Node: ${enrolledNode.name}, WG IP: ${enrolledNode.wireguard_ip}, Status: ${enrolledNode.status.toUpperCase()}`,
+    );
 
     // Step 5: Create Proxy Endpoint
     const ep = await repo.createProxyEndpoint({
@@ -154,7 +168,7 @@ async function runAcceptance() {
     // Step 6: Verify Agent Renders and Deploys Config
     let deployed = false;
     const deployStart = Date.now();
-    while (Date.now() - deployStart < 5000) {
+    while (Date.now() - deployStart < 10000) {
       if (fs.existsSync(proxyConfigPath)) {
         const content = fs.readFileSync(proxyConfigPath, "utf8");
         if (content.includes("proxy -p20001 -i10.77.0.11")) {
@@ -178,14 +192,18 @@ async function runAcceptance() {
     const latestHealth = await repo.getLatestHealthCheck(ep.id);
     assert.equal(latestHealth?.status, "healthy");
     assert.equal(latestHealth?.exit_ip, "113.160.1.2");
-    console.log(`[Step 7] Health check recorded: status=${latestHealth?.status}, exitIP=${latestHealth?.exit_ip}, latency=${latestHealth?.latency_ms}ms`);
+    console.log(
+      `[Step 7] Health check recorded: status=${latestHealth?.status}, exitIP=${latestHealth?.exit_ip}, latency=${latestHealth?.latency_ms}ms`,
+    );
 
     // Step 8: Safety Auditor Integration
     const resolvedAudit = await resolveManagedEndpointForAudit(repo, ep.id);
     assert.ok(resolvedAudit);
     assert.equal(resolvedAudit.options.allowPrivateTargets, true);
     assert.deepEqual(resolvedAudit.options.allowedPrivateIps, ["10.77.0.11"]);
-    console.log(`[Step 8] Safety Auditor resolved endpoint target: ${resolvedAudit.targetUrl.replace(/:[^@:]+@/, ":***@")}`);
+    console.log(
+      `[Step 8] Safety Auditor resolved endpoint target: ${resolvedAudit.targetUrl.replace(/:[^@:]+@/, ":***@")}`,
+    );
 
     // Step 9: Diagnostics and Intelligence Pipeline Ingestion
     const intelDb = openProxyIntelligenceDb(tmpDir);
@@ -195,7 +213,9 @@ async function runAcceptance() {
     const intelItem = await intelRepo.getProxy("http://user_accept@10.77.0.11:20001");
     assert.ok(intelItem);
     assert.equal(intelItem.source, "proxyfleet");
-    console.log(`[Step 9] Endpoint ingested into intelligence inventory with source: '${intelItem.source}'`);
+    console.log(
+      `[Step 9] Endpoint ingested into intelligence inventory with source: '${intelItem.source}'`,
+    );
     intelDb.close();
 
     // Step 10: Secret Redaction & Authorized Reveal

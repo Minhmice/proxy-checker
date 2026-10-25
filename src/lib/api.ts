@@ -11,6 +11,13 @@ import type {
   UnifiedProxyHistoryEntry,
   ProxyAuditDetail,
   AntigravityRotatorSnapshot,
+  DualRouterStatusResponse,
+  DualRouterConflictResponse,
+  DualRouterAuditResponse,
+  DualRouterReconcileResponse,
+  DualRouterResolveConflictResponse,
+  DualRouterValue,
+  AggregatedTokenUsage,
 } from "./types";
 import { isAbortError } from "./request-lifecycle";
 export function jsonHeaders(customHeaders?: HeadersInit): HeadersInit {
@@ -120,8 +127,12 @@ export async function clearStoredPassword(): Promise<void> {
   await logout();
 }
 
-export async function fetchStatus(arg1?: string | AbortSignal, arg2?: AbortSignal): Promise<PoolStatus> {
-  const signal = arg1 instanceof AbortSignal ? arg1 : (arg2 instanceof AbortSignal ? arg2 : undefined);
+export async function fetchStatus(
+  arg1?: string | AbortSignal,
+  arg2?: AbortSignal,
+): Promise<PoolStatus> {
+  const signal =
+    arg1 instanceof AbortSignal ? arg1 : arg2 instanceof AbortSignal ? arg2 : undefined;
   const password = typeof arg1 === "string" ? arg1 : undefined;
 
   const emptyStatus: PoolStatus = {
@@ -154,7 +165,11 @@ export async function fetchStatus(arg1?: string | AbortSignal, arg2?: AbortSigna
     throw err;
   }
 }
-export async function fetchPools(arg1?: string | AbortSignal, arg2?: string | AbortSignal, arg3?: AbortSignal): Promise<PoolRecord[]> {
+export async function fetchPools(
+  arg1?: string | AbortSignal,
+  arg2?: string | AbortSignal,
+  arg3?: AbortSignal,
+): Promise<PoolRecord[]> {
   let tier: string | undefined;
   let signal: AbortSignal | undefined;
   let password: string | undefined;
@@ -198,7 +213,11 @@ export async function fetchPools(arg1?: string | AbortSignal, arg2?: string | Ab
   }
 }
 
-export async function fetchMetrics(arg1?: number | string | AbortSignal, arg2?: number | AbortSignal, arg3?: AbortSignal): Promise<MetricsSnapshot[]> {
+export async function fetchMetrics(
+  arg1?: number | string | AbortSignal,
+  arg2?: number | AbortSignal,
+  arg3?: AbortSignal,
+): Promise<MetricsSnapshot[]> {
   let hours = 24;
   let signal: AbortSignal | undefined;
   let password: string | undefined;
@@ -278,12 +297,22 @@ export async function fetchDiagnosticFiles(password?: string) {
     credentials: "same-origin",
     headers: authHeaders(password),
   });
-  if (!response.ok) throw new Error(response.status === 401 ? "Wrong control password" : "Diagnostic files unavailable");
-  return response.json() as Promise<{ files: Array<{ name: string; count: number }>; job: DiagnosticJob }>;
+  if (!response.ok)
+    throw new Error(
+      response.status === 401 ? "Wrong control password" : "Diagnostic files unavailable",
+    );
+  return response.json() as Promise<{
+    files: Array<{ name: string; count: number }>;
+    job: DiagnosticJob;
+  }>;
 }
 
-export async function fetchDiagnosticJob(arg1?: string | AbortSignal, arg2?: AbortSignal): Promise<DiagnosticJob | null> {
-  const signal = arg1 instanceof AbortSignal ? arg1 : (arg2 instanceof AbortSignal ? arg2 : undefined);
+export async function fetchDiagnosticJob(
+  arg1?: string | AbortSignal,
+  arg2?: AbortSignal,
+): Promise<DiagnosticJob | null> {
+  const signal =
+    arg1 instanceof AbortSignal ? arg1 : arg2 instanceof AbortSignal ? arg2 : undefined;
   const password = typeof arg1 === "string" ? arg1 : undefined;
 
   try {
@@ -294,7 +323,10 @@ export async function fetchDiagnosticJob(arg1?: string | AbortSignal, arg2?: Abo
       headers: authHeaders(password),
     });
     if (signal?.aborted) return null;
-    if (!response.ok) throw new Error(response.status === 401 ? "Wrong control password" : "Diagnostic job unavailable");
+    if (!response.ok)
+      throw new Error(
+        response.status === 401 ? "Wrong control password" : "Diagnostic job unavailable",
+      );
     const data = await response.json();
     if (signal?.aborted) return null;
     return (data?.job ?? null) as DiagnosticJob | null;
@@ -368,7 +400,10 @@ export async function removePool(arg1: string, arg2?: string) {
   return body.pool as PoolRecord;
 }
 
-export async function runDiagnostics(arg1: string | { file: string; samplePercent?: number; sampleCount?: number }, arg2?: { file: string; samplePercent?: number; sampleCount?: number }) {
+export async function runDiagnostics(
+  arg1: string | { file: string; samplePercent?: number; sampleCount?: number },
+  arg2?: { file: string; samplePercent?: number; sampleCount?: number },
+) {
   const options = typeof arg1 === "object" ? arg1 : arg2!;
   const password = typeof arg1 === "string" ? arg1 : undefined;
 
@@ -414,8 +449,12 @@ export function formatTime(value: number | null): string {
   return new Date(value).toLocaleString();
 }
 
-export async function fetchSettings(arg1?: string | AbortSignal, arg2?: AbortSignal): Promise<SettingsResponse> {
-  const signal = arg1 instanceof AbortSignal ? arg1 : (arg2 instanceof AbortSignal ? arg2 : undefined);
+export async function fetchSettings(
+  arg1?: string | AbortSignal,
+  arg2?: AbortSignal,
+): Promise<SettingsResponse> {
+  const signal =
+    arg1 instanceof AbortSignal ? arg1 : arg2 instanceof AbortSignal ? arg2 : undefined;
   const password = typeof arg1 === "string" ? arg1 : undefined;
 
   const defaultSettings: SettingsResponse = {
@@ -459,7 +498,10 @@ export async function fetchSettings(arg1?: string | AbortSignal, arg2?: AbortSig
   }
 }
 
-export async function updateSettings(arg1: string | SettingsUpdatePayload, arg2?: SettingsUpdatePayload) {
+export async function updateSettings(
+  arg1: string | SettingsUpdatePayload,
+  arg2?: SettingsUpdatePayload,
+) {
   const patch = typeof arg1 === "object" ? arg1 : arg2!;
   const password = typeof arg1 === "string" ? arg1 : undefined;
 
@@ -476,8 +518,10 @@ export async function updateSettings(arg1: string | SettingsUpdatePayload, arg2?
 }
 
 export async function testNineRouterConnection(
-  arg1?: string | { nineRouterUrl?: string; nineRouterPassword?: string; nineRouterApiKey?: string },
-  arg2?: { nineRouterUrl?: string; nineRouterPassword?: string; nineRouterApiKey?: string }
+  arg1?:
+    | string
+    | { nineRouterUrl?: string; nineRouterPassword?: string; nineRouterApiKey?: string },
+  arg2?: { nineRouterUrl?: string; nineRouterPassword?: string; nineRouterApiKey?: string },
 ) {
   const patch = typeof arg1 === "object" ? arg1 : arg2;
   const password = typeof arg1 === "string" ? arg1 : undefined;
@@ -497,7 +541,7 @@ export async function downloadProxyExport(
   arg1: string | ("txt" | "csv"),
   arg2?: ("txt" | "csv") | boolean,
   arg3: boolean | { scope?: string } = false,
-  arg4?: { scope?: string }
+  arg4?: { scope?: string },
 ): Promise<{ blob: Blob; filename: string }> {
   let format: "txt" | "csv" = "txt";
   let includeCredentials = false;
@@ -512,7 +556,7 @@ export async function downloadProxyExport(
     }
   } else if (typeof arg1 === "string") {
     password = arg1;
-    format = (arg2 === "csv" ? "csv" : "txt");
+    format = arg2 === "csv" ? "csv" : "txt";
     includeCredentials = Boolean(arg3);
     if (arg4) scope = arg4.scope;
   }
@@ -551,41 +595,48 @@ export async function downloadProxyExport(
 }
 
 export async function fetchUnifiedProxies(
-  arg1?: string | {
-    health?: string;
-    status?: string;
-    search?: string;
-    protocol?: string;
-    source?: string;
-    sort?: string;
-    direction?: string;
-    page?: number;
-    pageSize?: number;
-  } | AbortSignal,
-  arg2?: {
-    health?: string;
-    status?: string;
-    search?: string;
-    protocol?: string;
-    source?: string;
-    sort?: string;
-    direction?: string;
-    page?: number;
-    pageSize?: number;
-  } | AbortSignal,
-  arg3?: AbortSignal
+  arg1?:
+    | string
+    | {
+        health?: string;
+        status?: string;
+        search?: string;
+        protocol?: string;
+        source?: string;
+        sort?: string;
+        direction?: string;
+        page?: number;
+        pageSize?: number;
+      }
+    | AbortSignal,
+  arg2?:
+    | {
+        health?: string;
+        status?: string;
+        search?: string;
+        protocol?: string;
+        source?: string;
+        sort?: string;
+        direction?: string;
+        page?: number;
+        pageSize?: number;
+      }
+    | AbortSignal,
+  arg3?: AbortSignal,
 ): Promise<UnifiedProxyResponse> {
-  let params: {
-    health?: string;
-    status?: string;
-    search?: string;
-    protocol?: string;
-    source?: string;
-    sort?: string;
-    direction?: string;
-    page?: number;
-    pageSize?: number;
-  } | undefined;
+  let params:
+    | {
+        health?: string;
+        status?: string;
+        search?: string;
+        protocol?: string;
+        source?: string;
+        sort?: string;
+        direction?: string;
+        page?: number;
+        pageSize?: number;
+      }
+    | undefined;
   let signal: AbortSignal | undefined;
   let password: string | undefined;
 
@@ -649,7 +700,7 @@ export async function fetchUnifiedProxies(
 export async function checkProxyValidity(
   arg1: string,
   arg2?: string | AbortSignal,
-  arg3?: AbortSignal
+  arg3?: AbortSignal,
 ): Promise<{ proxy: UnifiedProxyItem; auditResult?: unknown }> {
   let proxyKey: string;
   let signal: AbortSignal | undefined;
@@ -687,7 +738,7 @@ export async function checkProxyValidity(
 export async function fetchProxyHistory(
   arg1: string,
   arg2?: string | AbortSignal,
-  arg3?: AbortSignal
+  arg3?: AbortSignal,
 ): Promise<{ history: UnifiedProxyHistoryEntry[] }> {
   let proxyKey: string;
   let signal: AbortSignal | undefined;
@@ -732,7 +783,7 @@ export async function fetchProxyHistory(
 export async function fetchProxyAuditDetail(
   proxyKey: string,
   auditId?: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<{ auditDetail: ProxyAuditDetail | null }> {
   const query = new URLSearchParams({ key: proxyKey });
   if (auditId) query.set("auditId", auditId);
@@ -762,8 +813,12 @@ export async function fetchProxyAuditDetail(
   }
 }
 
-export async function fetchAntigravityStatus(arg1?: string | AbortSignal, arg2?: AbortSignal): Promise<AntigravityRotatorSnapshot | null> {
-  const signal = arg1 instanceof AbortSignal ? arg1 : (arg2 instanceof AbortSignal ? arg2 : undefined);
+export async function fetchAntigravityStatus(
+  arg1?: string | AbortSignal,
+  arg2?: AbortSignal,
+): Promise<AntigravityRotatorSnapshot | null> {
+  const signal =
+    arg1 instanceof AbortSignal ? arg1 : arg2 instanceof AbortSignal ? arg2 : undefined;
   const password = typeof arg1 === "string" ? arg1 : undefined;
 
   try {
@@ -783,7 +838,9 @@ export async function fetchAntigravityStatus(arg1?: string | AbortSignal, arg2?:
   }
 }
 
-export async function refreshAntigravityQuota(password?: string): Promise<{ started: boolean; snapshot?: AntigravityRotatorSnapshot }> {
+export async function refreshAntigravityQuota(
+  password?: string,
+): Promise<{ started: boolean; snapshot?: AntigravityRotatorSnapshot }> {
   const response = await fetch("/api/antigravity/refresh", {
     method: "POST",
     credentials: "same-origin",
@@ -794,7 +851,42 @@ export async function refreshAntigravityQuota(password?: string): Promise<{ star
   return response.json();
 }
 
-export async function setProxyPin(proxyKey: string, isPinned: boolean, password?: string): Promise<{ proxyKey: string; isPinned: boolean }> {
+export async function resetAntigravityProxies(
+  password?: string,
+  forceAll?: boolean,
+): Promise<{
+  ok: boolean;
+  totalAccounts?: number;
+  reassignedCount?: number;
+  forbiddenAccounts?: number;
+  reassigned?: Array<{
+    accountId: string;
+    email?: string;
+    oldProxyId: string | null;
+    newProxyId: string;
+    routerUrl?: string;
+  }>;
+  error?: string;
+}> {
+  const response = await fetch("/api/antigravity/reset-proxies", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: authHeaders(password),
+    body: JSON.stringify({ forceAll: Boolean(forceAll) }),
+  });
+  if (response.status === 401) throw new Error("Wrong control password");
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || "Failed to reset proxies");
+  }
+  return response.json();
+}
+
+export async function setProxyPin(
+  proxyKey: string,
+  isPinned: boolean,
+  password?: string,
+): Promise<{ proxyKey: string; isPinned: boolean }> {
   const response = await fetch("/api/proxies/pin", {
     method: "POST",
     credentials: "same-origin",
@@ -809,7 +901,10 @@ export async function setProxyPin(proxyKey: string, isPinned: boolean, password?
   return response.json();
 }
 
-export async function unlinkProxyFromRouter(proxyKey: string, password?: string): Promise<{ ok: boolean }> {
+export async function unlinkProxyFromRouter(
+  proxyKey: string,
+  password?: string,
+): Promise<{ ok: boolean }> {
   const response = await fetch("/api/proxies/unlink-router", {
     method: "POST",
     credentials: "same-origin",
@@ -824,7 +919,10 @@ export async function unlinkProxyFromRouter(proxyKey: string, password?: string)
   return response.json();
 }
 
-export async function pushProxyToRouter(proxyKey: string, password?: string): Promise<{ ok: boolean; remoteId?: string }> {
+export async function pushProxyToRouter(
+  proxyKey: string,
+  password?: string,
+): Promise<{ ok: boolean; remoteId?: string }> {
   const response = await fetch("/api/proxies/push-router", {
     method: "POST",
     credentials: "same-origin",
@@ -839,7 +937,11 @@ export async function pushProxyToRouter(proxyKey: string, password?: string): Pr
   return response.json();
 }
 
-export async function hardDeleteProxy(key: string, force = false, password?: string): Promise<{ ok: boolean; deleted: boolean }> {
+export async function hardDeleteProxy(
+  key: string,
+  force = false,
+  password?: string,
+): Promise<{ ok: boolean; deleted: boolean }> {
   const query = new URLSearchParams({ key, force: String(force) });
   const response = await fetch(`/api/proxies/hard-delete?${query.toString()}`, {
     method: "DELETE",
@@ -854,7 +956,9 @@ export async function hardDeleteProxy(key: string, force = false, password?: str
   return response.json();
 }
 
-export async function triggerUnifiedSync(password?: string): Promise<{ started: boolean; error?: string }> {
+export async function triggerUnifiedSync(
+  password?: string,
+): Promise<{ started: boolean; error?: string }> {
   const response = await fetch("/api/ninerouter/sync-all", {
     method: "POST",
     credentials: "same-origin",
@@ -864,7 +968,9 @@ export async function triggerUnifiedSync(password?: string): Promise<{ started: 
   return response.json();
 }
 
-export async function triggerOptimizeAccountsBySpeed(password?: string): Promise<{ ok: boolean; updated?: number }> {
+export async function triggerOptimizeAccountsBySpeed(
+  password?: string,
+): Promise<{ ok: boolean; updated?: number }> {
   const response = await fetch("/api/antigravity/optimize-by-speed", {
     method: "POST",
     credentials: "same-origin",
@@ -872,4 +978,213 @@ export async function triggerOptimizeAccountsBySpeed(password?: string): Promise
   });
   if (response.status === 401) throw new Error("Wrong control password");
   return response.json();
+}
+
+export interface BackupStatusResponse {
+  ok: boolean;
+  status?: {
+    lastBackupTime: string | null;
+    lastCommitSha: string | null;
+    lastCommitMessage: string | null;
+    hasUncommittedChanges: boolean;
+    isSyncing: boolean;
+    lastSyncError: string | null;
+    remoteConfigured: boolean;
+    backupFileCount: number;
+  };
+  error?: string;
+}
+
+export async function fetchBackupStatus(password?: string): Promise<BackupStatusResponse> {
+  const response = await fetch("/api/backup/status", {
+    credentials: "same-origin",
+    headers: authHeaders(password),
+  });
+  if (response.status === 401) throw new Error("Wrong control password");
+  return response.json();
+}
+
+export async function triggerBackupSync(
+  push = true,
+  password?: string,
+): Promise<{
+  ok: boolean;
+  git?: {
+    changed: boolean;
+    committed: boolean;
+    commitSha?: string;
+    pushed: boolean;
+    pushError?: string;
+  };
+  error?: string;
+}> {
+  const response = await fetch("/api/backup/sync", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: authHeaders(password),
+    body: JSON.stringify({ push }),
+  });
+  if (response.status === 401) throw new Error("Wrong control password");
+  return response.json();
+}
+
+export async function restoreBackup(
+  password?: string,
+): Promise<{ ok: boolean; restoredFiles?: string[]; errors?: string[]; error?: string }> {
+  const response = await fetch("/api/backup/restore", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: authHeaders(password),
+  });
+  if (response.status === 401) throw new Error("Wrong control password");
+  return response.json();
+}
+
+export async function fetchDualRouterStatus(password?: string): Promise<DualRouterStatusResponse> {
+  const response = await fetch("/api/ninerouter/dual/status", {
+    credentials: "same-origin",
+    headers: authHeaders(password),
+  });
+  if (response.status === 401) throw new Error("Wrong control password");
+  return response.json();
+}
+
+export async function fetchDualRouterConflicts(
+  password?: string,
+): Promise<DualRouterConflictResponse> {
+  const response = await fetch("/api/ninerouter/dual/conflicts", {
+    credentials: "same-origin",
+    headers: authHeaders(password),
+  });
+  if (response.status === 401) throw new Error("Wrong control password");
+  return response.json();
+}
+
+export async function triggerDualRouterAudit(password?: string): Promise<DualRouterAuditResponse> {
+  const response = await fetch("/api/ninerouter/dual/audit", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: authHeaders(password),
+  });
+  if (response.status === 401) throw new Error("Wrong control password");
+  return response.json();
+}
+
+export async function triggerDualRouterReconcile(
+  mode: "incremental" | "full" = "incremental",
+  password?: string,
+): Promise<DualRouterReconcileResponse> {
+  const response = await fetch("/api/ninerouter/dual/reconcile", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: authHeaders(password),
+    body: JSON.stringify({ mode }),
+  });
+  if (response.status === 401) throw new Error("Wrong control password");
+  return response.json();
+}
+
+export async function resolveDualRouterConflict(
+  id: string,
+  revision: number,
+  value: DualRouterValue,
+  password?: string,
+): Promise<DualRouterResolveConflictResponse> {
+  const response = await fetch(`/api/ninerouter/dual/conflicts/${encodeURIComponent(id)}/resolve`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: authHeaders(password),
+    body: JSON.stringify({ revision, value }),
+  });
+  if (response.status === 401) throw new Error("Wrong control password");
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ error: "Failed to resolve conflict" }));
+    throw new Error(err.error || `Failed with status ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function fetchTokenUsage(
+  arg1?: string,
+  arg2?: string,
+  arg3?: string | AbortSignal,
+  arg4?: AbortSignal,
+): Promise<AggregatedTokenUsage> {
+  let password: string | undefined;
+  let period = "today";
+  let nodeId: string | undefined;
+  let signal: AbortSignal | undefined;
+
+  if (arg1 && ["today", "24h", "7d", "30d", "all"].includes(arg1)) {
+    period = arg1;
+    nodeId = typeof arg2 === "string" ? arg2 : undefined;
+    signal = arg3 instanceof AbortSignal ? arg3 : undefined;
+  } else {
+    password = arg1;
+    if (arg2) period = arg2;
+    if (typeof arg3 === "string") nodeId = arg3;
+    else if (arg3 instanceof AbortSignal) signal = arg3;
+    if (arg4 instanceof AbortSignal) signal = arg4;
+  }
+
+  const params = new URLSearchParams({ period });
+  if (nodeId && nodeId !== "all") params.set("nodeId", nodeId);
+
+  // 1. Try unified aggregate endpoint
+  try {
+    const response = await fetch(`/api/ninerouter/stats?${params.toString()}`, {
+      cache: "no-store",
+      signal,
+      credentials: "same-origin",
+      headers: authHeaders(password),
+    });
+
+    if (response.ok) {
+      return await response.json();
+    }
+  } catch (err) {
+    if (signal?.aborted || isAbortError(err)) throw err;
+  }
+
+  // 2. Fallback: Query Pi Master node (server-lan) if aggregate route is unreachable or 404
+  const targetNode = nodeId && nodeId !== "all" ? nodeId : "server-lan";
+  const fallbackUrl = `/api/ninerouter/nodes/${encodeURIComponent(targetNode)}/stats?period=${encodeURIComponent(period)}`;
+  const fallbackRes = await fetch(fallbackUrl, {
+    cache: "no-store",
+    signal,
+    credentials: "same-origin",
+    headers: authHeaders(password),
+  });
+
+  if (!fallbackRes.ok) {
+    throw new Error(`Failed to fetch token usage: ${fallbackRes.status}`);
+  }
+
+  const raw = await fallbackRes.json();
+  const prompt = Number(raw.totalPromptTokens) || 0;
+  const comp = Number(raw.totalCompletionTokens) || 0;
+  const cached = Number(raw.totalCachedTokens) || 0;
+  const reqs = Number(raw.totalRequests) || 0;
+  const cost = Number(raw.totalCost) || 0;
+
+  return {
+    period,
+    totalRequests: reqs,
+    totalPromptTokens: prompt,
+    totalCompletionTokens: comp,
+    totalCachedTokens: cached,
+    totalTokens: prompt + comp + cached,
+    totalCost: cost,
+    byModel: raw.byModel || {},
+    nodes: [
+      {
+        id: targetNode,
+        name: "Master Node (Pi)",
+        url: "http://192.168.1.54:20128",
+        online: true,
+        totalTokens: prompt + comp + cached,
+        requests: reqs,
+      },
+    ],
+  };
 }

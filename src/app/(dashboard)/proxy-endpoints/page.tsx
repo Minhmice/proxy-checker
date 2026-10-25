@@ -1,8 +1,8 @@
-'use client';
+"use client";
 
-import { useEffect, useState, useCallback, useRef } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useEffect, useState, useCallback, useRef } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   AlertCircle,
   AlertTriangle,
@@ -12,20 +12,14 @@ import {
   Eye,
   Network,
   RefreshCw,
-} from 'lucide-react';
-import { toast } from 'sonner';
-import { useAuth } from '@/components/auth-provider';
-import { authHeaders } from '@/lib/api';
-import { isAbortError } from '@/lib/request-lifecycle';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
+} from "lucide-react";
+import { toast } from "sonner";
+import { useAuth } from "@/components/auth-provider";
+import { authHeaders } from "@/lib/api";
+import { isAbortError } from "@/lib/request-lifecycle";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -33,7 +27,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table';
+} from "@/components/ui/table";
 import {
   Dialog,
   DialogContent,
@@ -41,16 +35,16 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
+} from "@/components/ui/dialog";
 import {
   EndpointActionsDropdown,
   EndpointContextMenu,
-} from '@/components/endpoints/endpoint-context-menu';
+} from "@/components/endpoints/endpoint-context-menu";
 import type {
   FleetNodeRecord,
   FleetProxyEndpointRecord,
   FleetHealthCheckRecord,
-} from '@/proxyfleet/types';
+} from "@/proxyfleet/types";
 type EndpointWithHealth = FleetProxyEndpointRecord & {
   health?: FleetHealthCheckRecord | null;
 };
@@ -60,9 +54,7 @@ export default function ProxyEndpointsPage() {
   const { password } = useAuth();
   const [endpoints, setEndpoints] = useState<FleetProxyEndpointRecord[]>([]);
   const [nodeNames, setNodeNames] = useState<Record<string, string>>({});
-  const [nodesById, setNodesById] = useState<Record<string, FleetNodeRecord>>(
-    {},
-  );
+  const [nodesById, setNodesById] = useState<Record<string, FleetNodeRecord>>({});
   const [loading, setLoading] = useState(true);
   const [endpointError, setEndpointError] = useState<string | null>(null);
   const [nodeLookupError, setNodeLookupError] = useState(false);
@@ -92,9 +84,9 @@ export default function ProxyEndpointsPage() {
       setLoading(true);
       setEndpointError(null);
 
-      const res = await fetch('/api/fleet/endpoints', {
+      const res = await fetch("/api/fleet/endpoints", {
         headers: authHeaders(password),
-        credentials: 'same-origin',
+        credentials: "same-origin",
         signal,
       });
 
@@ -103,9 +95,7 @@ export default function ProxyEndpointsPage() {
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
         if (signal.aborted) return;
-        throw new Error(
-          errData.error || `Failed to fetch endpoints (HTTP ${res.status})`,
-        );
+        throw new Error(errData.error || `Failed to fetch endpoints (HTTP ${res.status})`);
       }
 
       const data = await res.json();
@@ -116,9 +106,9 @@ export default function ProxyEndpointsPage() {
 
       // Load node names for friendly display, degrade gracefully if node lookup fails
       try {
-        const nodesRes = await fetch('/api/fleet/nodes', {
+        const nodesRes = await fetch("/api/fleet/nodes", {
           headers: authHeaders(password),
-          credentials: 'same-origin',
+          credentials: "same-origin",
           signal,
         });
         if (signal.aborted) return;
@@ -127,12 +117,8 @@ export default function ProxyEndpointsPage() {
           const nodesData = await nodesRes.json();
           if (signal.aborted) return;
           const nodes = (nodesData.nodes || []) as FleetNodeRecord[];
-          setNodeNames(
-            Object.fromEntries(nodes.map((node) => [node.id, node.name])),
-          );
-          setNodesById(
-            Object.fromEntries(nodes.map((node) => [node.id, node])),
-          );
+          setNodeNames(Object.fromEntries(nodes.map((node) => [node.id, node.name])));
+          setNodesById(Object.fromEntries(nodes.map((node) => [node.id, node])));
           setNodeLookupError(false);
         } else {
           setNodeLookupError(true);
@@ -144,9 +130,7 @@ export default function ProxyEndpointsPage() {
       }
     } catch (err) {
       if (!signal.aborted && !isAbortError(err)) {
-        setEndpointError(
-          err instanceof Error ? err.message : 'Failed to load proxy endpoints',
-        );
+        setEndpointError(err instanceof Error ? err.message : "Failed to load proxy endpoints");
       }
     } finally {
       if (!signal.aborted) {
@@ -176,9 +160,9 @@ export default function ProxyEndpointsPage() {
       const res = await fetch(
         `/api/fleet/endpoints/${encodeURIComponent(endpointId)}/credentials/reveal`,
         {
-          method: 'POST',
+          method: "POST",
           headers: authHeaders(password),
-          credentials: 'same-origin',
+          credentials: "same-origin",
           signal,
         },
       );
@@ -189,8 +173,8 @@ export default function ProxyEndpointsPage() {
         const creds = await res.json();
         if (signal.aborted) return;
         setRevealedCreds({
-          username: creds.username || '',
-          password: creds.password || '',
+          username: creds.username || "",
+          password: creds.password || "",
         });
         setRevealOpen(true);
       } else {
@@ -199,7 +183,7 @@ export default function ProxyEndpointsPage() {
       }
     } catch (err) {
       if (!signal.aborted) {
-        toast.error('Network error while revealing credentials');
+        toast.error("Network error while revealing credentials");
       }
     } finally {
       if (!signal.aborted) {
@@ -210,27 +194,20 @@ export default function ProxyEndpointsPage() {
 
   async function toggleEndpoint(endpoint: FleetProxyEndpointRecord) {
     try {
-      const res = await fetch(
-        `/api/fleet/endpoints/${encodeURIComponent(endpoint.id)}`,
-        {
-          method: 'PATCH',
-          headers: authHeaders(password),
-          credentials: 'same-origin',
-          body: JSON.stringify({ enabled: !endpoint.enabled }),
-        },
-      );
+      const res = await fetch(`/api/fleet/endpoints/${encodeURIComponent(endpoint.id)}`, {
+        method: "PATCH",
+        headers: authHeaders(password),
+        credentials: "same-origin",
+        body: JSON.stringify({ enabled: !endpoint.enabled }),
+      });
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
-        throw new Error(
-          errData.error || `Could not update endpoint (HTTP ${res.status})`,
-        );
+        throw new Error(errData.error || `Could not update endpoint (HTTP ${res.status})`);
       }
       await loadEndpoints();
-      toast.success(`Endpoint ${endpoint.enabled ? 'disabled' : 'enabled'}`);
+      toast.success(`Endpoint ${endpoint.enabled ? "disabled" : "enabled"}`);
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : 'Could not update endpoint',
-      );
+      toast.error(error instanceof Error ? error.message : "Could not update endpoint");
     }
   }
 
@@ -239,30 +216,27 @@ export default function ProxyEndpointsPage() {
       const credsRes = await fetch(
         `/api/fleet/endpoints/${encodeURIComponent(endpoint.id)}/credentials/reveal`,
         {
-          method: 'POST',
+          method: "POST",
           headers: authHeaders(password),
-          credentials: 'same-origin',
+          credentials: "same-origin",
         },
       );
       if (!credsRes.ok) {
         const errData = await credsRes.json().catch(() => ({}));
         throw new Error(
-          errData.error ||
-            `Could not read endpoint credentials (HTTP ${credsRes.status})`,
+          errData.error || `Could not read endpoint credentials (HTTP ${credsRes.status})`,
         );
       }
       const creds = await credsRes.json();
-      const user = encodeURIComponent(creds.username || '');
-      const pass = encodeURIComponent(creds.password || '');
-      const auth = user ? `${user}${pass ? `:${pass}` : ''}@` : '';
+      const user = encodeURIComponent(creds.username || "");
+      const pass = encodeURIComponent(creds.password || "");
+      const auth = user ? `${user}${pass ? `:${pass}` : ""}@` : "";
       await navigator.clipboard.writeText(
         `${endpoint.protocol}://${auth}${endpoint.listen_ip}:${endpoint.listen_port}`,
       );
-      toast.success('Proxy URL copied to clipboard');
+      toast.success("Proxy URL copied to clipboard");
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : 'Could not copy proxy URL',
-      );
+      toast.error(error instanceof Error ? error.message : "Could not copy proxy URL");
     }
   }
 
@@ -275,8 +249,7 @@ export default function ProxyEndpointsPage() {
             Proxy Endpoints
           </h1>
           <p className="text-sm text-muted-foreground">
-            All configured HTTP CONNECT and SOCKS5 proxy listeners across fleet
-            nodes.
+            All configured HTTP CONNECT and SOCKS5 proxy listeners across fleet nodes.
           </p>
         </div>
 
@@ -293,9 +266,7 @@ export default function ProxyEndpointsPage() {
             disabled={loading}
             className="min-h-[44px] sm:min-h-[36px]"
           >
-            <RefreshCw
-              className={`size-4 mr-2 ${loading ? 'animate-spin' : ''}`}
-            />
+            <RefreshCw className={`size-4 mr-2 ${loading ? "animate-spin" : ""}`} />
             Refresh
           </Button>
         </div>
@@ -317,9 +288,7 @@ export default function ProxyEndpointsPage() {
             onClick={() => void loadEndpoints()}
             disabled={loading}
           >
-            <RefreshCw
-              className={`size-3.5 mr-1.5 ${loading ? 'animate-spin' : ''}`}
-            />
+            <RefreshCw className={`size-3.5 mr-1.5 ${loading ? "animate-spin" : ""}`} />
             Retry
           </Button>
         </div>
@@ -329,10 +298,7 @@ export default function ProxyEndpointsPage() {
         <div className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs">
           <div className="flex items-center gap-2">
             <AlertTriangle className="size-4 shrink-0" />
-            <span>
-              Node name lookup unavailable. Endpoints displayed with raw node
-              IDs.
-            </span>
+            <span>Node name lookup unavailable. Endpoints displayed with raw node IDs.</span>
           </div>
           <Button
             variant="ghost"
@@ -358,28 +324,28 @@ export default function ProxyEndpointsPage() {
           <Table>
             <TableHeader className="bg-surface/50 border-b border-border/40">
               <TableRow className="border-0 hover:bg-transparent">
-                <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/75 py-3 pl-4">
+                <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground py-3 pl-4">
                   Endpoint
                 </TableHead>
-                <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/75 py-3">
+                <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground py-3">
                   Node
                 </TableHead>
-                <TableHead className="hidden md:table-cell text-xs font-semibold uppercase tracking-wider text-muted-foreground/75 py-3">
+                <TableHead className="hidden md:table-cell text-xs font-semibold uppercase tracking-wider text-muted-foreground py-3">
                   Username
                 </TableHead>
-                <TableHead className="hidden md:table-cell text-xs font-semibold uppercase tracking-wider text-muted-foreground/75 py-3">
+                <TableHead className="hidden md:table-cell text-xs font-semibold uppercase tracking-wider text-muted-foreground py-3">
                   Credentials
                 </TableHead>
-                <TableHead className="hidden md:table-cell text-xs font-semibold uppercase tracking-wider text-muted-foreground/75 py-3">
+                <TableHead className="hidden md:table-cell text-xs font-semibold uppercase tracking-wider text-muted-foreground py-3">
                   Source
                 </TableHead>
-                <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/75 py-3">
+                <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground py-3">
                   State
                 </TableHead>
-                <TableHead className="hidden sm:table-cell text-xs font-semibold uppercase tracking-wider text-muted-foreground/75 py-3">
+                <TableHead className="hidden sm:table-cell text-xs font-semibold uppercase tracking-wider text-muted-foreground py-3">
                   Health
                 </TableHead>
-                <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/75 py-3 pr-4 text-right">
+                <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground py-3 pr-4 text-right">
                   Actions
                 </TableHead>
               </TableRow>
@@ -387,29 +353,20 @@ export default function ProxyEndpointsPage() {
             <TableBody>
               {loading && endpoints.length === 0 ? (
                 <TableRow>
-                  <TableCell
-                    colSpan={8}
-                    className="text-center py-8 text-muted-foreground text-sm"
-                  >
+                  <TableCell colSpan={8} className="text-center py-8 text-muted-foreground text-sm">
                     <RefreshCw className="size-4 animate-spin inline mr-2 text-primary" />
                     Loading endpoints...
                   </TableCell>
                 </TableRow>
               ) : endpointError && endpoints.length === 0 ? (
                 <TableRow>
-                  <TableCell
-                    colSpan={8}
-                    className="text-center py-8 text-destructive text-sm"
-                  >
+                  <TableCell colSpan={8} className="text-center py-8 text-destructive text-sm">
                     Unable to display endpoints due to network or server error.
                   </TableCell>
                 </TableRow>
               ) : endpoints.length === 0 ? (
                 <TableRow>
-                  <TableCell
-                    colSpan={8}
-                    className="text-center py-8 text-muted-foreground text-sm"
-                  >
+                  <TableCell colSpan={8} className="text-center py-8 text-muted-foreground text-sm">
                     No proxy endpoints created yet.
                   </TableCell>
                 </TableRow>
@@ -444,11 +401,10 @@ export default function ProxyEndpointsPage() {
                               >
                                 rev {ep.current_revision}
                               </Badge>
-                              {nodesById[ep.node_id]?.configuration?.status ===
-                                'failed' && (
+                              {nodesById[ep.node_id]?.configuration?.status === "failed" && (
                                 <span
                                   className="inline-flex"
-                                  title={`Node configuration failed: ${nodesById[ep.node_id].configuration?.error ?? 'Unknown error'}`}
+                                  title={`Node configuration failed: ${nodesById[ep.node_id].configuration?.error ?? "Unknown error"}`}
                                 >
                                   <AlertTriangle
                                     className="size-3.5 text-rose-400"
@@ -456,8 +412,7 @@ export default function ProxyEndpointsPage() {
                                   />
                                 </span>
                               )}
-                              {nodesById[ep.node_id]?.configuration?.status ===
-                                'pending' && (
+                              {nodesById[ep.node_id]?.configuration?.status === "pending" && (
                                 <span
                                   className="inline-flex"
                                   title={`Node applying revision ${nodesById[ep.node_id].configuration?.desiredRevision}`}
@@ -477,9 +432,7 @@ export default function ProxyEndpointsPage() {
                           href={`/nodes/${ep.node_id}`}
                           className="text-sm font-medium text-foreground hover:text-primary transition-colors truncate inline-flex items-center gap-1.5"
                         >
-                          <span>
-                            {nodeNames[ep.node_id] || ep.node_id.slice(0, 8)}
-                          </span>
+                          <span>{nodeNames[ep.node_id] || ep.node_id.slice(0, 8)}</span>
                           {nodeLookupError && !nodeNames[ep.node_id] && (
                             <Badge
                               variant="outline"
@@ -493,7 +446,7 @@ export default function ProxyEndpointsPage() {
                       <TableCell className="hidden md:table-cell font-mono text-xs text-foreground/80 py-3.5">
                         {ep.username}
                       </TableCell>
-                      <TableCell className="hidden md:table-cell font-mono text-xs text-muted-foreground/50 py-3.5 tracking-widest">
+                      <TableCell className="hidden md:table-cell font-mono text-xs text-muted-foreground py-3.5 tracking-widest">
                         ••••••••••••
                       </TableCell>
                       <TableCell className="hidden md:table-cell py-3.5">
@@ -507,10 +460,10 @@ export default function ProxyEndpointsPage() {
                       <TableCell className="py-3.5">
                         <span className="inline-flex items-center gap-2 text-xs">
                           <span
-                            className={`size-2 rounded-full inline-block shrink-0 ring-2 ${ep.enabled ? 'bg-emerald-400 ring-emerald-500/20' : 'bg-muted-foreground/40 ring-border/20'}`}
+                            className={`size-2 rounded-full inline-block shrink-0 ring-2 ${ep.enabled ? "bg-emerald-400 ring-emerald-500/20" : "bg-muted-foreground/40 ring-border/20"}`}
                           />
                           <span className="text-xs font-medium capitalize text-foreground/90">
-                            {ep.enabled ? 'Enabled' : 'Disabled'}
+                            {ep.enabled ? "Enabled" : "Disabled"}
                           </span>
                         </span>
                       </TableCell>
@@ -521,21 +474,16 @@ export default function ProxyEndpointsPage() {
                               <Badge
                                 variant="outline"
                                 className={`text-[10px] capitalize px-1.5 py-0 h-4 ${
-                                  (ep as EndpointWithHealth).health!.status ===
-                                  'healthy'
-                                    ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10'
-                                    : 'text-rose-400 border-rose-500/30 bg-rose-500/10'
+                                  (ep as EndpointWithHealth).health!.status === "healthy"
+                                    ? "text-emerald-400 border-emerald-500/30 bg-emerald-500/10"
+                                    : "text-rose-400 border-rose-500/30 bg-rose-500/10"
                                 }`}
                               >
                                 {(ep as EndpointWithHealth).health!.status}
                               </Badge>
-                              {(ep as EndpointWithHealth).health!.latency_ms !=
-                                null && (
+                              {(ep as EndpointWithHealth).health!.latency_ms != null && (
                                 <span className="text-[10px] font-mono text-muted-foreground">
-                                  {
-                                    (ep as EndpointWithHealth).health!
-                                      .latency_ms
-                                  }
+                                  {(ep as EndpointWithHealth).health!.latency_ms}
                                   ms
                                 </span>
                               )}
@@ -543,19 +491,14 @@ export default function ProxyEndpointsPage() {
                             {(ep as EndpointWithHealth).health!.exit_ip && (
                               <span
                                 className="text-[10px] font-mono text-muted-foreground truncate max-w-[120px]"
-                                title={
-                                  (ep as EndpointWithHealth).health!.exit_ip!
-                                }
+                                title={(ep as EndpointWithHealth).health!.exit_ip!}
                               >
-                                Exit:{' '}
-                                {(ep as EndpointWithHealth).health!.exit_ip}
+                                Exit: {(ep as EndpointWithHealth).health!.exit_ip}
                               </span>
                             )}
                           </div>
                         ) : (
-                          <span className="text-xs text-muted-foreground/70">
-                            Unknown
-                          </span>
+                          <span className="text-xs text-muted-foreground">Unknown</span>
                         )}
                       </TableCell>
                       <TableCell className="py-3.5 pr-4 text-right">
@@ -578,9 +521,7 @@ export default function ProxyEndpointsPage() {
                             endpoint={ep}
                             onReveal={() => handleReveal(ep.id)}
                             onCopyUrl={() => copyProxyUrl(ep)}
-                            onJumpToNode={() =>
-                              router.push(`/nodes/${ep.node_id}`)
-                            }
+                            onJumpToNode={() => router.push(`/nodes/${ep.node_id}`)}
                             onToggle={() => void toggleEndpoint(ep)}
                             isRevealing={revealingId === ep.id}
                           />
@@ -643,7 +584,7 @@ export default function ProxyEndpointsPage() {
                     onClick={() => {
                       navigator.clipboard.writeText(revealedCreds.password);
                       setCopied(true);
-                      toast.success('Password copied to clipboard');
+                      toast.success("Password copied to clipboard");
                       setTimeout(() => setCopied(false), 2000);
                     }}
                   >

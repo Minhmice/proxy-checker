@@ -1,4 +1,4 @@
-import { logActivity } from "./activity-log.js";
+import { logActivity, logScoped } from "./activity-log.js";
 
 export interface UnifiedSyncCycleOptions {
   force?: boolean;
@@ -19,6 +19,7 @@ export interface UnifiedSyncReport {
   syncResult?: unknown;
   rotatorSnapshot?: unknown;
   fleetResult?: FleetMaintenanceResult;
+  dualRouterResult?: unknown;
   durationMs?: number;
   completedAt?: number;
   error?: string;
@@ -45,50 +46,76 @@ export interface UnifiedSyncCoordinatorDeps {
       exit_ip?: string | null;
     }>;
   };
-  antigravityRotator: { runRotation(opts?: { force?: boolean }): Promise<unknown>; isRunning?: boolean };
+  antigravityRotator: {
+    runRotation(opts?: { force?: boolean }): Promise<unknown>;
+    isRunning?: boolean;
+  };
   proxyIntelligenceRepo?: {
-    syncWorkingPools(pools: Array<{
-      proxyUrl: string;
-      remoteId?: string | null;
-      tier?: string;
-      status?: string;
-      isActiveOnRouter?: boolean;
-      latency_ms?: number | null;
-      exit_ip?: string | null;
-    }>): Promise<unknown>;
+    syncWorkingPools(
+      pools: Array<{
+        proxyUrl: string;
+        remoteId?: string | null;
+        tier?: string;
+        status?: string;
+        isActiveOnRouter?: boolean;
+        latency_ms?: number | null;
+        exit_ip?: string | null;
+      }>,
+    ): Promise<unknown>;
   };
   fleetMaintenance?: () => Promise<{ pendingRemovals: number; syncedEndpoints: number }>;
+  dualRouterScheduler?: {
+    tick(now: number): Promise<unknown>;
+  };
 }
 
-export function createUnifiedSyncCoordinator(deps: UnifiedSyncCoordinatorDeps): UnifiedSyncCoordinator {
+export function createUnifiedSyncCoordinator(
+  deps: UnifiedSyncCoordinatorDeps,
+): UnifiedSyncCoordinator {
   let isRunning = false;
 
-  async function runUnifiedSyncCycle(options: UnifiedSyncCycleOptions = {}): Promise<UnifiedSyncReport> {
+  async function runUnifiedSyncCycle(
+    options: UnifiedSyncCycleOptions = {},
+  ): Promise<UnifiedSyncReport> {
     if (isRunning) {
-      logActivity("warn", "Unified Sync: already running, skipping overlapping cycle");
+      logScoped("UnifiedSync", "runCycle", "warn", "Already running, skipping overlapping cycle");
       return { started: false, running: true };
     }
 
     isRunning = true;
     const start = Date.now();
-    logActivity("info", "Unified Sync Cycle: starting concurrent maintenance tick...");
 
     const force = options.force ?? true;
     const routerRequested = options.router !== false;
     const rotationRequested = options.rotation !== false;
 
-    const routerBusy = routerRequested && Boolean(deps.poolRanker.isSyncing && deps.poolRanker.isSyncing());
+    const routerBusy =
+      routerRequested && Boolean(deps.poolRanker.isSyncing && deps.poolRanker.isSyncing());
     const rotatorBusy = rotationRequested && Boolean(deps.antigravityRotator.isRunning);
 
     const shouldRunRouter = routerRequested && !routerBusy;
     const shouldRunRotation = rotationRequested && !rotatorBusy;
+
+    const routerStatus = !routerRequested ? "off" : routerBusy ? "busy(skip)" : "due";
+    const rotationStatus = !rotationRequested ? "off" : rotatorBusy ? "busy(skip)" : "due";
+    const fleetStatus = deps.fleetMaintenance ? "enabled" : "disabled";
+    const dualRouterStatus = deps.dualRouterScheduler ? "enabled" : "disabled";
+
+    logScoped("UnifiedSync", "runCycle", "info", "Starting maintenance cycle", {
+      router: routerStatus,
+      rotation: rotationStatus,
+      fleet: fleetStatus,
+      dualRouter: dualRouterStatus,
+      force,
+    });
 
     let syncResult: unknown;
     let routerError: string | undefined;
     let rotatorSnapshot: unknown;
     let rotatorError: string | undefined;
     let fleetResult: FleetMaintenanceResult | undefined;
-
+    let dualRouterResult: unknown;
+    let dualRouterError: string | undefined;
     try {
       const tasks: Promise<void>[] = [];
 
@@ -96,19 +123,37 @@ export function createUnifiedSyncCoordinator(deps: UnifiedSyncCoordinatorDeps): 
       if (shouldRunRouter) {
         tasks.push(
           (async () => {
+            logScoped("UnifiedSync", "poolRanker", "info", "Starting pool sync...", { force });
+            const syncStart = Date.now();
             syncResult = await deps.poolRanker.syncPools({ force });
+            const syncElapsed = Date.now() - syncStart;
+            logScoped("UnifiedSync", "poolRanker", "success", "Pool sync completed", {
+              elapsedMs: syncElapsed,
+            });
+
             if (deps.proxyIntelligenceRepo && typeof deps.poolRanker.listByTier === "function") {
               try {
-                const survivors = deps.poolRanker.listByTier("all").filter(
-                  (p) => p.status === "usable" && Boolean(p.remoteId)
-                );
+                const survivors = deps.poolRanker
+                  .listByTier("all")
+                  .filter((p) => p.status === "usable" && Boolean(p.remoteId));
                 await deps.proxyIntelligenceRepo.syncWorkingPools(survivors);
-                logActivity("info", `Unified Sync Cycle: reconciled ${survivors.length} active pool(s) into database`);
+                logScoped(
+                  "UnifiedSync",
+                  "poolRanker",
+                  "info",
+                  `Reconciled ${survivors.length} active pool(s) into database`,
+                  { count: survivors.length },
+                );
               } catch (reconcileErr) {
-                logActivity("warn", `Unified Sync Cycle: DB reconcile skipped: ${(reconcileErr as Error).message}`);
+                logScoped(
+                  "UnifiedSync",
+                  "poolRanker",
+                  "warn",
+                  `DB reconcile skipped: ${(reconcileErr as Error).message}`,
+                );
               }
             }
-          })()
+          })(),
         );
       }
 
@@ -116,8 +161,22 @@ export function createUnifiedSyncCoordinator(deps: UnifiedSyncCoordinatorDeps): 
       if (shouldRunRotation) {
         tasks.push(
           (async () => {
+            logScoped("UnifiedSync", "antigravityRotator", "info", "Starting account rotation...", {
+              force,
+            });
+            const rotStart = Date.now();
             rotatorSnapshot = await deps.antigravityRotator.runRotation({ force });
-          })()
+            const rotElapsed = Date.now() - rotStart;
+            logScoped(
+              "UnifiedSync",
+              "antigravityRotator",
+              "success",
+              "Account rotation completed",
+              {
+                elapsedMs: rotElapsed,
+              },
+            );
+          })(),
         );
       }
 
@@ -125,12 +184,49 @@ export function createUnifiedSyncCoordinator(deps: UnifiedSyncCoordinatorDeps): 
       if (deps.fleetMaintenance) {
         tasks.push(
           (async () => {
+            logScoped(
+              "UnifiedSync",
+              "fleetMaintenance",
+              "info",
+              "Starting fleet peer reconciliation...",
+            );
+            const fleetStart = Date.now();
             const res = await deps.fleetMaintenance!();
+            const fleetElapsed = Date.now() - fleetStart;
             fleetResult = {
               pendingRemovals: res.pendingRemovals,
               syncedEndpoints: res.syncedEndpoints,
             };
-          })()
+            logScoped("UnifiedSync", "fleetMaintenance", "success", "Reconciliation finished", {
+              elapsedMs: fleetElapsed,
+              synced: res.syncedEndpoints,
+              pendingRemovals: res.pendingRemovals,
+            });
+          })(),
+        );
+      }
+
+      // Task 4: Dual 9Router scheduler tick
+      if (deps.dualRouterScheduler) {
+        tasks.push(
+          (async () => {
+            logScoped("UnifiedSync", "dualRouter", "info", "Starting scheduler tick...");
+            const dualStart = Date.now();
+            dualRouterResult = await deps.dualRouterScheduler!.tick(Date.now());
+            const dualElapsed = Date.now() - dualStart;
+            let tickMode: unknown = "completed";
+            if (
+              dualRouterResult &&
+              typeof dualRouterResult === "object" &&
+              "mode" in dualRouterResult
+            ) {
+              tickMode = dualRouterResult.mode;
+            }
+            logScoped("UnifiedSync", "dualRouter", "success", "Tick completed", {
+              elapsedMs: dualElapsed,
+              mode: tickMode ?? "idle",
+            });
+          })(),
         );
       }
 
@@ -140,22 +236,35 @@ export function createUnifiedSyncCoordinator(deps: UnifiedSyncCoordinatorDeps): 
       if (shouldRunRouter) {
         const outcome = settled[taskIndex++];
         if (outcome.status === "rejected") {
-          routerError = outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason);
-          logActivity("error", `Unified Sync Cycle: 9Router sync failed: ${routerError}`);
+          routerError =
+            outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason);
+          logScoped("UnifiedSync", "poolRanker", "error", `9Router sync failed: ${routerError}`);
         }
       }
       if (shouldRunRotation) {
         const outcome = settled[taskIndex++];
         if (outcome.status === "rejected") {
-          rotatorError = outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason);
-          logActivity("error", `Unified Sync Cycle: Antigravity rotation failed: ${rotatorError}`);
+          rotatorError =
+            outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason);
+          logScoped(
+            "UnifiedSync",
+            "antigravityRotator",
+            "error",
+            `Antigravity rotation failed: ${rotatorError}`,
+          );
         }
       }
       if (deps.fleetMaintenance) {
         const outcome = settled[taskIndex++];
         if (outcome.status === "rejected") {
-          const fleetErr = outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason);
-          logActivity("error", `Unified Sync Cycle: Fleet maintenance failed: ${fleetErr}`);
+          const fleetErr =
+            outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason);
+          logScoped(
+            "UnifiedSync",
+            "fleetMaintenance",
+            "error",
+            `Fleet maintenance failed: ${fleetErr}`,
+          );
           fleetResult = {
             pendingRemovals: 0,
             syncedEndpoints: 0,
@@ -163,9 +272,37 @@ export function createUnifiedSyncCoordinator(deps: UnifiedSyncCoordinatorDeps): 
           };
         }
       }
+      if (deps.dualRouterScheduler) {
+        const outcome = settled[taskIndex++];
+        if (outcome.status === "rejected") {
+          dualRouterError =
+            outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason);
+          logScoped(
+            "UnifiedSync",
+            "dualRouter",
+            "error",
+            `Dual 9Router tick failed: ${dualRouterError}`,
+          );
+        }
+      }
 
       const durationMs = Date.now() - start;
-      logActivity("success", `Unified Sync Cycle: finished in ${Math.round(durationMs / 1000)}s`);
+      const failedCount = [routerError, rotatorError, fleetResult?.error, dualRouterError].filter(
+        Boolean,
+      ).length;
+      const totalTasks = tasks.length;
+      const executedCount = totalTasks;
+      logScoped(
+        "UnifiedSync",
+        "runCycle",
+        failedCount > 0 ? "warn" : "success",
+        `Cycle finished in ${Math.round(durationMs / 1000)}s`,
+        {
+          durationMs,
+          executed: `${executedCount}/${totalTasks}`,
+          failed: failedCount,
+        },
+      );
 
       const report: UnifiedSyncReport = {
         started: true,
@@ -194,11 +331,17 @@ export function createUnifiedSyncCoordinator(deps: UnifiedSyncCoordinatorDeps): 
           report.error = fleetResult.error;
         }
       }
+      if (dualRouterResult !== undefined) {
+        report.dualRouterResult = dualRouterResult;
+        if (dualRouterError && !report.error) {
+          report.error = dualRouterError;
+        }
+      }
 
       return report;
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      logActivity("error", `Unified Sync Cycle critical failure: ${errMsg}`);
+      logScoped("UnifiedSync", "runCycle", "error", `Critical failure: ${errMsg}`);
       return {
         started: false,
         running: false,

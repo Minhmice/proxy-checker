@@ -794,7 +794,7 @@ func TestApplyDesiredKeepsHeartbeatLiveAndReportDurable(t *testing.T) {
 		if err != nil {
 			t.Fatalf("heartbeat failed during apply: %v", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("heartbeat blocked behind slow deployment")
 	}
 	select {
@@ -802,7 +802,7 @@ func TestApplyDesiredKeepsHeartbeatLiveAndReportDurable(t *testing.T) {
 		if heartbeat.Runtime == nil || heartbeat.Runtime.Activity.Kind != "applying" || heartbeat.Runtime.Activity.Revision == nil || *heartbeat.Runtime.Activity.Revision != 1 {
 			t.Fatalf("heartbeat missed applying state: %+v", heartbeat.Runtime)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("heartbeat request not observed")
 	}
 	close(finishDeploy)

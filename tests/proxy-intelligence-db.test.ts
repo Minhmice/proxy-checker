@@ -4,7 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
-import { configureProxyIntelligenceDb, openProxyIntelligenceDb, migrateProxyIntelligence } from "../src/server/proxy-intelligence-db.js";
+import {
+  configureProxyIntelligenceDb,
+  openProxyIntelligenceDb,
+  migrateProxyIntelligence,
+} from "../src/server/proxy-intelligence-db.js";
 
 test("migrates a fresh database with inventory and audit tables", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fresh-db-"));
@@ -18,9 +22,24 @@ test("migrates a fresh database with inventory and audit tables", () => {
     assert.ok(names.includes("password"));
     assert.ok(names.includes("created_at"));
     assert.ok(names.includes("updated_at"));
-    assert.equal(db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name='proxy_audits'").length, 0);
-    assert.equal(db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name='proxy_diagnostics'").length, 0);
-    assert.equal(db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name='proxy_audit_risks'").length, 0);
+    assert.equal(
+      db.all<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='proxy_audits'",
+      ).length,
+      0,
+    );
+    assert.equal(
+      db.all<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='proxy_diagnostics'",
+      ).length,
+      0,
+    );
+    assert.equal(
+      db.all<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='proxy_audit_risks'",
+      ).length,
+      0,
+    );
 
     // Idempotency: migrate again without throwing
     assert.doesNotThrow(() => {
@@ -74,14 +93,21 @@ test("preserves legacy rows and is idempotent across reopen", () => {
       checked_at INTEGER NOT NULL DEFAULT 0
     );
   `);
-  legacy.prepare(
-    "INSERT INTO proxies (proxy_key, endpoint, protocol, host, port, status, successes, failures) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-  ).run("legacy-key", "http://127.0.0.1:8080", "http", "127.0.0.1", 8080, "usable", 3, 1);
+  legacy
+    .prepare(
+      "INSERT INTO proxies (proxy_key, endpoint, protocol, host, port, status, successes, failures) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .run("legacy-key", "http://127.0.0.1:8080", "http", "127.0.0.1", 8080, "usable", 3, 1);
   legacy.close();
 
   const db = openProxyIntelligenceDb(dir);
   try {
-    const migrated = db.get<{ proxy_key: string; source: string; lifecycle_state: string; successes: number }>(
+    const migrated = db.get<{
+      proxy_key: string;
+      source: string;
+      lifecycle_state: string;
+      successes: number;
+    }>(
       "SELECT proxy_key, source, lifecycle_state, successes FROM proxies WHERE proxy_key = 'legacy-key'",
     );
     assert.deepEqual(migrated, {
@@ -97,8 +123,16 @@ test("preserves legacy rows and is idempotent across reopen", () => {
     db.close();
     const reopened = openProxyIntelligenceDb(dir);
     try {
-      assert.equal(reopened.get<{ count: number }>("SELECT COUNT(*) AS count FROM proxies")?.count, countBefore);
-      assert.equal(reopened.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name='proxy_audits'").length, 0);
+      assert.equal(
+        reopened.get<{ count: number }>("SELECT COUNT(*) AS count FROM proxies")?.count,
+        countBefore,
+      );
+      assert.equal(
+        reopened.all<{ name: string }>(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='proxy_audits'",
+        ).length,
+        0,
+      );
     } finally {
       reopened.close();
     }

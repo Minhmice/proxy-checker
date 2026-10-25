@@ -76,7 +76,7 @@ test("fleet repository initializes sqlite storage and manages nodes and endpoint
         password: "another_password",
         enabled: true,
       }),
-      /UNIQUE constraint failed|duplicate listener/i
+      /UNIQUE constraint failed|duplicate listener/i,
     );
 
     // 6. Record health check
@@ -186,7 +186,7 @@ test("fleet repository handles durable node removal lifecycle, controller guard,
         assert.ok(err instanceof Error);
         assert.match(err.message, /controller/i);
         return true;
-      }
+      },
     );
 
     // 2. Set token and request removal
@@ -197,21 +197,24 @@ test("fleet repository handles durable node removal lifecycle, controller guard,
     assert.equal(removal.status, "pending");
     assert.equal(await repo.verifyNodeAgentToken(worker.id, "worker-token"), false);
     assert.equal(await repo.getNodeDesiredState(worker.id), null);
-    assert.equal((await repo.listNodes()).some((n) => n.id === worker.id), false);
+    assert.equal(
+      (await repo.listNodes()).some((n) => n.id === worker.id),
+      false,
+    );
     assert.notEqual(await repo.getNextWireguardIp(), worker.wireguard_ip);
 
     // 3. Endpoints of pending node excluded from public query
     assert.equal(await repo.getEndpoint(ep.id), null);
     const publicEndpoints = await repo.listEndpoints();
-    assert.equal(publicEndpoints.some((e) => e.id === ep.id), false);
+    assert.equal(
+      publicEndpoints.some((e) => e.id === ep.id),
+      false,
+    );
     // Credentials and update of pending node endpoints are hidden/rejected
     assert.equal(await repo.getEndpointCredentials(ep.id), null);
-    await assert.rejects(
-      async () => {
-        await repo.updateEndpoint(ep.id, { enabled: false });
-      },
-      /not found/i
-    );
+    await assert.rejects(async () => {
+      await repo.updateEndpoint(ep.id, { enabled: false });
+    }, /not found/i);
 
     // Durable intent across DB reopen / process restart
     repo.close();
@@ -229,16 +232,13 @@ test("fleet repository handles durable node removal lifecycle, controller guard,
     assert.equal(cleanupEndpoints[0].id, ep.id);
 
     // 5. Health checks rejected for pending node
-    await assert.rejects(
-      async () => {
-        await repo.recordHealthCheck({
-          endpointId: ep.id,
-          nodeId: worker.id,
-          status: "healthy",
-        });
-      },
-      /pending removal/i
-    );
+    await assert.rejects(async () => {
+      await repo.recordHealthCheck({
+        endpointId: ep.id,
+        nodeId: worker.id,
+        status: "healthy",
+      });
+    }, /pending removal/i);
 
     // 6. Record bounded error
     await repo.recordNodeRemovalError(worker.id, "cleanup connection timeout");

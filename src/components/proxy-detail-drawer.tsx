@@ -16,11 +16,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
-import {
-  checkProxyValidity,
-  fetchProxyAuditDetail,
-  fetchProxyHistory,
-} from "@/lib/api";
+import { checkProxyValidity, fetchProxyAuditDetail, fetchProxyHistory } from "@/lib/api";
 import { isAbortError } from "@/lib/request-lifecycle";
 import type {
   UnifiedProxyItem,
@@ -134,7 +130,9 @@ export function ProxyDetailDrawer({
     setChecking(true);
     try {
       const res = await checkProxyValidity(proxyKey);
-      toast.success(`Check succeeded: ${res.proxy.health?.toUpperCase() || res.proxy.status.toUpperCase()}`);
+      toast.success(
+        `Check succeeded: ${res.proxy.health?.toUpperCase() || res.proxy.status.toUpperCase()}`,
+      );
       if (onProxyUpdated) {
         onProxyUpdated(res.proxy);
       }
@@ -148,11 +146,13 @@ export function ProxyDetailDrawer({
     }
   };
 
-
   if (!proxy) return null;
 
   const endpoint = `${proxy.host}:${proxy.port}`;
-  const effectiveVerdict = auditDetail?.verdict || proxy.lastAudit?.verdict || (proxy.status === "working" ? "PASS" : "FAIL");
+  const effectiveVerdict =
+    auditDetail?.verdict ||
+    proxy.lastAudit?.verdict ||
+    (proxy.status === "working" ? "PASS" : "FAIL");
   const isHealthy = proxy.health === "working" || proxy.status === "working";
   const isRegressed = proxy.health === "regressed" || proxy.status === "regressed";
 
@@ -181,7 +181,10 @@ export function ProxyDetailDrawer({
         );
       default:
         return (
-          <Badge variant="outline" className="text-muted-foreground text-xs font-semibold px-2.5 py-0.5">
+          <Badge
+            variant="outline"
+            className="text-muted-foreground text-xs font-semibold px-2.5 py-0.5"
+          >
             <HelpCircle className="h-3 w-3 mr-1 shrink-0" />
             UNKNOWN
           </Badge>
@@ -198,9 +201,15 @@ export function ProxyDetailDrawer({
       case "FAIL":
         return <span className="text-[11px] font-semibold text-rose-400 uppercase">FAIL</span>;
       case "UNSUPPORTED":
-        return <span className="text-[11px] font-medium text-muted-foreground uppercase">UNSUPPORTED</span>;
+        return (
+          <span className="text-[11px] font-medium text-muted-foreground uppercase">
+            UNSUPPORTED
+          </span>
+        );
       case "SKIPPED":
-        return <span className="text-[11px] font-medium text-muted-foreground uppercase">SKIPPED</span>;
+        return (
+          <span className="text-[11px] font-medium text-muted-foreground uppercase">SKIPPED</span>
+        );
       case "ERROR":
       default:
         return <span className="text-[11px] font-semibold text-rose-400 uppercase">ERROR</span>;
@@ -225,14 +234,13 @@ export function ProxyDetailDrawer({
 
   // ponytail: Exit node verified only when probe or audit returns explicit exit IP. Host address must never masquerade as verified exit.
   const verifiedExitIp = auditDetail?.exit?.ip || proxy.exitIp || null;
-  const locationText = [
-    auditDetail?.exit?.city || proxy.geo?.city,
-    auditDetail?.exit?.country || proxy.geo?.country,
-  ]
-    .filter(Boolean)
-    .join(", ") || (verifiedExitIp ? "Unknown Location" : "Unmeasured");
+  const locationText =
+    [auditDetail?.exit?.city || proxy.geo?.city, auditDetail?.exit?.country || proxy.geo?.country]
+      .filter(Boolean)
+      .join(", ") || (verifiedExitIp ? "Unknown Location" : "Unmeasured");
 
-  const ispText = auditDetail?.exit?.isp || proxy.isp || (verifiedExitIp ? "Unknown ISP" : "Unmeasured");
+  const ispText =
+    auditDetail?.exit?.isp || proxy.isp || (verifiedExitIp ? "Unknown ISP" : "Unmeasured");
   const asnText = auditDetail?.exit?.asn ? ` • ${auditDetail.exit.asn}` : "";
 
   return (
@@ -255,7 +263,11 @@ export function ProxyDetailDrawer({
             <SheetTitle className="text-base font-bold font-mono tracking-tight text-foreground break-all">
               {endpoint}
             </SheetTitle>
-            <CopyButton value={endpoint} label="Endpoint" className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground shrink-0" />
+            <CopyButton
+              value={endpoint}
+              label="Endpoint"
+              className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground shrink-0"
+            />
           </div>
 
           <SheetDescription className="text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5">
@@ -264,8 +276,8 @@ export function ProxyDetailDrawer({
               {auditDetail?.checkedAt
                 ? new Date(auditDetail.checkedAt).toLocaleString()
                 : proxy.lastCheckedAt
-                ? new Date(proxy.lastCheckedAt).toLocaleString()
-                : "Not checked yet"}
+                  ? new Date(proxy.lastCheckedAt).toLocaleString()
+                  : "Not checked yet"}
             </span>
           </SheetDescription>
         </SheetHeader>
@@ -287,13 +299,15 @@ export function ProxyDetailDrawer({
                     disabled={loadingDetail}
                     className="h-7 text-xs border-rose-500/40 text-rose-300 hover:bg-rose-500/20"
                   >
-                    {loadingDetail ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <RotateCcw className="h-3 w-3 mr-1" />}
+                    {loadingDetail ? (
+                      <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                    ) : (
+                      <RotateCcw className="h-3 w-3 mr-1" />
+                    )}
                     Retry
                   </Button>
                 </div>
-                <p className="text-[11px] text-rose-300/90 font-mono break-all">
-                  {detailError}
-                </p>
+                <p className="text-[11px] text-rose-300/90 font-mono break-all">{detailError}</p>
               </div>
             )}
 
@@ -305,7 +319,8 @@ export function ProxyDetailDrawer({
                   <span>Regression Detected (Zombie Proxy)</span>
                 </div>
                 <p className="text-[11px] text-muted-foreground">
-                  This proxy successfully connected or passed audits in the past, but is currently unreachable.
+                  This proxy successfully connected or passed audits in the past, but is currently
+                  unreachable.
                 </p>
               </div>
             )}
@@ -324,10 +339,14 @@ export function ProxyDetailDrawer({
               </div>
 
               <div className="flex items-baseline justify-between gap-2 flex-wrap">
-                <span className={cn(
-                  "font-bold font-mono break-all",
-                  verifiedExitIp ? "text-xl text-foreground" : "text-sm text-muted-foreground/80 italic"
-                )}>
+                <span
+                  className={cn(
+                    "font-bold font-mono break-all",
+                    verifiedExitIp
+                      ? "text-xl text-foreground"
+                      : "text-sm text-muted-foreground/80 italic",
+                  )}
+                >
                   {verifiedExitIp || "Exit IP unverified (no probe recorded)"}
                 </span>
                 <Badge variant="secondary" className="text-xs font-normal">
@@ -351,7 +370,9 @@ export function ProxyDetailDrawer({
             <div className="space-y-2.5">
               <h4 className="font-semibold text-foreground text-xs uppercase tracking-wider flex items-center justify-between">
                 <span>Security & Reliability Scores</span>
-                {loadingDetail && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+                {loadingDetail && (
+                  <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                )}
               </h4>
 
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
@@ -364,7 +385,10 @@ export function ProxyDetailDrawer({
                       key={item.label}
                       className="rounded-lg border border-border/50 bg-surface/40 p-2.5 flex flex-col justify-between"
                     >
-                      <span className="text-[10px] uppercase font-semibold text-muted-foreground truncate" title={item.label}>
+                      <span
+                        className="text-[10px] uppercase font-semibold text-muted-foreground truncate"
+                        title={item.label}
+                      >
                         {item.label}
                       </span>
                       <span
@@ -374,9 +398,9 @@ export function ProxyDetailDrawer({
                             ? score >= 80
                               ? "text-emerald-400"
                               : score >= 50
-                              ? "text-amber-400"
-                              : "text-rose-400"
-                            : "text-muted-foreground/60 text-xs"
+                                ? "text-amber-400"
+                                : "text-rose-400"
+                            : "text-muted-foreground/60 text-xs",
                         )}
                       >
                         {hasScore ? `${score}/100` : "Not measured"}
@@ -403,8 +427,8 @@ export function ProxyDetailDrawer({
                         reason.severity === "critical"
                           ? "border-rose-500/40 bg-rose-500/10 text-rose-300"
                           : reason.severity === "warning"
-                          ? "border-amber-500/40 bg-amber-500/10 text-amber-300"
-                          : "border-blue-500/40 bg-blue-500/10 text-blue-300"
+                            ? "border-amber-500/40 bg-amber-500/10 text-amber-300"
+                            : "border-primary/40 bg-primary/10 text-primary",
                       )}
                     >
                       {reason.severity === "critical" ? (
@@ -412,7 +436,7 @@ export function ProxyDetailDrawer({
                       ) : reason.severity === "warning" ? (
                         <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
                       ) : (
-                        <Info className="h-4 w-4 shrink-0 text-blue-400 mt-0.5" />
+                        <Info className="h-4 w-4 shrink-0 text-primary mt-0.5" />
                       )}
 
                       <div className="space-y-0.5 flex-1">
@@ -449,7 +473,9 @@ export function ProxyDetailDrawer({
                           </span>
                           {renderProbeStatus(probe.status)}
                         </div>
-                        <p className="text-[11px] text-muted-foreground leading-normal">{probe.summary}</p>
+                        <p className="text-[11px] text-muted-foreground leading-normal">
+                          {probe.summary}
+                        </p>
                       </div>
                     </div>
                   ))}
@@ -486,7 +512,9 @@ export function ProxyDetailDrawer({
                   Recent Checks History
                 </h4>
                 <span className="text-muted-foreground font-mono text-[11px]">
-                  {loadingDetail ? "Loading..." : `${history.length} record${history.length === 1 ? "" : "s"}`}
+                  {loadingDetail
+                    ? "Loading..."
+                    : `${history.length} record${history.length === 1 ? "" : "s"}`}
                 </span>
               </div>
 
@@ -523,7 +551,7 @@ export function ProxyDetailDrawer({
                               "text-[10px] uppercase font-mono py-0 shrink-0",
                               entry.status === "passed"
                                 ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
-                                : ""
+                                : "",
                             )}
                           >
                             {entry.status === "passed" ? "Passed" : "Failed"}

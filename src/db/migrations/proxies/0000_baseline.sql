@@ -60,3 +60,17 @@ CREATE TABLE `proxy_test_history` (
 );
 --> statement-breakpoint
 CREATE INDEX `idx_proxy_test_history_key` ON `proxy_test_history` (`proxy_key`,"tested_at" desc);
+
+CREATE TABLE google_transport_observations (
+  router_url TEXT NOT NULL,
+  proxy_pool_id TEXT NOT NULL,
+  endpoint TEXT NOT NULL,
+  pool_revision INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  http_status INTEGER,
+  error_code TEXT,
+  checked_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  PRIMARY KEY(router_url,proxy_pool_id,endpoint,pool_revision)
+);
+CREATE INDEX idx_google_transport_expiry ON google_transport_observations(expires_at);

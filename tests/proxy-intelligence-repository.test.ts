@@ -4,7 +4,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { openProxyIntelligenceDb } from "../src/server/proxy-intelligence-db.js";
-import { createProxyIntelligenceRepository, type ProxyInventoryItem } from "../src/server/proxy-intelligence-repository.js";
+import {
+  createProxyIntelligenceRepository,
+  type ProxyInventoryItem,
+} from "../src/server/proxy-intelligence-repository.js";
 import type { ProxyAuditResult } from "../src/lib/types.js";
 
 function auditResult(verdict: "PASS" | "FAIL", latencyMs: number): ProxyAuditResult {
@@ -126,7 +129,9 @@ test("persistAuditSnapshot clears latency_ms and last_latency_ms on FAIL", async
     const proxyKey = listBefore.items[0].proxyKey;
 
     // Pre-populate with latency
-    db.run("UPDATE proxies SET latency_ms = 150, last_latency_ms = 150 WHERE proxy_key = ?", [proxyKey]);
+    db.run("UPDATE proxies SET latency_ms = 150, last_latency_ms = 150 WHERE proxy_key = ?", [
+      proxyKey,
+    ]);
 
     // Snapshot with FAIL verdict
     await repo.persistAuditSnapshot({
@@ -136,7 +141,7 @@ test("persistAuditSnapshot clears latency_ms and last_latency_ms on FAIL", async
 
     const row = db.get<{ latency_ms: number | null; last_latency_ms: number | null }>(
       "SELECT latency_ms, last_latency_ms FROM proxies WHERE proxy_key = ?",
-      [proxyKey]
+      [proxyKey],
     );
 
     assert.equal(row?.latency_ms, null);
@@ -150,7 +155,7 @@ test("persistAuditSnapshot clears latency_ms and last_latency_ms on FAIL", async
 
     const rowPass = db.get<{ latency_ms: number | null; last_latency_ms: number | null }>(
       "SELECT latency_ms, last_latency_ms FROM proxies WHERE proxy_key = ?",
-      [proxyKey]
+      [proxyKey],
     );
     assert.equal(rowPass?.latency_ms, 120);
     assert.equal(rowPass?.last_latency_ms, 120);
@@ -181,8 +186,12 @@ test("listProxies sorts dead proxies with freshly-checked at bottom", async () =
     // 10.0.0.2: checked long ago (checked_at = 1000)
     // 10.0.0.3: checked recently (checked_at = 2000)
     db.run("UPDATE proxies SET status = 'dead', checked_at = 0 WHERE endpoint LIKE '%10.0.0.1%'");
-    db.run("UPDATE proxies SET status = 'dead', checked_at = 1000 WHERE endpoint LIKE '%10.0.0.2%'");
-    db.run("UPDATE proxies SET status = 'dead', checked_at = 2000 WHERE endpoint LIKE '%10.0.0.3%'");
+    db.run(
+      "UPDATE proxies SET status = 'dead', checked_at = 1000 WHERE endpoint LIKE '%10.0.0.2%'",
+    );
+    db.run(
+      "UPDATE proxies SET status = 'dead', checked_at = 2000 WHERE endpoint LIKE '%10.0.0.3%'",
+    );
 
     const list = await repo.listProxies({ pageSize: 10 });
     const hosts = list.items.map((i: ProxyInventoryItem) => i.host);
@@ -215,12 +224,15 @@ test("unified health order rotates failed proxies by check age, not stale latenc
       db.run(
         `INSERT INTO proxies (proxy_key, endpoint, protocol, host, port, status, latency_ms, checked_at, successes, failures, source, lifecycle_state, ever_passed)
          VALUES (?, ?, 'http', ?, 8080, 'dead', ?, ?, 0, ?, 'test', 'dead', ?)`,
-        [key, `${host}:8080`, host, latency, checkedAt, failures, everPassed]
+        [key, `${host}:8080`, host, latency, checkedAt, failures, everPassed],
       );
     }
 
     const result = await repo.getUnifiedProxies({ pageSize: 10 });
-    assert.deepEqual(result.items.map((item) => item.host), ["never.example", "old.example", "recent.example"]);
+    assert.deepEqual(
+      result.items.map((item) => item.host),
+      ["never.example", "old.example", "recent.example"],
+    );
     assert.equal(result.items[1]?.latencyMs, null);
     assert.equal(result.items[2]?.latencyMs, null);
     db.close();
@@ -239,19 +251,28 @@ test("unified filters exact proxy key, source, and computed health separately fr
     db.run(
       `INSERT INTO proxies (proxy_key, endpoint, protocol, host, port, status, successes, failures, source, lifecycle_state)
        VALUES (?, ?, 'http', ?, 8080, 'dead', 1, 2, ?, 'working')`,
-      ["http://exact.example:8080", "exact.example:8080", "exact.example", "shown-source"]
+      ["http://exact.example:8080", "exact.example:8080", "exact.example", "shown-source"],
     );
     db.run(
       `INSERT INTO proxies (proxy_key, endpoint, protocol, host, port, status, successes, failures, source, lifecycle_state)
        VALUES (?, ?, 'http', ?, 8080, 'dead', 0, 2, ?, 'dead')`,
-      ["http://other.example:8080", "other.example:8080", "other.example", "other-source"]
+      ["http://other.example:8080", "other.example:8080", "other.example", "other-source"],
     );
 
-    const exact = await repo.getUnifiedProxies({ proxyKey: "http://exact.example:8080", source: "shown-source" });
-    assert.deepEqual(exact.items.map((item) => item.proxyKey), ["http://exact.example:8080"]);
+    const exact = await repo.getUnifiedProxies({
+      proxyKey: "http://exact.example:8080",
+      source: "shown-source",
+    });
+    assert.deepEqual(
+      exact.items.map((item) => item.proxyKey),
+      ["http://exact.example:8080"],
+    );
 
     const regressed = await repo.getUnifiedProxies({ health: "regressed", source: "shown-source" });
-    assert.deepEqual(regressed.items.map((item) => item.proxyKey), ["http://exact.example:8080"]);
+    assert.deepEqual(
+      regressed.items.map((item) => item.proxyKey),
+      ["http://exact.example:8080"],
+    );
     db.close();
   } finally {
     try {
@@ -267,10 +288,17 @@ test("failed live latency is sanitized without changing audit evidence", async (
     const repo = createProxyIntelligenceRepository({ db });
     await repo.importProxies({ source: "test.txt", content: "http://evidence.example:8080" });
     const key = "http://evidence.example:8080";
-    await repo.persistAuditSnapshot({ proxyKey: key, result: auditResult("FAIL", 9876), finishedAt: 5000 });
+    await repo.persistAuditSnapshot({
+      proxyKey: key,
+      result: auditResult("FAIL", 9876),
+      finishedAt: 5000,
+    });
     const current = await repo.getUnifiedProxies({ proxyKey: key });
     assert.equal(current.items[0]?.latencyMs, null);
-    const row = db.get<{ last_verdict: string }>("SELECT last_verdict FROM proxies WHERE proxy_key = ?", [key]);
+    const row = db.get<{ last_verdict: string }>(
+      "SELECT last_verdict FROM proxies WHERE proxy_key = ?",
+      [key],
+    );
     assert.equal(row?.last_verdict, "FAIL");
     db.close();
   } finally {

@@ -24,11 +24,40 @@ const entries: ActivityEntry[] = [];
 let progress: SyncProgress = { phase: "idle", checked: 0, total: 0, remoteTotal: 0 };
 const throttleKeys = new Map<string, number>();
 
-function levelPrefix(level: ActivityLevel): string {
-  if (level === "error") return "ERROR";
-  if (level === "warn") return "WARN";
-  if (level === "success") return "OK";
-  return "INFO";
+export function levelPrefix(level: ActivityLevel): string {
+  if (level === "error") return "[ERROR]";
+  if (level === "warn") return "[WARN ]";
+  if (level === "success") return "[OK   ]";
+  return "[INFO ]";
+}
+
+export function formatScope(scope: string, fn?: string): string {
+  return fn ? `[${scope}::${fn}]` : `[${scope}]`;
+}
+
+export function formatMeta(meta?: Record<string, unknown>): string {
+  if (!meta) return "";
+  const pairs = Object.entries(meta)
+    .filter(([, v]) => v !== undefined)
+    .map(([k, v]) => {
+      if (typeof v === "object" && v !== null) {
+        return `${k}=${JSON.stringify(v)}`;
+      }
+      return `${k}=${v}`;
+    });
+  return pairs.length > 0 ? ` | ${pairs.join(" ")}` : "";
+}
+
+export function logScoped(
+  scope: string,
+  fn: string,
+  level: ActivityLevel,
+  message: string,
+  meta?: Record<string, unknown>,
+) {
+  const metaStr = formatMeta(meta);
+  const scopeTag = formatScope(scope, fn);
+  logActivity(level, `${scopeTag} ${message}${metaStr}`);
 }
 
 export function logActivity(level: ActivityLevel, message: string) {
@@ -40,7 +69,12 @@ export function logActivity(level: ActivityLevel, message: string) {
 }
 
 /** Skip duplicate messages with the same key within ttlMs (default 60s). */
-export function logActivityThrottled(key: string, level: ActivityLevel, message: string, ttlMs = 60_000) {
+export function logActivityThrottled(
+  key: string,
+  level: ActivityLevel,
+  message: string,
+  ttlMs = 60_000,
+) {
   const now = Date.now();
   if (now - (throttleKeys.get(key) ?? 0) < ttlMs) return;
   throttleKeys.set(key, now);

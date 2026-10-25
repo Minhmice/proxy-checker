@@ -1,9 +1,5 @@
 import type { FleetRepository } from "./db.js";
-import {
-  createTailscaleSshClient,
-  type SshTarget,
-  type SshCredentials,
-} from "./tailscale-ssh.js";
+import { createTailscaleSshClient, type SshTarget, type SshCredentials } from "./tailscale-ssh.js";
 import { validateTailscaleIpv4, validatePublicIpv4 } from "./public-ip-gate.js";
 import { generateRandomToken } from "./security.js";
 import type { FleetNodeWithCamel } from "./types.js";
@@ -28,7 +24,10 @@ export interface ProvisioningService {
 
 export function createProvisioningService(deps: {
   repo: FleetRepository;
-  sshClientFactory?: (target: SshTarget, creds: SshCredentials) => {
+  sshClientFactory?: (
+    target: SshTarget,
+    creds: SshCredentials,
+  ) => {
     execute(command: string): Promise<string>;
     readPublicIp(): Promise<string>;
   };
@@ -38,7 +37,7 @@ export function createProvisioningService(deps: {
   async function executeProvisioning(
     node: FleetNodeWithCamel,
     creds: { username: string; password: string; port: number; hostKeyFingerprint: string },
-    controllerUrl: string
+    controllerUrl: string,
   ): Promise<void> {
     const target: SshTarget = { host: node.tailscale_ip || "", port: creds.port };
     const client = factory(target, creds);
@@ -72,7 +71,10 @@ export function createProvisioningService(deps: {
       await deps.repo.activateNode(node.id);
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      await deps.repo.recordProvisioningState(node.id, { status: "failed", error: errMsg.slice(0, 500) });
+      await deps.repo.recordProvisioningState(node.id, {
+        status: "failed",
+        error: errMsg.slice(0, 500),
+      });
       await deps.repo.disableNode(node.id, `Provisioning failed: ${errMsg.slice(0, 200)}`);
     }
   }
@@ -80,7 +82,9 @@ export function createProvisioningService(deps: {
   return {
     async provision(input: ProvisionRequest): Promise<{ nodeId: string; done: Promise<void> }> {
       const tailscaleIp = validateTailscaleIpv4(input.tailscaleIp);
-      const expectedPublicIp = input.expectedPublicIp ? validatePublicIpv4(input.expectedPublicIp) : null;
+      const expectedPublicIp = input.expectedPublicIp
+        ? validatePublicIpv4(input.expectedPublicIp)
+        : null;
       const username = (input.username || "").trim();
       if (!username) throw new Error("SSH username is required");
       if (!input.password) throw new Error("SSH password is required");
@@ -112,7 +116,7 @@ export function createProvisioningService(deps: {
       const done = executeProvisioning(
         node,
         { username, password: input.password, port, hostKeyFingerprint: fingerprint },
-        input.controllerUrl
+        input.controllerUrl,
       );
 
       return { nodeId: node.id, done };

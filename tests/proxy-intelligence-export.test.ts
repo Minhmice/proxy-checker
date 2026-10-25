@@ -25,8 +25,12 @@ test("exportWorkingProxies returns only strict qualifying proxies", async () => 
     });
 
     // Update proxies directly: perfect is usable, others are dead
-    db.run("UPDATE proxies SET status = 'usable', last_verdict = 'PASS' WHERE proxy_key LIKE '%perfect%'");
-    db.run("UPDATE proxies SET status = 'dead', last_verdict = 'FAIL' WHERE proxy_key NOT LIKE '%perfect%'");
+    db.run(
+      "UPDATE proxies SET status = 'usable', last_verdict = 'PASS' WHERE proxy_key LIKE '%perfect%'",
+    );
+    db.run(
+      "UPDATE proxies SET status = 'dead', last_verdict = 'FAIL' WHERE proxy_key NOT LIKE '%perfect%'",
+    );
     // Test default TXT export (strict)
     const txtResult = await repo.exportWorkingProxies({
       format: "txt",

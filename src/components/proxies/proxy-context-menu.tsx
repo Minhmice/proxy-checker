@@ -63,10 +63,7 @@ export function ProxyContextMenu({
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
       <ContextMenuContent className="w-56 text-xs">
         {/* 9Router Actions */}
-        <ContextMenuItem
-          onClick={() => onTest?.(proxy)}
-          className="gap-2 cursor-pointer"
-        >
+        <ContextMenuItem onClick={() => onTest?.(proxy)} className="gap-2 cursor-pointer">
           <Play className="h-3.5 w-3.5 text-primary" />
           <span>Run health check</span>
         </ContextMenuItem>
@@ -92,10 +89,7 @@ export function ProxyContextMenu({
         <ContextMenuSeparator />
 
         {/* Protection / Pin */}
-        <ContextMenuItem
-          onClick={() => onTogglePin?.(proxy)}
-          className="gap-2 cursor-pointer"
-        >
+        <ContextMenuItem onClick={() => onTogglePin?.(proxy)} className="gap-2 cursor-pointer">
           {proxy.isPinned ? (
             <>
               <PinOff className="h-3.5 w-3.5 text-muted-foreground" />
@@ -110,10 +104,7 @@ export function ProxyContextMenu({
         </ContextMenuItem>
 
         {/* Copy Tools */}
-        <ContextMenuItem
-          onClick={handleCopyEndpoint}
-          className="gap-2 cursor-pointer"
-        >
+        <ContextMenuItem onClick={handleCopyEndpoint} className="gap-2 cursor-pointer">
           <Copy className="h-3.5 w-3.5" />
           <span>Copy host:port</span>
         </ContextMenuItem>
@@ -123,10 +114,7 @@ export function ProxyContextMenu({
         </ContextMenuItem>
 
         {/* Inspect Details */}
-        <ContextMenuItem
-          onClick={() => onOpenDetail?.(proxy)}
-          className="gap-2 cursor-pointer"
-        >
+        <ContextMenuItem onClick={() => onOpenDetail?.(proxy)} className="gap-2 cursor-pointer">
           <SlidersHorizontal className="h-3.5 w-3.5" />
           <span>View details</span>
         </ContextMenuItem>

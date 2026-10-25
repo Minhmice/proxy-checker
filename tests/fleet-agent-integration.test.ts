@@ -38,7 +38,9 @@ async function waitForCondition<T>(
     if (condition(lastValue)) return lastValue;
     await waitForTick(pollIntervalMs);
   } while (Date.now() < deadline);
-  throw new Error(`${description} timed out after ${timeoutMs}ms. Last value: ${JSON.stringify(lastValue)}. ${diagnostics()}`);
+  throw new Error(
+    `${description} timed out after ${timeoutMs}ms. Last value: ${JSON.stringify(lastValue)}. ${diagnostics()}`,
+  );
 }
 
 function readBody(request: IncomingMessage, maxBytes = 65_536): Promise<Record<string, unknown>> {
@@ -56,7 +58,8 @@ function readBody(request: IncomingMessage, maxBytes = 65_536): Promise<Record<s
     try {
       const text = Buffer.concat(chunks).toString("utf8").trim();
       const value: unknown = text ? JSON.parse(text) : {};
-      if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected JSON object");
+      if (!value || typeof value !== "object" || Array.isArray(value))
+        throw new Error("Expected JSON object");
       resolve(value as Record<string, unknown>);
     } catch (error) {
       reject(error);
@@ -68,12 +71,26 @@ function readBody(request: IncomingMessage, maxBytes = 65_536): Promise<Record<s
 
 function sendJson(response: ServerResponse, body: unknown, status = 200): void {
   const payload = Buffer.from(JSON.stringify(body));
-  response.writeHead(status, { "Content-Type": "application/json", "Content-Length": payload.length, "Cache-Control": "no-store" });
+  response.writeHead(status, {
+    "Content-Type": "application/json",
+    "Content-Length": payload.length,
+    "Cache-Control": "no-store",
+  });
   response.end(payload);
 }
 
-const linuxArch = process.arch === "x64" ? "amd64" : process.arch === "arm64" ? "arm64" : process.arch === "arm" ? "armv7" : process.arch;
-const agentBinaryPath = path.resolve("bin", process.platform === "win32" ? "proxyfleet-agent.exe" : `proxyfleet-agent-linux-${linuxArch}`);
+const linuxArch =
+  process.arch === "x64"
+    ? "amd64"
+    : process.arch === "arm64"
+      ? "arm64"
+      : process.arch === "arm"
+        ? "armv7"
+        : process.arch;
+const agentBinaryPath = path.resolve(
+  "bin",
+  process.platform === "win32" ? "proxyfleet-agent.exe" : `proxyfleet-agent-linux-${linuxArch}`,
+);
 
 function trackOutput(child: ChildProcess, secrets: string[]): { output: () => string } {
   let captured = "";
@@ -117,7 +134,10 @@ async function stopAgent(child: ChildProcess | null): Promise<void> {
 }
 
 test("Go agent enrolls, reports unavailable overlay honestly, reconnects, and accepts rotated credentials", async () => {
-  assert.ok(fs.existsSync(agentBinaryPath), `Build the Go agent binary before running Fleet integration: ${agentBinaryPath}`);
+  assert.ok(
+    fs.existsSync(agentBinaryPath),
+    `Build the Go agent binary before running Fleet integration: ${agentBinaryPath}`,
+  );
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fleet-agent-integration-"));
   const dbPath = path.join(tmpDir, "fleet.sqlite3");
@@ -128,7 +148,7 @@ test("Go agent enrolls, reports unavailable overlay honestly, reconnects, and ac
 
   const handleFleetApi = createFleetApiHandler({
     repo,
-    verifyAuth: pass => pass === "control-pass-123",
+    verifyAuth: (pass) => pass === "control-pass-123",
     enrollmentOptions: {
       serverWireguardPublicKey: Buffer.alloc(32, 7).toString("base64"),
       serverWireguardEndpoint: "127.0.0.1:51820",
@@ -145,11 +165,19 @@ test("Go agent enrolls, reports unavailable overlay honestly, reconnects, and ac
   const server = http.createServer(async (request, response) => {
     const pathname = new URL(request.url || "/", "http://localhost").pathname;
     try {
-      if (request.method === "GET" && pathname === "/api/fleet/agent/desired-state") await endpointReady;
-      const handled = await handleRuntimeApi(request, response, pathname) || await handleFleetApi(request, response, pathname);
+      if (request.method === "GET" && pathname === "/api/fleet/agent/desired-state")
+        await endpointReady;
+      const handled =
+        (await handleRuntimeApi(request, response, pathname)) ||
+        (await handleFleetApi(request, response, pathname));
       if (!handled) sendJson(response, { error: "Not found" }, 404);
     } catch (error) {
-      if (!response.headersSent) sendJson(response, { error: error instanceof Error ? error.message : "Request failed" }, 500);
+      if (!response.headersSent)
+        sendJson(
+          response,
+          { error: error instanceof Error ? error.message : "Request failed" },
+          500,
+        );
       else response.destroy();
     }
   });
@@ -179,26 +207,49 @@ test("Go agent enrolls, reports unavailable overlay honestly, reconnects, and ac
       serverWireguardPublicKey: Buffer.alloc(32, 7).toString("base64"),
       serverWireguardEndpoint: "127.0.0.1:51820",
     });
-    const { token: enrollmentToken } = await enrollmentService.issueToken({ nodeName: "integration-worker-01" });
-    const child = spawnAgent(agentBinaryPath, [
-      "--server", serverUrl,
-      "--token", enrollmentToken,
-      "--node-name", "integration-worker-01",
-      "--config-dir", agentConfigDir,
-      "--proxy-config", proxyConfigPath,
-      "--interval", "1",
-    ], secrets);
+    const { token: enrollmentToken } = await enrollmentService.issueToken({
+      nodeName: "integration-worker-01",
+    });
+    const child = spawnAgent(
+      agentBinaryPath,
+      [
+        "--server",
+        serverUrl,
+        "--token",
+        enrollmentToken,
+        "--node-name",
+        "integration-worker-01",
+        "--config-dir",
+        agentConfigDir,
+        "--proxy-config",
+        proxyConfigPath,
+        "--interval",
+        "1",
+      ],
+      secrets,
+    );
     agentProcess = child.child;
     agentOutput = child.output;
 
-    const enrolledNode = await waitForCondition("Agent enrollment and heartbeat", () => repo.listNodes(), nodes =>
-      nodes.length === 1 && nodes[0].name === "integration-worker-01" && !!nodes[0].last_heartbeat_at && !!nodes[0].runtime,
-    () => `agent output: ${agentOutput()}`);
+    const enrolledNode = await waitForCondition(
+      "Agent enrollment and heartbeat",
+      () => repo.listNodes(),
+      (nodes) =>
+        nodes.length === 1 &&
+        nodes[0].name === "integration-worker-01" &&
+        !!nodes[0].last_heartbeat_at &&
+        !!nodes[0].runtime,
+      () => `agent output: ${agentOutput()}`,
+    );
     const node = enrolledNode[0];
     const initialRuntime = enrolledNode[0].runtime!;
     assert.ok(initialRuntime.sequence > 0, "agent must send actual telemetry sequence");
-    const initialState = JSON.parse(fs.readFileSync(path.join(agentConfigDir, "state.json"), "utf8")) as {
-      agent_token: string; node_id: string; last_revision: number;
+    const initialState = JSON.parse(
+      fs.readFileSync(path.join(agentConfigDir, "state.json"), "utf8"),
+    ) as {
+      agent_token: string;
+      node_id: string;
+      last_revision: number;
     };
     assert.equal(typeof initialState.agent_token, "string");
     assert.equal(initialState.node_id, node.id);
@@ -208,9 +259,17 @@ test("Go agent enrolls, reports unavailable overlay honestly, reconnects, and ac
     const reusedEnrollment = await fetch(`${serverUrl}/api/fleet/enroll`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: enrollmentToken, nodeName: "integration-worker-01", wireguardPublicKey: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=" }),
+      body: JSON.stringify({
+        token: enrollmentToken,
+        nodeName: "integration-worker-01",
+        wireguardPublicKey: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=",
+      }),
     });
-    assert.equal(reusedEnrollment.status, 400, "consumed enrollment token must not enroll another node");
+    assert.equal(
+      reusedEnrollment.status,
+      400,
+      "consumed enrollment token must not enroll another node",
+    );
     assert.equal((await repo.listNodes()).length, 1);
 
     const endpoint = await repo.createProxyEndpoint({
@@ -221,66 +280,125 @@ test("Go agent enrolls, reports unavailable overlay honestly, reconnects, and ac
       username: "user1",
       password: "pass1",
     });
-    assert.equal(endpoint.listenIp, node.wireguard_ip, "overlay endpoint must bind the enrolled node WireGuard address");
+    assert.equal(
+      endpoint.listenIp,
+      node.wireguard_ip,
+      "overlay endpoint must bind the enrolled node WireGuard address",
+    );
     markEndpointReady();
 
-    const failedDeployment = await waitForCondition("Overlay deployment failure report", async () => {
-      const freshNode = await repo.getNode(node.id);
-      return { node: freshNode, results: await repo.getNodeDeployments(node.id) };
-    }, value => value.results.some(result => result.status === "failed" && !!result.config_digest && !!result.error_message)
-      && value.node?.runtime?.activity.kind === "error",
-    () => `agent output: ${agentOutput()}`);
-    const failedResult = failedDeployment.results.find(result => result.status === "failed")!;
-    assert.ok(failedResult.config_digest.trim().length > 0, "failed overlay deployment needs a real config digest");
+    const failedDeployment = await waitForCondition(
+      "Overlay deployment failure report",
+      async () => {
+        const freshNode = await repo.getNode(node.id);
+        return { node: freshNode, results: await repo.getNodeDeployments(node.id) };
+      },
+      (value) =>
+        value.results.some(
+          (result) =>
+            result.status === "failed" && !!result.config_digest && !!result.error_message,
+        ) && value.node?.runtime?.activity.kind === "error",
+      () => `agent output: ${agentOutput()}`,
+    );
+    const failedResult = failedDeployment.results.find((result) => result.status === "failed")!;
+    assert.ok(
+      failedResult.config_digest.trim().length > 0,
+      "failed overlay deployment needs a real config digest",
+    );
     assert.ok(failedResult.error_message?.trim(), "failed overlay deployment needs a reason");
     assert.match(failedResult.error_message!, /WireGuard/i);
-    assert.ok(failedDeployment.node?.last_heartbeat_at, "failed deployment must preserve authenticated heartbeat liveness");
-    assert.ok(failedDeployment.node?.runtimeReceivedAt, "failed deployment must preserve runtime telemetry liveness");
+    assert.ok(
+      failedDeployment.node?.last_heartbeat_at,
+      "failed deployment must preserve authenticated heartbeat liveness",
+    );
+    assert.ok(
+      failedDeployment.node?.runtimeReceivedAt,
+      "failed deployment must preserve runtime telemetry liveness",
+    );
     assert.equal(failedDeployment.node?.configuration.status, "failed");
-    assert.equal(failedDeployment.node?.applied_revision, null, "failed overlay deployment must not advance applied revision");
+    assert.equal(
+      failedDeployment.node?.applied_revision,
+      null,
+      "failed overlay deployment must not advance applied revision",
+    );
 
-    const authenticated = await fetch(`${serverUrl}/api/fleet/agent/desired-state?nodeId=${node.id}`, {
-      headers: { Authorization: `Bearer ${originalToken}` },
-    });
+    const authenticated = await fetch(
+      `${serverUrl}/api/fleet/agent/desired-state?nodeId=${node.id}`,
+      {
+        headers: { Authorization: `Bearer ${originalToken}` },
+      },
+    );
     assert.equal(authenticated.status, 200);
-    const rawWithoutAuth = await fetch(`${serverUrl}/api/fleet/agent/desired-state?nodeId=${node.id}`);
+    const rawWithoutAuth = await fetch(
+      `${serverUrl}/api/fleet/agent/desired-state?nodeId=${node.id}`,
+    );
     assert.equal(rawWithoutAuth.status, 401);
 
     await stopAgent(agentProcess);
     agentProcess = null;
     const heartbeatBeforeRestart = (await repo.getNode(node.id))!.last_heartbeat_at || 0;
-    const restart = spawnAgent(agentBinaryPath, [
-      "--server", serverUrl,
-      "--config-dir", agentConfigDir,
-      "--proxy-config", proxyConfigPath,
-      "--interval", "1",
-    ], secrets);
+    const restart = spawnAgent(
+      agentBinaryPath,
+      [
+        "--server",
+        serverUrl,
+        "--config-dir",
+        agentConfigDir,
+        "--proxy-config",
+        proxyConfigPath,
+        "--interval",
+        "1",
+      ],
+      secrets,
+    );
     restartedAgent = restart.child;
     restartOutput = restart.output;
-    const reconnectedNode = await waitForCondition("Post-restart authenticated heartbeat and telemetry session", () => repo.getNode(node.id), freshNode =>
-      !!freshNode?.last_heartbeat_at && freshNode.last_heartbeat_at > heartbeatBeforeRestart
-        && !!freshNode.runtime && freshNode.runtime.sessionId !== initialRuntime.sessionId && freshNode.runtime.sequence > 0,
-    () => `agent output: ${restartOutput()}`);
-    assert.notEqual(reconnectedNode?.runtime?.sessionId, initialRuntime.sessionId, "restart must establish new telemetry session");
-    const stateAfterRestart = JSON.parse(fs.readFileSync(path.join(agentConfigDir, "state.json"), "utf8")) as typeof initialState;
+    const reconnectedNode = await waitForCondition(
+      "Post-restart authenticated heartbeat and telemetry session",
+      () => repo.getNode(node.id),
+      (freshNode) =>
+        !!freshNode?.last_heartbeat_at &&
+        freshNode.last_heartbeat_at > heartbeatBeforeRestart &&
+        !!freshNode.runtime &&
+        freshNode.runtime.sessionId !== initialRuntime.sessionId &&
+        freshNode.runtime.sequence > 0,
+      () => `agent output: ${restartOutput()}`,
+    );
+    assert.notEqual(
+      reconnectedNode?.runtime?.sessionId,
+      initialRuntime.sessionId,
+      "restart must establish new telemetry session",
+    );
+    const stateAfterRestart = JSON.parse(
+      fs.readFileSync(path.join(agentConfigDir, "state.json"), "utf8"),
+    ) as typeof initialState;
     assert.equal(stateAfterRestart.node_id, node.id, "restart must retain enrolled identity");
-    assert.equal(stateAfterRestart.agent_token, originalToken, "restart must reconnect with saved credential");
+    assert.equal(
+      stateAfterRestart.agent_token,
+      originalToken,
+      "restart must reconnect with saved credential",
+    );
     await stopAgent(restartedAgent);
     restartedAgent = null;
 
     const rotatedResponse = await fetch(`${serverUrl}/api/fleet/nodes/${node.id}/agent-token`, {
       method: "POST",
-      headers: { Authorization: `Basic ${Buffer.from("admin:control-pass-123").toString("base64")}` },
+      headers: {
+        Authorization: `Basic ${Buffer.from("admin:control-pass-123").toString("base64")}`,
+      },
     });
     assert.equal(rotatedResponse.status, 200);
-    const rotatedPayload = await rotatedResponse.json() as { nodeId: string; agentToken: string };
+    const rotatedPayload = (await rotatedResponse.json()) as { nodeId: string; agentToken: string };
     assert.equal(rotatedPayload.nodeId, node.id);
     assert.ok(rotatedPayload.agentToken);
     secrets.push(rotatedPayload.agentToken);
 
-    const oldCredential = await fetch(`${serverUrl}/api/fleet/agent/desired-state?nodeId=${node.id}`, {
-      headers: { Authorization: `Bearer ${originalToken}` },
-    });
+    const oldCredential = await fetch(
+      `${serverUrl}/api/fleet/agent/desired-state?nodeId=${node.id}`,
+      {
+        headers: { Authorization: `Bearer ${originalToken}` },
+      },
+    );
     assert.equal(oldCredential.status, 401, "credential rotation must reject prior token");
     const oldHeartbeat = await fetch(`${serverUrl}/api/fleet/agent/heartbeat`, {
       method: "POST",
@@ -290,26 +408,54 @@ test("Go agent enrolls, reports unavailable overlay honestly, reconnects, and ac
     assert.equal(oldHeartbeat.status, 401, "prior token must not refresh node liveness");
 
     const heartbeatBeforeRotation = (await repo.getNode(node.id))!.last_heartbeat_at || 0;
-    const rotated = spawnAgent(agentBinaryPath, [
-      "--server", serverUrl,
-      "--agent-token", rotatedPayload.agentToken,
-      "--config-dir", agentConfigDir,
-      "--proxy-config", proxyConfigPath,
-      "--interval", "1",
-    ], secrets);
+    const rotated = spawnAgent(
+      agentBinaryPath,
+      [
+        "--server",
+        serverUrl,
+        "--agent-token",
+        rotatedPayload.agentToken,
+        "--config-dir",
+        agentConfigDir,
+        "--proxy-config",
+        proxyConfigPath,
+        "--interval",
+        "1",
+      ],
+      secrets,
+    );
     rotatedAgent = rotated.child;
     rotatedOutput = rotated.output;
-    const rotatedNode = await waitForCondition("Rotated credential heartbeat", () => repo.getNode(node.id), freshNode =>
-      !!freshNode?.last_heartbeat_at && freshNode.last_heartbeat_at > heartbeatBeforeRotation,
-    () => `agent output: ${rotatedOutput()}`);
-    const stateAfterRotation = JSON.parse(fs.readFileSync(path.join(agentConfigDir, "state.json"), "utf8")) as typeof initialState;
+    const rotatedNode = await waitForCondition(
+      "Rotated credential heartbeat",
+      () => repo.getNode(node.id),
+      (freshNode) =>
+        !!freshNode?.last_heartbeat_at && freshNode.last_heartbeat_at > heartbeatBeforeRotation,
+      () => `agent output: ${rotatedOutput()}`,
+    );
+    const stateAfterRotation = JSON.parse(
+      fs.readFileSync(path.join(agentConfigDir, "state.json"), "utf8"),
+    ) as typeof initialState;
     assert.equal(stateAfterRotation.agent_token, rotatedPayload.agentToken);
-    assert.equal(stateAfterRotation.node_id, node.id, "credential rotation must preserve node identity");
-    assert.equal(stateAfterRotation.last_revision, initialState.last_revision, "credential rotation must preserve desired revision state");
+    assert.equal(
+      stateAfterRotation.node_id,
+      node.id,
+      "credential rotation must preserve node identity",
+    );
+    assert.equal(
+      stateAfterRotation.last_revision,
+      initialState.last_revision,
+      "credential rotation must preserve desired revision state",
+    );
     assert.equal(rotatedNode?.id, node.id);
-    assert.equal((await fetch(`${serverUrl}/api/fleet/agent/desired-state?nodeId=${node.id}`, {
-      headers: { Authorization: `Bearer ${rotatedPayload.agentToken}` },
-    })).status, 200);
+    assert.equal(
+      (
+        await fetch(`${serverUrl}/api/fleet/agent/desired-state?nodeId=${node.id}`, {
+          headers: { Authorization: `Bearer ${rotatedPayload.agentToken}` },
+        })
+      ).status,
+      200,
+    );
   } finally {
     markEndpointReady();
     await stopAgent(agentProcess);
@@ -318,7 +464,8 @@ test("Go agent enrolls, reports unavailable overlay honestly, reconnects, and ac
     const { promise: serverClosed, resolve: resolveServerClosed } = Promise.withResolvers<void>();
     server.close(() => resolveServerClosed());
     await serverClosed;
-    const { promise: listenerClosed, resolve: resolveListenerClosed } = Promise.withResolvers<void>();
+    const { promise: listenerClosed, resolve: resolveListenerClosed } =
+      Promise.withResolvers<void>();
     listener.close(() => resolveListenerClosed());
     await listenerClosed;
     repo.close();

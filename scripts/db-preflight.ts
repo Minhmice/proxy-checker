@@ -16,4 +16,6 @@ try {
     preflightAndBackupDatabase(path.join(dataDir, file), path.join(backupDir, file));
     console.log(`Backed up and verified ${file}`);
   }
-} finally { release(); }
+} finally {
+  release();
+}

@@ -21,7 +21,12 @@ import { login } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+} from "@/components/ui/input-group";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import KineticGrid from "@/components/ui/kinetic-grid";
 import { cn } from "@/lib/utils";
@@ -46,10 +51,26 @@ function playAudioTone(freq: number, type: OscillatorType, duration: number, gai
 }
 
 const LOG_ENTRIES = [
-  { tag: "AUTH", tagClass: "auth-terminal-tag", text: "Control password required for dashboard and proxy operations" },
-  { tag: "SESSION", tagClass: "auth-terminal-tag--sync", text: "Session cookie valid for 24 hours from sign-in" },
-  { tag: "SECURITY", tagClass: "auth-terminal-tag--ok", text: "Issued session token uses HttpOnly cookie" },
-  { tag: "AUDIT", tagClass: "auth-terminal-tag", text: "Operational events and proxy audits recorded to local database" },
+  {
+    tag: "AUTH",
+    tagClass: "auth-terminal-tag",
+    text: "Control password required for dashboard and proxy operations",
+  },
+  {
+    tag: "SESSION",
+    tagClass: "auth-terminal-tag--sync",
+    text: "Session cookie valid for 24 hours from sign-in",
+  },
+  {
+    tag: "SECURITY",
+    tagClass: "auth-terminal-tag--ok",
+    text: "Issued session token uses HttpOnly cookie",
+  },
+  {
+    tag: "AUDIT",
+    tagClass: "auth-terminal-tag",
+    text: "Operational events and proxy audits recorded to local database",
+  },
 ];
 
 export default function AuthPage() {
@@ -152,7 +173,9 @@ export default function AuthPage() {
       setPassword(value);
       setAuthenticated(true);
 
-      const isReduced = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const isReduced =
+        typeof window !== "undefined" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       if (isReduced) {
         router.replace("/");
         return;
@@ -199,8 +222,12 @@ export default function AuthPage() {
               <div className="flex items-center gap-3">
                 <div className="auth-gate-mark font-mono text-sm font-bold">mP</div>
                 <div>
-                  <span className="text-base font-bold text-ink tracking-tight block">minhmiceProxy</span>
-                  <span className="text-xs font-mono text-slate-400 tracking-wide">9Router Fleet Companion</span>
+                  <span className="text-base font-bold text-ink tracking-tight block">
+                    minhmiceProxy
+                  </span>
+                  <span className="text-xs font-mono text-slate-400 tracking-wide">
+                    9Router Fleet Companion
+                  </span>
                 </div>
               </div>
 
@@ -209,7 +236,8 @@ export default function AuthPage() {
                   High-throughput proxy fleet orchestration under complete control.
                 </h1>
                 <p className="mt-4 text-sm sm:text-base text-slate-300 max-w-xl leading-relaxed">
-                  Live latency ranking, sub-second route toggling, and automated health verification for 9Router proxy pools in dim control-room conditions.
+                  Live latency ranking, sub-second route toggling, and automated health verification
+                  for 9Router proxy pools in dim control-room conditions.
                 </p>
               </div>
 
@@ -256,17 +284,25 @@ export default function AuthPage() {
                 <div className="auth-terminal-box">
                   <div className="auth-terminal-header">
                     <span className="flex items-center gap-1.5">
-                      <Terminal className="size-3 text-muted-foreground" /> Session Access Guidelines
+                      <Terminal className="size-3 text-muted-foreground" /> Session Access
+                      Guidelines
                     </span>
-                    <span className="text-[10px] text-accent-green font-medium">AUTHENTICATION REQUIRED</span>
+                    <span className="text-[10px] text-accent-green font-medium">
+                      AUTHENTICATION REQUIRED
+                    </span>
                   </div>
                   <div className="space-y-1.5">
                     {LOG_ENTRIES.map((entry, idx) => (
-                      <div key={idx} className={cn("auth-terminal-line", idx >= 2 && "hidden sm:flex")}>
+                      <div
+                        key={idx}
+                        className={cn("auth-terminal-line", idx >= 2 && "hidden sm:flex")}
+                      >
                         <span className={cn("text-[11px] font-semibold shrink-0", entry.tagClass)}>
                           [{entry.tag}]
                         </span>
-                        <span className="auth-terminal-msg text-[11px] truncate text-slate-200">{entry.text}</span>
+                        <span className="auth-terminal-msg text-[11px] truncate text-slate-200">
+                          {entry.text}
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -299,7 +335,9 @@ export default function AuthPage() {
                   <Clock className="size-3 text-slate-400" />
                   <span>{timeString}</span>
                 </span>
-              ) : <div />}
+              ) : (
+                <div />
+              )}
               <Button
                 type="button"
                 variant="ghost"
@@ -307,17 +345,26 @@ export default function AuthPage() {
                 onClick={toggleAudio}
                 className={cn("auth-audio-toggle", audioEnabled && "is-active")}
                 aria-pressed={audioEnabled}
-                aria-label={audioEnabled ? "Disable UI synthesized sound" : "Enable UI synthesized sound"}
+                aria-label={
+                  audioEnabled ? "Disable UI synthesized sound" : "Enable UI synthesized sound"
+                }
                 title={audioEnabled ? "Synthesized sound feedback active" : "Sound muted"}
               >
-                {audioEnabled ? <Volume2 className="size-3 text-primary" /> : <VolumeX className="size-3 text-muted-foreground" />}
+                {audioEnabled ? (
+                  <Volume2 className="size-3 text-primary" />
+                ) : (
+                  <VolumeX className="size-3 text-muted-foreground" />
+                )}
                 <span>{audioEnabled ? "AUDIO ON" : "AUDIO OFF"}</span>
               </Button>
             </div>
 
             <Card className={cn("auth-page-card", isShaking && "is-shaking")}>
               <CardHeader className="pb-4">
-                <CardTitle id="auth-page-title" className="text-2xl font-bold tracking-tight text-ink">
+                <CardTitle
+                  id="auth-page-title"
+                  className="text-2xl font-bold tracking-tight text-ink"
+                >
                   Authorize Control Plane
                 </CardTitle>
                 <CardDescription className="text-sm text-slate-300">
@@ -334,7 +381,9 @@ export default function AuthPage() {
                     aria-live="assertive"
                   >
                     <AlertCircle className="size-4 shrink-0" />
-                    <AlertDescription className="text-xs font-medium">{errorMessage}</AlertDescription>
+                    <AlertDescription className="text-xs font-medium">
+                      {errorMessage}
+                    </AlertDescription>
                   </Alert>
                 )}
 
@@ -392,7 +441,9 @@ export default function AuthPage() {
                         <>
                           <span>Authorize Session</span>
                           <div className="flex items-center gap-1.5 ml-auto">
-                            <span className="text-[10px] font-mono opacity-65 tracking-wider hidden sm:inline">[↵ ENTER]</span>
+                            <span className="text-[10px] font-mono opacity-65 tracking-wider hidden sm:inline">
+                              [↵ ENTER]
+                            </span>
                             <ArrowRight data-icon="inline-end" className="size-4" />
                           </div>
                         </>

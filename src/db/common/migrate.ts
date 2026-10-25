@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 
-export type DatabaseDomain = "proxies" | "fleet" | "rotation";
+export type DatabaseDomain = "proxies" | "fleet" | "rotation" | "sync";
 
 export function migrateDomain(raw: Database.Database, domain: DatabaseDomain): void {
   const folder = fileURLToPath(new URL(`../migrations/${domain}/`, import.meta.url));
@@ -118,8 +118,18 @@ export function migrateDomain(raw: Database.Database, domain: DatabaseDomain): v
         const recorded = raw
           .prepare("SELECT hash FROM __drizzle_migrations ORDER BY created_at LIMIT 1")
           .get() as { hash: string } | undefined;
-        if (recorded && recorded.hash !== hash)
-          throw new Error(`Migration checksum mismatch: ${domain}`);
+        if (recorded && recorded.hash !== hash) {
+          const previousHashes: Partial<Record<DatabaseDomain, string>> = {
+            proxies: "6ff2ebf85ff6352ee05cdb87b96e853c2bdd5e30e0a3e16bf4f2d9d1f6e95d18",
+            sync: "109a5ba8a5c59209ca9f0ad9d2296c41592799113866d2eb6609a93807a4a10f",
+          };
+          if (recorded.hash !== previousHashes[domain]) {
+            throw new Error(`Migration checksum mismatch: ${domain}`);
+          }
+          raw
+            .prepare("UPDATE __drizzle_migrations SET hash = ? WHERE hash = ?")
+            .run(hash, recorded.hash);
+        }
         if (!recorded)
           raw
             .prepare("INSERT INTO __drizzle_migrations(hash,created_at) VALUES (?,?)")

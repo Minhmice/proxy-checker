@@ -3,7 +3,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { initAppConfig, getSettingsSecrets, updateSettings } from "../src/server/app-config.js";
+import {
+  initAppConfig,
+  getSettingsSecrets,
+  getSettingsPublic,
+  getNineRouterUrls,
+  updateSettings,
+} from "../src/server/app-config.js";
 
 test("app-config enforces 1 to 1440 minutes for nineRouterSyncMinutes and supports nineRouterAutoSync toggle", () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "app-config-test-"));
@@ -67,6 +73,31 @@ test("app-config normalizes, validates, and updates nineRouterUrl in settings", 
     updateSettings({ nineRouterUrl: "   https://9router.example.com///   " });
     assert.equal(getSettingsSecrets().nineRouterUrl, "https://9router.example.com");
 
+    // Supports multiple comma-separated URLs and normalizes each
+    updateSettings({ nineRouterUrl: "192.168.1.54, 9router.minhmice.com" });
+    assert.equal(
+      getSettingsSecrets().nineRouterUrl,
+      "http://192.168.1.54, http://9router.minhmice.com",
+    );
+    assert.deepEqual(getSettingsPublic().settings.nineRouterUrls, [
+      "http://192.168.1.54",
+      "http://9router.minhmice.com",
+    ]);
+
+    // Supports mixed ports and protocols with deduplication
+    updateSettings({
+      nineRouterUrl:
+        "http://192.168.1.54:20128, https://9router.minhmice.com, http://192.168.1.54:20128",
+    });
+    assert.equal(
+      getSettingsSecrets().nineRouterUrl,
+      "http://192.168.1.54:20128, https://9router.minhmice.com",
+    );
+    assert.deepEqual(getSettingsPublic().settings.nineRouterUrls, [
+      "http://192.168.1.54:20128",
+      "https://9router.minhmice.com",
+    ]);
+
     // Rejects empty URL
     assert.throws(() => updateSettings({ nineRouterUrl: "   " }), /cannot be empty/);
 
@@ -97,11 +128,19 @@ test("fleet overlay settings persist validated public configuration without priv
   process.env.CONTROL_PASSWORD = "isolated-fleet-settings";
   try {
     initAppConfig();
-    const configured = { interfaceName: "proxyfleet", controllerAddressCidr: "10.77.0.1/24", publicEndpoint: "vpn.example.test:51820", listenPort: 51820, mtu: null };
+    const configured = {
+      interfaceName: "proxyfleet",
+      controllerAddressCidr: "10.77.0.1/24",
+      publicEndpoint: "vpn.example.test:51820",
+      listenPort: 51820,
+      mtu: null,
+    };
     updateSettings({ fleetWireguard: configured });
     initAppConfig();
     assert.deepEqual(getSettingsSecrets().fleetWireguard, configured);
-    assert.throws(() => updateSettings({ fleetWireguard: { ...configured, interfaceName: "omp-pi" } }));
+    assert.throws(() =>
+      updateSettings({ fleetWireguard: { ...configured, interfaceName: "omp-pi" } }),
+    );
     assert.deepEqual(getSettingsSecrets().fleetWireguard, configured);
     updateSettings({ fleetWireguard: null });
     assert.equal(getSettingsSecrets().fleetWireguard, null);

@@ -5,7 +5,10 @@ const IV_LENGTH = 12;
 const SALT_LENGTH = 16;
 
 function getMasterKey(salt: Buffer): Buffer {
-  const secret = process.env.FLEET_ENCRYPTION_KEY || process.env.CONTROL_PASSWORD || "proxyfleet-default-fallback-master-key";
+  const secret =
+    process.env.FLEET_ENCRYPTION_KEY ||
+    process.env.CONTROL_PASSWORD ||
+    "proxyfleet-default-fallback-master-key";
   return crypto.scryptSync(secret, salt, 32);
 }
 

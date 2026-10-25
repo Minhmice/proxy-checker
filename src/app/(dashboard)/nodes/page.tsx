@@ -3,7 +3,18 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Server, Plus, RefreshCw, Copy, MoreVertical, ExternalLink, AlertTriangle, AlertCircle, Trash2, RotateCw } from "lucide-react";
+import {
+  Server,
+  Plus,
+  RefreshCw,
+  Copy,
+  MoreVertical,
+  ExternalLink,
+  AlertTriangle,
+  AlertCircle,
+  Trash2,
+  RotateCw,
+} from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/components/auth-provider";
 import { authHeaders } from "@/lib/api";
@@ -27,7 +38,15 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { formatFleetNodeStatus, formatFleetNodeRole, formatHeartbeatStatus, formatPlatform, formatRelativeTime, formatPublicIpStatus, formatProxyActivation } from "@/lib/fleet-ui-utils";
+import {
+  formatFleetNodeStatus,
+  formatFleetNodeRole,
+  formatHeartbeatStatus,
+  formatPlatform,
+  formatRelativeTime,
+  formatPublicIpStatus,
+  formatProxyActivation,
+} from "@/lib/fleet-ui-utils";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -36,21 +55,32 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import type { FleetNodeRecord, FleetNodeStatus, FleetNodeConfigurationView, FleetRemovalRecord } from "@/proxyfleet/types";
+import type {
+  FleetNodeRecord,
+  FleetNodeStatus,
+  FleetNodeConfigurationView,
+  FleetRemovalRecord,
+} from "@/proxyfleet/types";
 import { NodeContextMenu } from "@/components/nodes/node-context-menu";
 import { EnrollWorkerWizard } from "@/components/nodes/enroll-worker-wizard";
 import { DeleteNodeDialog } from "@/components/nodes/delete-node-dialog";
 function NodeConfigConvergenceIndicator({ config }: { config: FleetNodeConfigurationView }) {
   if (config.status === "applied") {
     return (
-      <span className="text-[11px] font-mono text-emerald-400 tracking-tight truncate max-w-[180px]" title={`Applied rev ${config.appliedRevision}/${config.desiredRevision}`}>
+      <span
+        className="text-[11px] font-mono text-emerald-400 tracking-tight truncate max-w-[180px]"
+        title={`Applied rev ${config.appliedRevision}/${config.desiredRevision}`}
+      >
         Applied rev {config.appliedRevision}/{config.desiredRevision}
       </span>
     );
   }
   if (config.status === "pending") {
     return (
-      <span className="text-[11px] font-mono text-amber-400 tracking-tight truncate max-w-[180px]" title={`Pending rev ${config.appliedRevision ?? "—"}/${config.desiredRevision}`}>
+      <span
+        className="text-[11px] font-mono text-amber-400 tracking-tight truncate max-w-[180px]"
+        title={`Pending rev ${config.appliedRevision ?? "—"}/${config.desiredRevision}`}
+      >
         Pending rev {config.appliedRevision ?? "—"}/{config.desiredRevision}
       </span>
     );
@@ -59,19 +89,25 @@ function NodeConfigConvergenceIndicator({ config }: { config: FleetNodeConfigura
     return (
       <span
         className="text-[11px] font-mono text-rose-400 tracking-tight truncate max-w-[180px] cursor-help"
-        title={config.error ? `Failed rev ${config.appliedRevision ?? "—"}/${config.desiredRevision}: ${config.error}` : `Failed rev ${config.appliedRevision ?? "—"}/${config.desiredRevision}`}
+        title={
+          config.error
+            ? `Failed rev ${config.appliedRevision ?? "—"}/${config.desiredRevision}: ${config.error}`
+            : `Failed rev ${config.appliedRevision ?? "—"}/${config.desiredRevision}`
+        }
       >
         Failed rev {config.appliedRevision ?? "—"}/{config.desiredRevision}
       </span>
     );
   }
   return (
-    <span className="text-[11px] font-mono text-muted-foreground/70 tracking-tight truncate max-w-[180px]" title={`Unknown rev —/${config.desiredRevision}`}>
+    <span
+      className="text-[11px] font-mono text-muted-foreground tracking-tight truncate max-w-[180px]"
+      title={`Unknown rev —/${config.desiredRevision}`}
+    >
       Unknown rev —/{config.desiredRevision}
     </span>
   );
 }
-
 
 export default function NodesPage() {
   const router = useRouter();
@@ -174,7 +210,8 @@ export default function NodesPage() {
       if (signal?.aborted) return;
       if (!nodesRes.ok) {
         const errData = await nodesRes.json().catch(() => null);
-        const msg = errData?.error || `Failed to fetch nodes (${nodesRes.status} ${nodesRes.statusText})`;
+        const msg =
+          errData?.error || `Failed to fetch nodes (${nodesRes.status} ${nodesRes.statusText})`;
         if (!signal?.aborted) {
           setError(msg);
         }
@@ -184,7 +221,9 @@ export default function NodesPage() {
       if (removalsRes) {
         if (!removalsRes.ok) {
           const errData = await removalsRes.json().catch(() => ({}));
-          setRemovalError(errData.error || `Failed to fetch pending removals (HTTP ${removalsRes.status})`);
+          setRemovalError(
+            errData.error || `Failed to fetch pending removals (HTTP ${removalsRes.status})`,
+          );
         } else {
           const remData = await removalsRes.json().catch(() => null);
           if (remData && Array.isArray(remData.removals)) {
@@ -264,8 +303,6 @@ export default function NodesPage() {
     };
   }, [password]);
 
-
-
   const activeNodes = useMemo(() => {
     const pendingIds = new Set(pendingRemovals.map((r) => r.nodeId));
     return nodes.filter((n) => !pendingIds.has(n.id));
@@ -295,10 +332,7 @@ export default function NodesPage() {
             Refresh
           </Button>
 
-          <EnrollWorkerWizard
-            password={password}
-            onNodeEnrolled={loadNodes}
-          />
+          <EnrollWorkerWizard password={password} onNodeEnrolled={loadNodes} />
         </div>
       </div>
 
@@ -322,7 +356,8 @@ export default function NodesPage() {
           <div className="flex items-center gap-2.5">
             <AlertTriangle className="size-4 text-amber-400 shrink-0" />
             <span>
-              Fleet sync failed: {error}. Showing cached snapshot{lastUpdated ? ` from ${lastUpdated.toLocaleTimeString()}` : ""}.
+              Fleet sync failed: {error}. Showing cached snapshot
+              {lastUpdated ? ` from ${lastUpdated.toLocaleTimeString()}` : ""}.
             </span>
           </div>
           <Button
@@ -339,8 +374,8 @@ export default function NodesPage() {
       )}
 
       {/* Nodes Table Card */}
-      <Card className="border-border/60 bg-card/60 shadow-none py-0 gap-0 overflow-hidden">
-        <CardHeader className="p-4 border-b border-border/40">
+      <Card className="rounded-2xl border border-[#23232C] bg-[#131318] shadow-sm py-0 gap-0 overflow-hidden">
+        <CardHeader className="p-4 border-b border-[#23232C] bg-[#0F0F13]">
           <CardTitle className="text-base">Registered Nodes ({filteredNodes.length})</CardTitle>
           <CardDescription>Live node status and connectivity</CardDescription>
         </CardHeader>
@@ -349,12 +384,24 @@ export default function NodesPage() {
             <Table>
               <TableHeader className="bg-surface/50 border-b border-border/40">
                 <TableRow className="border-0 hover:bg-transparent">
-                  <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/75 py-3 pl-4">Node</TableHead>
-                  <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/75 py-3">Status</TableHead>
-                  <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/75 py-3">Network</TableHead>
-                  <TableHead className="hidden md:table-cell text-xs font-semibold uppercase tracking-wider text-muted-foreground/75 py-3">Platform</TableHead>
-                  <TableHead className="hidden md:table-cell text-xs font-semibold uppercase tracking-wider text-muted-foreground/75 py-3">Last Heartbeat</TableHead>
-                  <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/75 py-3 pr-4 text-right">Action</TableHead>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground py-3 pl-4">
+                    Node
+                  </TableHead>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground py-3">
+                    Status
+                  </TableHead>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground py-3">
+                    Network
+                  </TableHead>
+                  <TableHead className="hidden md:table-cell text-xs font-semibold uppercase tracking-wider text-muted-foreground py-3">
+                    Platform
+                  </TableHead>
+                  <TableHead className="hidden md:table-cell text-xs font-semibold uppercase tracking-wider text-muted-foreground py-3">
+                    Last Heartbeat
+                  </TableHead>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground py-3 pr-4 text-right">
+                    Action
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -366,7 +413,12 @@ export default function NodesPage() {
                           <AlertCircle className="size-5" />
                           <span className="font-semibold text-sm">Failed to load fleet nodes</span>
                           <p className="text-xs text-muted-foreground max-w-sm">{error}</p>
-                          <Button variant="outline" size="sm" onClick={() => loadNodes()} className="mt-2 text-xs">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => loadNodes()}
+                            className="mt-2 text-xs"
+                          >
                             <RefreshCw className="size-3.5 mr-1.5" /> Retry
                           </Button>
                         </div>
@@ -412,10 +464,16 @@ export default function NodesPage() {
                                 {node.name}
                               </Link>
                               <div className="flex items-center gap-1.5 flex-wrap">
-                                <Badge variant={roleInfo.badgeVariant} className="text-[10px] font-mono px-1.5 py-0 h-4 border-border/50 shrink-0">
+                                <Badge
+                                  variant={roleInfo.badgeVariant}
+                                  className="text-[10px] font-mono px-1.5 py-0 h-4 border-border/50 shrink-0"
+                                >
                                   {roleInfo.label}
                                 </Badge>
-                                <span className="text-[10px] font-mono text-muted-foreground/60 truncate max-w-[120px] 3xl:max-w-xs" title={node.id}>
+                                <span
+                                  className="text-[10px] font-mono text-muted-foreground truncate max-w-[120px] 3xl:max-w-xs"
+                                  title={node.id}
+                                >
                                   {node.id}
                                 </span>
                               </div>
@@ -429,11 +487,13 @@ export default function NodesPage() {
                                     statusInfo.variant === "success"
                                       ? "bg-emerald-400 ring-emerald-500/20"
                                       : statusInfo.variant === "warning"
-                                      ? "bg-amber-400 ring-amber-500/20"
-                                      : "bg-rose-400 ring-rose-500/20"
+                                        ? "bg-amber-400 ring-amber-500/20"
+                                        : "bg-rose-400 ring-rose-500/20"
                                   }`}
                                 />
-                                <span className="text-xs font-medium capitalize text-foreground/90">{statusInfo.label}</span>
+                                <span className="text-xs font-medium capitalize text-foreground/90">
+                                  {statusInfo.label}
+                                </span>
                               </div>
                               <NodeConfigConvergenceIndicator config={config} />
                               {/* Key health visible on mobile where heartbeat column is hidden */}
@@ -444,17 +504,26 @@ export default function NodesPage() {
                           </TableCell>
                           <TableCell className="py-3.5">
                             <div className="flex flex-col text-xs font-mono leading-tight">
-                              <span className="text-foreground tracking-tight">{node.tailscale_ip || node.wireguard_ip}</span>
+                              <span className="text-foreground tracking-tight">
+                                {node.tailscale_ip || node.wireguard_ip}
+                              </span>
                               <div className="flex items-center gap-1.5 mt-0.5">
-                                <span className="text-[11px] text-muted-foreground">{node.public_ip || "no public IP"}</span>
+                                <span className="text-[11px] text-muted-foreground">
+                                  {node.public_ip || "no public IP"}
+                                </span>
                                 {node.public_ip_status && node.public_ip_status !== "unknown" && (
-                                  <Badge variant="outline" className={`text-[9px] px-1 py-0 h-3.5 ${formatPublicIpStatus(node.public_ip_status).variant === "success" ? "text-emerald-400 border-emerald-500/40" : formatPublicIpStatus(node.public_ip_status).variant === "warning" ? "text-amber-400 border-amber-500/40" : "text-rose-400 border-rose-500/40"}`}>
+                                  <Badge
+                                    variant="outline"
+                                    className={`text-[9px] px-1 py-0 h-3.5 ${formatPublicIpStatus(node.public_ip_status).variant === "success" ? "text-emerald-400 border-emerald-500/40" : formatPublicIpStatus(node.public_ip_status).variant === "warning" ? "text-amber-400 border-amber-500/40" : "text-rose-400 border-rose-500/40"}`}
+                                  >
                                     {formatPublicIpStatus(node.public_ip_status).label}
                                   </Badge>
                                 )}
                               </div>
                               {node.proxy_activation && (
-                                <span className={`text-[10px] mt-0.5 ${node.proxy_activation === "enabled" ? "text-emerald-400/80" : "text-amber-400/80"}`}>
+                                <span
+                                  className={`text-[10px] mt-0.5 ${node.proxy_activation === "enabled" ? "text-emerald-400/80" : "text-amber-400/80"}`}
+                                >
                                   {formatProxyActivation(node.proxy_activation).label}
                                 </span>
                               )}
@@ -464,7 +533,9 @@ export default function NodesPage() {
                             <div className="flex flex-col text-xs leading-tight">
                               <span className="font-mono text-muted-foreground">{platformStr}</span>
                               {node.agent_version && (
-                                <span className="text-[11px] font-mono text-muted-foreground/50 mt-0.5">v{node.agent_version}</span>
+                                <span className="text-[11px] font-mono text-muted-foreground mt-0.5">
+                                  v{node.agent_version}
+                                </span>
                               )}
                             </div>
                           </TableCell>
@@ -474,8 +545,8 @@ export default function NodesPage() {
                                 heartbeat.severity === "critical"
                                   ? "text-rose-400 font-medium"
                                   : heartbeat.severity === "warning"
-                                  ? "text-amber-400"
-                                  : "text-muted-foreground"
+                                    ? "text-amber-400"
+                                    : "text-muted-foreground"
                               }`}
                             >
                               {heartbeat.label}
@@ -483,12 +554,21 @@ export default function NodesPage() {
                           </TableCell>
                           <TableCell className="text-right py-3.5 pr-4">
                             <div className="flex items-center justify-end gap-1">
-                              <Button variant="ghost" size="sm" asChild className="h-8 px-2.5 text-xs text-muted-foreground hover:text-foreground hover:bg-surface-raised/70">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                asChild
+                                className="h-8 px-2.5 text-xs text-muted-foreground hover:text-foreground hover:bg-surface-raised/70"
+                              >
                                 <Link href={`/nodes/${node.id}`}>Manage</Link>
                               </Button>
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
-                                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground">
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                                  >
                                     <span className="sr-only">Open actions menu</span>
                                     <MoreVertical className="size-4" />
                                   </Button>
@@ -503,28 +583,35 @@ export default function NodesPage() {
                                     <Plus className="size-4 mr-2" /> Add endpoint
                                   </DropdownMenuItem>
                                   <DropdownMenuSeparator />
-                                  <DropdownMenuItem onClick={() => void copyText("WireGuard IP", node.wireguard_ip)}>
+                                  <DropdownMenuItem
+                                    onClick={() => void copyText("WireGuard IP", node.wireguard_ip)}
+                                  >
                                     <Copy className="size-4 mr-2" /> Copy WireGuard IP
                                   </DropdownMenuItem>
                                   {node.public_ip && (
-                                    <DropdownMenuItem onClick={() => void copyText("Public IP", node.public_ip)}>
+                                    <DropdownMenuItem
+                                      onClick={() => void copyText("Public IP", node.public_ip)}
+                                    >
                                       <Copy className="size-4 mr-2" /> Copy public IP
                                     </DropdownMenuItem>
                                   )}
-                                  <DropdownMenuItem onClick={() => void copyText("Node ID", node.id)}>
+                                  <DropdownMenuItem
+                                    onClick={() => void copyText("Node ID", node.id)}
+                                  >
                                     <Copy className="size-4 mr-2" /> Copy node ID
                                   </DropdownMenuItem>
-                                  {node.role !== "controller-worker" && node.id !== "controller-node-master" && (
-                                    <>
-                                      <DropdownMenuSeparator />
-                                      <DropdownMenuItem
-                                        onClick={() => setDeleteTargetNode(node)}
-                                        className="text-rose-400 focus:text-rose-300 cursor-pointer"
-                                      >
-                                        <Trash2 className="size-4 mr-2" /> Delete node
-                                      </DropdownMenuItem>
-                                    </>
-                                  )}
+                                  {node.role !== "controller-worker" &&
+                                    node.id !== "controller-node-master" && (
+                                      <>
+                                        <DropdownMenuSeparator />
+                                        <DropdownMenuItem
+                                          onClick={() => setDeleteTargetNode(node)}
+                                          className="text-rose-400 focus:text-rose-300 cursor-pointer"
+                                        >
+                                          <Trash2 className="size-4 mr-2" /> Delete node
+                                        </DropdownMenuItem>
+                                      </>
+                                    )}
                                 </DropdownMenuContent>
                               </DropdownMenu>
                             </div>
@@ -561,7 +648,8 @@ export default function NodesPage() {
               )}
             </div>
             <CardDescription className="text-xs text-amber-200/80">
-              These nodes are removed from fleet routing inventory. WireGuard peer cleanup and host uninstallation are pending or retrying.
+              These nodes are removed from fleet routing inventory. WireGuard peer cleanup and host
+              uninstallation are pending or retrying.
             </CardDescription>
           </CardHeader>
           <CardContent className="p-0">
@@ -587,7 +675,10 @@ export default function NodesPage() {
                       <TableCell className="py-2.5 pl-4 font-medium font-mono text-foreground">
                         {rem.nodeName || rem.nodeId}
                         {rem.lastError && (
-                          <div className="text-[10px] text-rose-400 font-mono mt-0.5 truncate max-w-xs" title={rem.lastError}>
+                          <div
+                            className="text-[10px] text-rose-400 font-mono mt-0.5 truncate max-w-xs"
+                            title={rem.lastError}
+                          >
                             Error: {rem.lastError}
                           </div>
                         )}
@@ -596,7 +687,10 @@ export default function NodesPage() {
                         {rem.wireguardIp || "—"}
                       </TableCell>
                       <TableCell className="py-2.5">
-                        <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-300 text-[10px]">
+                        <Badge
+                          variant="outline"
+                          className="border-amber-500/40 bg-amber-500/10 text-amber-300 text-[10px]"
+                        >
                           {rem.status}
                         </Badge>
                       </TableCell>
@@ -611,7 +705,9 @@ export default function NodesPage() {
                           disabled={retryingRemovalId === rem.nodeId}
                           onClick={() => void retryRemoval(rem.nodeId)}
                         >
-                          <RotateCw className={`size-3 ${retryingRemovalId === rem.nodeId ? "animate-spin" : ""}`} />
+                          <RotateCw
+                            className={`size-3 ${retryingRemovalId === rem.nodeId ? "animate-spin" : ""}`}
+                          />
                           Retry
                         </Button>
                       </TableCell>
@@ -657,7 +753,9 @@ export default function NodesPage() {
           )}
           <div className="grid gap-4 py-2">
             <div className="grid gap-2 text-sm">
-              <span className="font-medium text-xs uppercase tracking-wider text-muted-foreground">Protocol</span>
+              <span className="font-medium text-xs uppercase tracking-wider text-muted-foreground">
+                Protocol
+              </span>
               <ToggleGroup
                 type="single"
                 value={quickProtocol}
@@ -670,12 +768,18 @@ export default function NodesPage() {
                 variant="outline"
                 className="w-full"
               >
-                <ToggleGroupItem value="http" className="flex-1 text-xs">HTTP CONNECT</ToggleGroupItem>
-                <ToggleGroupItem value="socks5" className="flex-1 text-xs">SOCKS5</ToggleGroupItem>
+                <ToggleGroupItem value="http" className="flex-1 text-xs">
+                  HTTP CONNECT
+                </ToggleGroupItem>
+                <ToggleGroupItem value="socks5" className="flex-1 text-xs">
+                  SOCKS5
+                </ToggleGroupItem>
               </ToggleGroup>
             </div>
             <label htmlFor="quick-port" className="grid gap-1.5 text-sm">
-              <span className="font-medium text-xs uppercase tracking-wider text-muted-foreground">Listen port</span>
+              <span className="font-medium text-xs uppercase tracking-wider text-muted-foreground">
+                Listen port
+              </span>
               <Input
                 id="quick-port"
                 type="number"
@@ -690,7 +794,9 @@ export default function NodesPage() {
               />
             </label>
             <label htmlFor="quick-username" className="grid gap-1.5 text-sm">
-              <span className="font-medium text-xs uppercase tracking-wider text-muted-foreground">Username</span>
+              <span className="font-medium text-xs uppercase tracking-wider text-muted-foreground">
+                Username
+              </span>
               <Input
                 id="quick-username"
                 value={quickUsername}
@@ -702,7 +808,9 @@ export default function NodesPage() {
               />
             </label>
             <label htmlFor="quick-password" className="grid gap-1.5 text-sm">
-              <span className="font-medium text-xs uppercase tracking-wider text-muted-foreground">Password</span>
+              <span className="font-medium text-xs uppercase tracking-wider text-muted-foreground">
+                Password
+              </span>
               <Input
                 id="quick-password"
                 type="password"
@@ -715,7 +823,10 @@ export default function NodesPage() {
               />
             </label>
           </div>
-          <Button onClick={createQuickEndpoint} disabled={quickCreating || !quickPort || !quickUsername.trim()}>
+          <Button
+            onClick={createQuickEndpoint}
+            disabled={quickCreating || !quickPort || !quickUsername.trim()}
+          >
             {quickCreating ? "Creating…" : "Create endpoint"}
           </Button>
         </DialogContent>

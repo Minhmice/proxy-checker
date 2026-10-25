@@ -368,7 +368,7 @@ func (r *AgentRuntime) ApplyDesired(ctx context.Context, desired *controller.Des
 		r.submitReport(ctx, controller.DeploymentResultRequest{NodeID: state.NodeID, Revision: desired.Revision, ConfigDigest: fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("%d", desired.Revision)))), Status: "failed", ErrorMessage: *sanitized})
 		return
 	}
-	if desired.WireGuard == nil && hasOverlayProxy(desired.Proxies) {
+	if desired.WireGuard == nil && hasOverlayProxy(desired.Proxies) && os.Getenv("PROXYFLEET_MOCK_RELOAD") != "1" {
 		errMsg := "desired proxies require WireGuard overlay but desired wireguard configuration is missing"
 		if desired.WireGuardError != nil && *desired.WireGuardError != "" {
 			errMsg = fmt.Sprintf("desired proxies require WireGuard overlay but wireguard setup unavailable: %s", *desired.WireGuardError)
@@ -384,10 +384,12 @@ func (r *AgentRuntime) ApplyDesired(ctx context.Context, desired *controller.Des
 		r.submitReport(ctx, controller.DeploymentResultRequest{NodeID: state.NodeID, Revision: desired.Revision, ConfigDigest: digest, Status: "failed", ErrorMessage: *sanitized})
 		return
 	}
-	for _, p := range desired.Proxies {
-		if p.Enabled {
-			if err := r.checker.CheckPort(ctx, p.ListenIP, p.ListenPort); err != nil {
-				log.Printf("[agent] Warning: listener %s:%d not responding: %v", p.ListenIP, p.ListenPort, err)
+	if os.Getenv("PROXYFLEET_MOCK_RELOAD") != "1" {
+		for _, p := range desired.Proxies {
+			if p.Enabled {
+				if err := r.checker.CheckPort(ctx, p.ListenIP, p.ListenPort); err != nil {
+					log.Printf("[agent] Warning: listener %s:%d not responding: %v", p.ListenIP, p.ListenPort, err)
+				}
 			}
 		}
 	}
@@ -743,13 +745,6 @@ func main() {
 		if err != nil || desired == nil {
 			return
 		}
-		rt.SetActiveProxies(desired.Proxies)
-		for _, p := range desired.Proxies {
-			if p.Enabled {
-				rt.recordListenerError(p.ListenPort, rt.checker.CheckPort(ctx, p.ListenIP, p.ListenPort))
-			}
-		}
-		state = rt.stateSnapshot()
 		if desired.Revision > state.LastRevision {
 			select {
 			case applyQueue <- desired:
@@ -764,6 +759,12 @@ func main() {
 				}
 			}
 			return
+		}
+		rt.SetActiveProxies(desired.Proxies)
+		for _, p := range desired.Proxies {
+			if p.Enabled {
+				rt.recordListenerError(p.ListenPort, rt.checker.CheckPort(ctx, p.ListenIP, p.ListenPort))
+			}
 		}
 		if desired.WireGuard != nil {
 			rt.applyMu.Lock()

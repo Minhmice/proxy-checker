@@ -7,6 +7,13 @@ import { readSession } from "../server/session-auth.js";
 import { generateRandomToken } from "./security.js";
 import { inspectSshHostKey } from "./tailscale-ssh.js";
 import { createProvisioningService, type ProvisioningService } from "./provisioning.js";
+import { checkFleet9RouterUpdate } from "./update-checker.js";
+import { FleetSshUpdater } from "./ssh-updater.js";
+import {
+  NineRouterServerManager,
+  TARGET_NINEROUTER_SERVERS,
+  type InteractiveJob,
+} from "../server/server-interactive-updater.js";
 export interface FleetApiHandlerOptions {
   repo: FleetRepository;
   verifyAuth: (candidate: string) => boolean;
@@ -17,6 +24,8 @@ export interface FleetApiHandlerOptions {
     serverWireguardPublicKey?: string;
     serverWireguardEndpoint?: string;
   };
+  sshUpdater?: FleetSshUpdater;
+  serverManager?: NineRouterServerManager;
 }
 function sendJson(res: ServerResponse, status: number, payload: unknown): void {
   const body = Buffer.from(JSON.stringify(payload));
@@ -86,11 +95,16 @@ function readBody(req: IncomingMessage, maxBytes = 1_000_000): Promise<Record<st
 
 export function createFleetApiHandler(options: FleetApiHandlerOptions) {
   const { repo, verifyAuth, nodeRemovalService } = options;
-  const provisioningService =
-    options.provisioningService || createProvisioningService({ repo });
+  const provisioningService = options.provisioningService || createProvisioningService({ repo });
   const enrollmentService =
     options.enrollmentService || createEnrollmentService(repo, options.enrollmentOptions);
-  async function authenticateAgent(req: IncomingMessage, res: ServerResponse, nodeId: string): Promise<boolean> {
+  const sshUpdater = options.sshUpdater || new FleetSshUpdater({ repo });
+  const serverManager = options.serverManager || new NineRouterServerManager();
+  async function authenticateAgent(
+    req: IncomingMessage,
+    res: ServerResponse,
+    nodeId: string,
+  ): Promise<boolean> {
     const authorization = req.headers.authorization;
     const token = authorization?.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
     if (!nodeId || !token || !(await repo.verifyNodeAgentToken(nodeId, token))) {
@@ -103,7 +117,7 @@ export function createFleetApiHandler(options: FleetApiHandlerOptions) {
   return async function handleFleetApi(
     req: IncomingMessage,
     res: ServerResponse,
-    pathname: string
+    pathname: string,
   ): Promise<boolean> {
     if (!pathname.startsWith("/api/fleet/")) return false;
 
@@ -210,7 +224,11 @@ export function createFleetApiHandler(options: FleetApiHandlerOptions) {
         }
 
         const rawErrorMessage = body.errorMessage;
-        if (rawErrorMessage !== undefined && rawErrorMessage !== null && typeof rawErrorMessage !== "string") {
+        if (
+          rawErrorMessage !== undefined &&
+          rawErrorMessage !== null &&
+          typeof rawErrorMessage !== "string"
+        ) {
           sendJson(res, 400, { error: "errorMessage must be a string if provided" });
           return true;
         }
@@ -229,7 +247,12 @@ export function createFleetApiHandler(options: FleetApiHandlerOptions) {
         });
 
         if (outcome.reason === "future_revision") {
-          sendJson(res, 400, { ok: false, accepted: false, reason: "future_revision", error: "Future revision not accepted" });
+          sendJson(res, 400, {
+            ok: false,
+            accepted: false,
+            reason: "future_revision",
+            error: "Future revision not accepted",
+          });
           return true;
         }
 
@@ -298,11 +321,16 @@ export function createFleetApiHandler(options: FleetApiHandlerOptions) {
         const hostKeyFingerprint = String(body.hostKeyFingerprint || "").trim();
         const controllerUrl = String(body.controllerUrl || "").trim();
         const name = body.name ? String(body.name).trim() : undefined;
-        const expectedPublicIp = body.expectedPublicIp ? String(body.expectedPublicIp).trim() : undefined;
+        const expectedPublicIp = body.expectedPublicIp
+          ? String(body.expectedPublicIp).trim()
+          : undefined;
         const sshPort = typeof body.sshPort === "number" ? body.sshPort : undefined;
 
         if (!tailscaleIp || !username || !password || !hostKeyFingerprint || !controllerUrl) {
-          sendJson(res, 400, { error: "tailscaleIp, username, password, hostKeyFingerprint, and controllerUrl are required" });
+          sendJson(res, 400, {
+            error:
+              "tailscaleIp, username, password, hostKeyFingerprint, and controllerUrl are required",
+          });
           return true;
         }
 
@@ -342,7 +370,10 @@ export function createFleetApiHandler(options: FleetApiHandlerOptions) {
       return true;
     }
 
-    if (req.method === "POST" && /^\/api\/fleet\/nodes\/[^/]+\/verify-and-activate$/.test(pathname)) {
+    if (
+      req.method === "POST" &&
+      /^\/api\/fleet\/nodes\/[^/]+\/verify-and-activate$/.test(pathname)
+    ) {
       try {
         const parts = pathname.split("/");
         const nodeId = decodeURIComponent(parts[4]);
@@ -411,9 +442,13 @@ export function createFleetApiHandler(options: FleetApiHandlerOptions) {
         const status = removal.status === "completed" ? 200 : 202;
         sendJson(res, status, { removal });
       } catch (err) {
-        const status = (err && typeof err === "object" && "statusCode" in err && typeof err.statusCode === "number")
-          ? err.statusCode
-          : 500;
+        const status =
+          err &&
+          typeof err === "object" &&
+          "statusCode" in err &&
+          typeof err.statusCode === "number"
+            ? err.statusCode
+            : 500;
         sendJson(res, status, { error: (err as Error).message });
       }
       return true;
@@ -453,9 +488,13 @@ export function createFleetApiHandler(options: FleetApiHandlerOptions) {
         const status = removal.status === "completed" ? 200 : 202;
         sendJson(res, status, { removal });
       } catch (err) {
-        const status = (err && typeof err === "object" && "statusCode" in err && typeof err.statusCode === "number")
-          ? err.statusCode
-          : 500;
+        const status =
+          err &&
+          typeof err === "object" &&
+          "statusCode" in err &&
+          typeof err.statusCode === "number"
+            ? err.statusCode
+            : 500;
         sendJson(res, status, { error: (err as Error).message });
       }
       return true;
@@ -515,7 +554,11 @@ export function createFleetApiHandler(options: FleetApiHandlerOptions) {
       return true;
     }
 
-    if (req.method === "POST" && pathname.startsWith("/api/fleet/endpoints/") && pathname.endsWith("/credentials/reveal")) {
+    if (
+      req.method === "POST" &&
+      pathname.startsWith("/api/fleet/endpoints/") &&
+      pathname.endsWith("/credentials/reveal")
+    ) {
       const parts = pathname.split("/");
       const endpointId = decodeURIComponent(parts[parts.length - 3]);
       const creds = await repo.getEndpointCredentials(endpointId);
@@ -554,6 +597,52 @@ export function createFleetApiHandler(options: FleetApiHandlerOptions) {
       return true;
     }
 
+    if (req.method === "GET" && pathname === "/api/fleet/update-status") {
+      try {
+        const parsed = new URL(req.url || "/", "http://localhost");
+        const forceRefresh = parsed.searchParams.get("refresh") === "true";
+        const status = await checkFleet9RouterUpdate({ repo, forceNpmRefresh: forceRefresh });
+        sendJson(res, 200, status);
+      } catch (err) {
+        sendJson(res, 500, { error: (err as Error).message });
+      }
+      return true;
+    }
+
+    if (req.method === "POST" && pathname === "/api/fleet/upgrade") {
+      try {
+        const body = await readBody(req);
+        const serverIds = Array.isArray(body.serverIds)
+          ? (body.serverIds as string[])
+          : Array.isArray(body.nodeIds)
+            ? (body.nodeIds as string[])
+            : undefined;
+
+        // Run interactive upgrade sequence on the 2 target servers
+        const job = await serverManager.startInteractiveUpgrade(serverIds);
+        sendJson(res, 202, { ok: true, job });
+      } catch (err) {
+        sendJson(res, 400, { error: (err as Error).message });
+      }
+      return true;
+    }
+
+    if (req.method === "GET" && pathname === "/api/fleet/upgrade") {
+      const jobs = serverManager.listJobs();
+      sendJson(res, 200, { jobs });
+      return true;
+    }
+
+    if (req.method === "GET" && pathname.startsWith("/api/fleet/upgrade/")) {
+      const jobId = pathname.slice("/api/fleet/upgrade/".length);
+      const job = serverManager.getJob(jobId);
+      if (!job) {
+        sendJson(res, 404, { error: "Job not found" });
+        return true;
+      }
+      sendJson(res, 200, { job });
+      return true;
+    }
     return false;
   };
 }

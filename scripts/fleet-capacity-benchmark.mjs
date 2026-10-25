@@ -188,14 +188,18 @@ export function parseBenchmarkConfig(argv = [], env = process.env) {
     else if (a === "--ca-cert" && i + 1 < argv.length) flags.caCert = argv[++i];
     else if (a === "--node-id" && i + 1 < argv.length) flags.nodeId = argv[++i];
     else if (a.startsWith("--proxy-url")) {
-      throw new Error("Security validation error: --proxy-url cannot be passed via CLI. Set BENCHMARK_PROXY_URL.");
+      throw new Error(
+        "Security validation error: --proxy-url cannot be passed via CLI. Set BENCHMARK_PROXY_URL.",
+      );
     } else if (a.startsWith("--")) {
       throw new Error(`Validation error: Unknown argument '${a}'.`);
     }
   }
 
   if (!flags.confirmRequired) {
-    throw new Error("Validation error: --confirm-required flag is required to run controlled benchmark.");
+    throw new Error(
+      "Validation error: --confirm-required flag is required to run controlled benchmark.",
+    );
   }
 
   const rawProxy = env.BENCHMARK_PROXY_URL;
@@ -211,7 +215,9 @@ export function parseBenchmarkConfig(argv = [], env = process.env) {
   }
 
   if (!["http:", "socks5:", "socks5h:"].includes(pUrl.protocol)) {
-    throw new Error(`Validation error: Unsupported proxy scheme '${pUrl.protocol}'. Supported: http:, socks5:, socks5h:.`);
+    throw new Error(
+      `Validation error: Unsupported proxy scheme '${pUrl.protocol}'. Supported: http:, socks5:, socks5h:.`,
+    );
   }
 
   const defaultPort = pUrl.protocol === "http:" ? 80 : 1080;
@@ -227,7 +233,9 @@ export function parseBenchmarkConfig(argv = [], env = process.env) {
   }
 
   if (tUrl.protocol !== "https:") {
-    throw new Error(`Validation error: Target URL scheme must be 'https:', got '${tUrl.protocol}'.`);
+    throw new Error(
+      `Validation error: Target URL scheme must be 'https:', got '${tUrl.protocol}'.`,
+    );
   }
 
   if (tUrl.username || tUrl.password) {
@@ -236,13 +244,17 @@ export function parseBenchmarkConfig(argv = [], env = process.env) {
 
   const rawTargetHost = tUrl.hostname.replace(/^\[|\]$/g, "");
   const targetPort = tUrl.port ? parseStrictInt(tUrl.port, "target-port", 1, 65535) : 443;
-  const authority = net.isIPv6(rawTargetHost) ? `[${rawTargetHost}]:${targetPort}` : `${rawTargetHost}:${targetPort}`;
+  const authority = net.isIPv6(rawTargetHost)
+    ? `[${rawTargetHost}]:${targetPort}`
+    : `${rawTargetHost}:${targetPort}`;
 
   let protocol = flags.protocol;
   if (!protocol) {
     protocol = pUrl.protocol.startsWith("socks5") ? "socks5" : "http-connect";
   } else if (!["http-connect", "socks5"].includes(protocol)) {
-    throw new Error(`Validation error: --protocol must be 'http-connect' or 'socks5', got '${protocol}'.`);
+    throw new Error(
+      `Validation error: --protocol must be 'http-connect' or 'socks5', got '${protocol}'.`,
+    );
   }
 
   const concurrency = parseStrictInt(flags.concurrency || "1", "concurrency", 1, 100);
@@ -326,7 +338,9 @@ export async function createTunneledTlsSocket(config, signal, activeSockets) {
       if (proxy.protocol === "http-connect") {
         let req = `CONNECT ${target.authority} HTTP/1.1\r\nHost: ${target.authority}\r\nProxy-Connection: Keep-Alive\r\n`;
         if (proxy.hasAuth) {
-          const b64 = Buffer.from(`${proxy.username || ""}:${proxy.password || ""}`).toString("base64");
+          const b64 = Buffer.from(`${proxy.username || ""}:${proxy.password || ""}`).toString(
+            "base64",
+          );
           req += `Proxy-Authorization: Basic ${b64}\r\n`;
         }
         rawSocket.write(req + "\r\n");
@@ -337,7 +351,9 @@ export async function createTunneledTlsSocket(config, signal, activeSockets) {
           throw new Error(`Proxy CONNECT failed with status ${match ? match[1] : "unknown"}`);
         }
       } else {
-        const greeting = proxy.hasAuth ? Buffer.from([0x05, 0x02, 0x00, 0x02]) : Buffer.from([0x05, 0x01, 0x00]);
+        const greeting = proxy.hasAuth
+          ? Buffer.from([0x05, 0x02, 0x00, 0x02])
+          : Buffer.from([0x05, 0x01, 0x00]);
         rawSocket.write(greeting);
 
         const methodResp = await readBytes(rawSocket, 2, 15000, signal);
@@ -348,7 +364,14 @@ export async function createTunneledTlsSocket(config, signal, activeSockets) {
         if (methodResp[1] === 0x02) {
           const uBuf = Buffer.from(proxy.username || "", "utf8");
           const pBuf = Buffer.from(proxy.password || "", "utf8");
-          rawSocket.write(Buffer.concat([Buffer.from([0x01, uBuf.length]), uBuf, Buffer.from([pBuf.length]), pBuf]));
+          rawSocket.write(
+            Buffer.concat([
+              Buffer.from([0x01, uBuf.length]),
+              uBuf,
+              Buffer.from([pBuf.length]),
+              pBuf,
+            ]),
+          );
           const authResp = await readBytes(rawSocket, 2, 15000, signal);
           if (authResp[0] !== 0x01 || authResp[1] !== 0x00) {
             throw new Error(`SOCKS5 authentication failed (status: ${authResp[1]})`);
@@ -427,7 +450,7 @@ export async function executeRequest(config, signal, activeSockets) {
     agent.createConnection = (_options, callback) => {
       createTunneledTlsSocket(config, signal, activeSockets).then(
         (tlsSocket) => callback(null, tlsSocket),
-        callback
+        callback,
       );
     };
 
@@ -468,7 +491,7 @@ export async function executeRequest(config, signal, activeSockets) {
             bytesRead: 0,
           });
         });
-      }
+      },
     );
 
     req.on("error", (err) => {
@@ -498,7 +521,10 @@ export async function executeRequest(config, signal, activeSockets) {
 async function fetchControllerSnapshot(config) {
   if (!config.controllerUrl || !config.controllerToken || !config.nodeId) return null;
   try {
-    const targetUrl = new URL(`/api/fleet/nodes/${encodeURIComponent(config.nodeId)}`, config.controllerUrl);
+    const targetUrl = new URL(
+      `/api/fleet/nodes/${encodeURIComponent(config.nodeId)}`,
+      config.controllerUrl,
+    );
     const res = await fetch(targetUrl.href, {
       headers: { Authorization: `Bearer ${config.controllerToken}` },
       signal: AbortSignal.timeout(5000),
@@ -536,11 +562,22 @@ export async function runBenchmark(config) {
   const initialSnapshot = await fetchControllerSnapshot(config);
 
   // 2. Start workload deadline
-  const timer = setTimeout(() => abortCtrl.abort(new Error("Deadline reached")), config.durationSeconds * 1000);
+  const timer = setTimeout(
+    () => abortCtrl.abort(new Error("Deadline reached")),
+    config.durationSeconds * 1000,
+  );
 
   let dispatched = 0;
   const startTime = Date.now();
-  const results = { completed: 0, successful: 0, failed: 0, bytes: 0, latencies: [], statusCodes: {}, errors: {} };
+  const results = {
+    completed: 0,
+    successful: 0,
+    failed: 0,
+    bytes: 0,
+    latencies: [],
+    statusCodes: {},
+    errors: {},
+  };
 
   const worker = async () => {
     while (!abortCtrl.signal.aborted && dispatched < config.maxRequests) {
@@ -570,7 +607,8 @@ export async function runBenchmark(config) {
   const finalSnapshot = await fetchControllerSnapshot(config);
 
   const sorted = [...results.latencies].sort((a, b) => a - b);
-  const p = (pct) => sorted[Math.min(Math.floor((pct / 100) * sorted.length), Math.max(0, sorted.length - 1))] || 0;
+  const p = (pct) =>
+    sorted[Math.min(Math.floor((pct / 100) * sorted.length), Math.max(0, sorted.length - 1))] || 0;
   const sum = sorted.reduce((a, b) => a + b, 0);
 
   const durationSec = durationMs / 1000;
@@ -609,7 +647,8 @@ export async function runBenchmark(config) {
       statusCodes: results.statusCodes,
       errors: results.errors,
     },
-    controllerTelemetry: initialSnapshot || finalSnapshot ? { before: initialSnapshot, after: finalSnapshot } : null,
+    controllerTelemetry:
+      initialSnapshot || finalSnapshot ? { before: initialSnapshot, after: finalSnapshot } : null,
   };
 }
 

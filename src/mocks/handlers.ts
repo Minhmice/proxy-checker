@@ -6,7 +6,7 @@ import {
   mockProxiesList,
   mockSessionAuthenticated,
   mockSettings,
-} from "./fixtures.js";
+} from "./fixtures";
 
 export function createHandlers(origin = "*"): RequestHandler[] {
   const prefix = origin === "*" ? "*/api" : `${origin}/api`;

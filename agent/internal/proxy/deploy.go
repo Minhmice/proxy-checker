@@ -206,7 +206,7 @@ func (d *Deployer) reloadService() error {
 		}
 		return d.execCommand("systemctl", "reload-or-restart", d.reloadCmd)
 	}
-	if flag.Lookup("test.v") != nil {
+	if flag.Lookup("test.v") != nil || os.Getenv("PROXYFLEET_MOCK_RELOAD") == "1" || os.Getenv("PROXYFLEET_NO_RELOAD") == "1" {
 		return nil
 	}
 

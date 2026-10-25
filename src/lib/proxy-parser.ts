@@ -52,8 +52,10 @@ export function normalizeHost(host: string): string {
 }
 
 export function parseProxyInput(
-  input: string | { protocol: string; host: string; port: number; username?: string; password?: string },
-  defaultScheme?: string
+  input:
+    | string
+    | { protocol: string; host: string; port: number; username?: string; password?: string },
+  defaultScheme?: string,
 ): {
   parsed: ParsedProxyInput;
   redacted: RedactedProxyInfo;
@@ -64,7 +66,9 @@ export function parseProxyInput(
     let url: URL;
     try {
       url = new URL(
-        input.includes("://") || !bareHostPort ? input.trim() : `${defaultScheme ?? "http"}://${input.trim()}`
+        input.includes("://") || !bareHostPort
+          ? input.trim()
+          : `${defaultScheme ?? "http"}://${input.trim()}`,
       );
     } catch {
       throw new Error("Malformed proxy URL");
@@ -102,8 +106,10 @@ export function parseProxyInput(
     const protocol = normalizeProtocol(input.protocol);
     const host = normalizeHost(input.host);
     const port = normalizePort(input.port);
-    const username = typeof input.username === "string" && input.username ? input.username : undefined;
-    const password = typeof input.password === "string" && input.password ? input.password : undefined;
+    const username =
+      typeof input.username === "string" && input.username ? input.username : undefined;
+    const password =
+      typeof input.password === "string" && input.password ? input.password : undefined;
 
     return {
       parsed: { protocol, host, port, username, password },

@@ -37,7 +37,8 @@ test("previewImport calculates counts and protocols without mutating database", 
     assert.equal(preview.invalidLines[0]?.text.trim(), "invalid-not-a-proxy");
 
     // Verify DB was NOT mutated
-    const countBefore = db.get<{ count: number }>("SELECT COUNT(*) AS count FROM proxies")?.count ?? 0;
+    const countBefore =
+      db.get<{ count: number }>("SELECT COUNT(*) AS count FROM proxies")?.count ?? 0;
     assert.equal(countBefore, 0, "previewImport must not write to database");
 
     // 2. Commit Import
@@ -50,7 +51,8 @@ test("previewImport calculates counts and protocols without mutating database", 
     assert.equal(result.duplicates, 1);
     assert.equal(result.invalid, 1);
 
-    const countAfter = db.get<{ count: number }>("SELECT COUNT(*) AS count FROM proxies")?.count ?? 0;
+    const countAfter =
+      db.get<{ count: number }>("SELECT COUNT(*) AS count FROM proxies")?.count ?? 0;
     assert.equal(countAfter, 3, "importProxies commits valid records");
 
     db.close();

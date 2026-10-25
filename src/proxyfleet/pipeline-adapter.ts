@@ -6,12 +6,17 @@ export interface ResolvedAuditEndpoint {
   protocol: string;
   host: string;
   port: number;
-  options: { allowPrivateTargets?: boolean; allowedPrivateIps?: string[]; timeoutMs?: number; attempts?: number };
+  options: {
+    allowPrivateTargets?: boolean;
+    allowedPrivateIps?: string[];
+    timeoutMs?: number;
+    attempts?: number;
+  };
 }
 
 export async function resolveManagedEndpointForAudit(
   fleetRepo: FleetRepository,
-  endpointId: string
+  endpointId: string,
 ): Promise<ResolvedAuditEndpoint | null> {
   const endpoint = await fleetRepo.getEndpoint(endpointId);
   if (!endpoint) return null;
@@ -22,7 +27,9 @@ export async function resolveManagedEndpointForAudit(
 
   let authPrefix = "";
   if (username) {
-    authPrefix = password ? `${encodeURIComponent(username)}:${encodeURIComponent(password)}@` : `${encodeURIComponent(username)}@`;
+    authPrefix = password
+      ? `${encodeURIComponent(username)}:${encodeURIComponent(password)}@`
+      : `${encodeURIComponent(username)}@`;
   }
 
   const targetUrl = `${endpoint.protocol}://${authPrefix}${endpoint.listen_ip}:${endpoint.listen_port}`;
@@ -43,7 +50,7 @@ export async function resolveManagedEndpointForAudit(
 
 export async function syncFleetEndpointsToIntelligence(
   fleetRepo: FleetRepository,
-  intelRepo: ProxyIntelligenceRepository
+  intelRepo: ProxyIntelligenceRepository,
 ): Promise<number> {
   const endpoints = await fleetRepo.listEndpoints({ enabled: true });
   if (endpoints.length === 0) return 0;

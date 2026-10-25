@@ -62,16 +62,12 @@
       "indexes": {
         "idx_fleet_managed_proxy_key": {
           "name": "idx_fleet_managed_proxy_key",
-          "columns": [
-            "proxy_key"
-          ],
+          "columns": ["proxy_key"],
           "isUnique": false
         },
         "idx_fleet_managed_node_id": {
           "name": "idx_fleet_managed_node_id",
-          "columns": [
-            "node_id"
-          ],
+          "columns": ["node_id"],
           "isUnique": false
         }
       },
@@ -80,23 +76,15 @@
           "name": "fleet_managed_endpoints_proxy_key_proxies_proxy_key_fk",
           "tableFrom": "fleet_managed_endpoints",
           "tableTo": "proxies",
-          "columnsFrom": [
-            "proxy_key"
-          ],
-          "columnsTo": [
-            "proxy_key"
-          ],
+          "columnsFrom": ["proxy_key"],
+          "columnsTo": ["proxy_key"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
         "fleet_managed_endpoints_node_id_endpoint_id_proxy_key_pk": {
-          "columns": [
-            "node_id",
-            "endpoint_id",
-            "proxy_key"
-          ],
+          "columns": ["node_id", "endpoint_id", "proxy_key"],
           "name": "fleet_managed_endpoints_node_id_endpoint_id_proxy_key_pk"
         }
       },
@@ -323,39 +311,27 @@
       "indexes": {
         "proxies_lifecycle_idx": {
           "name": "proxies_lifecycle_idx",
-          "columns": [
-            "lifecycle_state"
-          ],
+          "columns": ["lifecycle_state"],
           "isUnique": false
         },
         "proxies_source_idx": {
           "name": "proxies_source_idx",
-          "columns": [
-            "source"
-          ],
+          "columns": ["source"],
           "isUnique": false
         },
         "proxies_protocol_lifecycle_idx": {
           "name": "proxies_protocol_lifecycle_idx",
-          "columns": [
-            "protocol",
-            "lifecycle_state"
-          ],
+          "columns": ["protocol", "lifecycle_state"],
           "isUnique": false
         },
         "proxies_source_lifecycle_idx": {
           "name": "proxies_source_lifecycle_idx",
-          "columns": [
-            "source",
-            "lifecycle_state"
-          ],
+          "columns": ["source", "lifecycle_state"],
           "isUnique": false
         },
         "proxies_last_checked_idx": {
           "name": "proxies_last_checked_idx",
-          "columns": [
-            "\"last_checked_at\" desc"
-          ],
+          "columns": ["\"last_checked_at\" desc"],
           "isUnique": false
         }
       },
@@ -413,10 +389,7 @@
       "indexes": {
         "idx_proxy_test_history_key": {
           "name": "idx_proxy_test_history_key",
-          "columns": [
-            "proxy_key",
-            "\"tested_at\" desc"
-          ],
+          "columns": ["proxy_key", "\"tested_at\" desc"],
           "isUnique": false
         }
       },
@@ -425,12 +398,8 @@
           "name": "proxy_test_history_proxy_key_proxies_proxy_key_fk",
           "tableFrom": "proxy_test_history",
           "tableTo": "proxies",
-          "columnsFrom": [
-            "proxy_key"
-          ],
-          "columnsTo": [
-            "proxy_key"
-          ],
+          "columnsFrom": ["proxy_key"],
+          "columnsTo": ["proxy_key"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }

@@ -4,7 +4,10 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { createFleetRepository } from "../src/proxyfleet/db.js";
-import { resolveManagedEndpointForAudit, syncFleetEndpointsToIntelligence } from "../src/proxyfleet/pipeline-adapter.js";
+import {
+  resolveManagedEndpointForAudit,
+  syncFleetEndpointsToIntelligence,
+} from "../src/proxyfleet/pipeline-adapter.js";
 import { openProxyIntelligenceDb } from "../src/server/proxy-intelligence-db.js";
 import { createProxyIntelligenceRepository } from "../src/server/proxy-intelligence-repository.js";
 
@@ -182,7 +185,7 @@ test("endpoint credential rotation updates mapping without stale orphans and han
       (err: Error) => {
         assert.match(err.message, /has active remote reference '9router-rem-999' pending cleanup/);
         return true;
-      }
+      },
     );
 
     // Mapping is still retained
@@ -218,7 +221,9 @@ test("unlink fleet node does not remove remote ref from shared non-fleet proxy",
     });
 
     const key = "http://shared-router-user@10.77.0.44:20004";
-    intelDb.exec(`UPDATE proxies SET remote_id = '9router-foreign-ref', router_state = 'active' WHERE proxy_key = '${key}'`);
+    intelDb.exec(
+      `UPDATE proxies SET remote_id = '9router-foreign-ref', router_state = 'active' WHERE proxy_key = '${key}'`,
+    );
 
     // 2. Fleet maps to this same shared proxy
     await intelRepo.syncManagedFleetEndpoints([
@@ -246,9 +251,13 @@ test("unlink fleet node does not remove remote ref from shared non-fleet proxy",
     assert.equal(surviving.routerState, "active");
     const durable = intelDb.get<{ remote_id: string; router_state: string; password: string }>(
       "SELECT remote_id, router_state, password FROM proxies WHERE proxy_key = ?",
-      [key]
+      [key],
     );
-    assert.deepEqual(durable, { remote_id: "9router-foreign-ref", router_state: "active", password: "pass" });
+    assert.deepEqual(durable, {
+      remote_id: "9router-foreign-ref",
+      router_state: "active",
+      password: "pass",
+    });
   } finally {
     intelDb.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -335,7 +344,9 @@ test("two fleet nodes sharing same proxyKey unlink one preserves remote ref and 
       { nodeId: "node-2", endpointId: "ep-2", proxyUrl: sharedUrl },
     ]);
 
-    intelDb.exec(`UPDATE proxies SET remote_id = '9router-shared-two-nodes' WHERE proxy_key = '${sharedKey}'`);
+    intelDb.exec(
+      `UPDATE proxies SET remote_id = '9router-shared-two-nodes' WHERE proxy_key = '${sharedKey}'`,
+    );
 
     let node1Cleaned = false;
     await intelRepo.unlinkManagedFleetNode("node-1", {
@@ -353,7 +364,7 @@ test("two fleet nodes sharing same proxyKey unlink one preserves remote ref and 
     assert.equal(surviving.remoteId, "9router-shared-two-nodes");
     const durable = intelDb.get<{ remote_id: string }>(
       "SELECT remote_id FROM proxies WHERE proxy_key = ?",
-      [sharedKey]
+      [sharedKey],
     );
     assert.equal(durable?.remote_id, "9router-shared-two-nodes");
 
@@ -390,7 +401,9 @@ test("cleanupPendingManagedFleetEndpoints processes pending credential mappings 
 
     // 1. Initial sync with url1
     await intelRepo.syncManagedFleetEndpoints([{ nodeId, endpointId, proxyUrl: url1 }]);
-    intelDb.exec(`UPDATE proxies SET remote_id = '9router-pending-old' WHERE proxy_key = '${key1}'`);
+    intelDb.exec(
+      `UPDATE proxies SET remote_id = '9router-pending-old' WHERE proxy_key = '${key1}'`,
+    );
 
     // 2. Rotate to url2
     await intelRepo.syncManagedFleetEndpoints([{ nodeId, endpointId, proxyUrl: url2 }]);
@@ -428,33 +441,37 @@ test("pending cleanup revalidates remote identity after external await", async (
     await intelRepo.syncManagedFleetEndpoints([
       { nodeId, endpointId, proxyUrl: "http://revalidate:pass@10.77.0.99:20009" },
     ]);
-    intelDb.run(
-      "UPDATE proxies SET remote_id = ?, router_state = 'active' WHERE proxy_key = ?",
-      ["9router-old", key]
-    );
+    intelDb.run("UPDATE proxies SET remote_id = ?, router_state = 'active' WHERE proxy_key = ?", [
+      "9router-old",
+      key,
+    ]);
     await intelRepo.syncManagedFleetEndpoints([
       { nodeId, endpointId, proxyUrl: "http://revalidate2:pass@10.77.0.99:20009" },
     ]);
 
     const result = await intelRepo.cleanupPendingManagedFleetEndpoints({
       cleanupRemoteRef: async () => {
-        intelDb.run(
-          "UPDATE proxies SET remote_id = ? WHERE proxy_key = ?",
-          ["9router-replaced", key]
-        );
+        intelDb.run("UPDATE proxies SET remote_id = ? WHERE proxy_key = ?", [
+          "9router-replaced",
+          key,
+        ]);
       },
     });
 
     assert.equal(result.cleaned, 0);
     assert.equal(result.pendingRemaining, 1);
-    assert.equal(intelDb.get<{ remote_id: string }>(
-      "SELECT remote_id FROM proxies WHERE proxy_key = ?",
-      [key]
-    )?.remote_id, "9router-replaced");
-    assert.equal(intelDb.get<{ pending_cleanup: number }>(
-      "SELECT pending_cleanup FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ?",
-      [nodeId, endpointId, key]
-    )?.pending_cleanup, 1);
+    assert.equal(
+      intelDb.get<{ remote_id: string }>("SELECT remote_id FROM proxies WHERE proxy_key = ?", [key])
+        ?.remote_id,
+      "9router-replaced",
+    );
+    assert.equal(
+      intelDb.get<{ pending_cleanup: number }>(
+        "SELECT pending_cleanup FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ?",
+        [nodeId, endpointId, key],
+      )?.pending_cleanup,
+      1,
+    );
   } finally {
     intelDb.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -473,35 +490,42 @@ test("unlink revalidates remote identity after external await", async () => {
     await intelRepo.syncManagedFleetEndpoints([
       { nodeId, endpointId, proxyUrl: "http://unlink-revalidate:pass@10.77.0.98:20010" },
     ]);
-    intelDb.run(
-      "UPDATE proxies SET remote_id = ?, router_state = 'active' WHERE proxy_key = ?",
-      ["9router-old-unlink", key]
-    );
+    intelDb.run("UPDATE proxies SET remote_id = ?, router_state = 'active' WHERE proxy_key = ?", [
+      "9router-old-unlink",
+      key,
+    ]);
 
     await intelRepo.unlinkManagedFleetNode(nodeId, {
       cleanupRemoteRef: async () => {
-        intelDb.run(
-          "UPDATE proxies SET remote_id = ? WHERE proxy_key = ?",
-          ["9router-replaced-unlink", key]
-        );
+        intelDb.run("UPDATE proxies SET remote_id = ? WHERE proxy_key = ?", [
+          "9router-replaced-unlink",
+          key,
+        ]);
       },
     });
 
-    assert.equal(intelDb.get<{ remote_id: string }>(
-      "SELECT remote_id FROM proxies WHERE proxy_key = ?",
-      [key]
-    )?.remote_id, "9router-replaced-unlink");
-    assert.equal(intelDb.get<{ count: number }>(
-      "SELECT COUNT(*) as count FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ?",
-      [nodeId, endpointId]
-    )?.count, 1);
+    assert.equal(
+      intelDb.get<{ remote_id: string }>("SELECT remote_id FROM proxies WHERE proxy_key = ?", [key])
+        ?.remote_id,
+      "9router-replaced-unlink",
+    );
+    assert.equal(
+      intelDb.get<{ count: number }>(
+        "SELECT COUNT(*) as count FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ?",
+        [nodeId, endpointId],
+      )?.count,
+      1,
+    );
   } finally {
     intelDb.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
 
-function dbGetPassword(db: { get: (sql: string, params: unknown[]) => Record<string, unknown> | undefined }, key: string): string | null {
+function dbGetPassword(
+  db: { get: (sql: string, params: unknown[]) => Record<string, unknown> | undefined },
+  key: string,
+): string | null {
   const row = db.get("SELECT password FROM proxies WHERE proxy_key = ?", [key]);
   return row ? (row.password as string) : null;
 }

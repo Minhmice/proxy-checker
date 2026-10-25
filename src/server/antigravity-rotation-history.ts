@@ -1,8 +1,8 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { eq, sql } from 'drizzle-orm';
-import { openRotationDb } from '../db/rotation/client.js';
-import { accountTurns } from '../db/rotation/schema.js';
+import fs from "node:fs";
+import path from "node:path";
+import { eq, sql } from "drizzle-orm";
+import { openRotationDb } from "../db/rotation/client.js";
+import { accountTurns } from "../db/rotation/schema.js";
 
 export interface AntigravityTurn {
   accountId: string;
@@ -16,13 +16,9 @@ export interface AntigravityRotationHistory {
   close(): void;
 }
 
-export function openAntigravityRotationHistory(
-  dataDir: string,
-): AntigravityRotationHistory {
+export function openAntigravityRotationHistory(dataDir: string): AntigravityRotationHistory {
   fs.mkdirSync(dataDir, { recursive: true });
-  const client = openRotationDb(
-    path.join(dataDir, 'antigravity-rotation.sqlite3'),
-  );
+  const client = openRotationDb(path.join(dataDir, "antigravity-rotation.sqlite3"));
   client.raw.exec(`
     CREATE TABLE IF NOT EXISTS antigravity_account_turns (
       account_id TEXT PRIMARY KEY,
@@ -58,10 +54,7 @@ export function openAntigravityRotationHistory(
         })
         .run();
       const turn = this.get(accountId);
-      if (!turn)
-        throw new Error(
-          `Rotation history missing after activation: ${accountId}`,
-        );
+      if (!turn) throw new Error(`Rotation history missing after activation: ${accountId}`);
       return turn;
     },
     close() {

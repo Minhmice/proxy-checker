@@ -127,7 +127,6 @@ export interface FleetNodeDesiredState {
   }>;
 }
 
-
 export interface FleetProxyCredentialRecord {
   id: string;
   endpoint_id: string;

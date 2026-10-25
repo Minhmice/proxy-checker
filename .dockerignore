@@ -1,0 +1,10 @@
+node_modules
+.next
+.next-build
+.git
+.github
+backups
+*.log
+coverage
+tmp
+.env*.local

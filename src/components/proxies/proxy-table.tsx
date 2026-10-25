@@ -32,6 +32,7 @@ import { LatencyIndicator } from "./latency-indicator";
 import type { UnifiedProxyItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ProxyContextMenu } from "./proxy-context-menu";
+
 export interface ProxyTableProps {
   items: UnifiedProxyItem[];
   loading: boolean;
@@ -142,13 +143,18 @@ export function ProxyTable({
         <div className="flex flex-col items-center justify-center gap-3 p-12 text-center text-muted-foreground min-h-[380px]">
           <p className="text-xs">No proxies match the selected filters or search.</p>
           {onResetFilters && (
-            <Button variant="outline" size="sm" onClick={onResetFilters} className="text-xs h-9 cursor-pointer">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onResetFilters}
+              className="text-xs h-9 cursor-pointer"
+            >
               Reset filters
             </Button>
           )}
         </div>
       ) : (
-        <div className="overflow-x-auto min-h-[380px] w-full">
+        <div className="overflow-x-auto min-h-[380px] w-full rounded-2xl border border-[#23232C] bg-[#131318] shadow-sm">
           <Table className="w-full">
             <TableHeader className="bg-surface/80">
               <TableRow className="border-border/60 hover:bg-transparent">
@@ -209,7 +215,7 @@ export function ProxyTable({
                       data-state={isSelected ? "selected" : undefined}
                       className={cn(
                         "border-border/50 transition-colors group cursor-pointer",
-                        isSelected ? "bg-primary/5" : "hover:bg-surface/50"
+                        isSelected ? "bg-primary/5" : "hover:bg-surface/50",
                       )}
                       onClick={(e) => {
                         const target = e.target as HTMLElement;
@@ -232,9 +238,17 @@ export function ProxyTable({
                       <TableCell className="font-mono text-xs font-medium text-foreground py-3 max-w-[180px] sm:max-w-[240px] 3xl:max-w-md 5xl:max-w-xl">
                         <div className="flex items-center gap-1.5 min-w-0">
                           {item.isPinned && (
-                            <Pin className="h-3 w-3 text-amber-400 fill-amber-400/20 shrink-0" aria-label="Protected proxy" />
+                            <Pin
+                              className="h-3 w-3 text-amber-400 fill-amber-400/20 shrink-0"
+                              aria-label="Protected proxy"
+                            />
                           )}
-                          <span className="truncate hover:text-primary transition-colors block" title={endpoint}>{endpoint}</span>
+                          <span
+                            className="truncate hover:text-primary transition-colors block"
+                            title={endpoint}
+                          >
+                            {endpoint}
+                          </span>
                           <div onClick={(e) => e.stopPropagation()} className="shrink-0">
                             <CopyButton
                               value={endpoint}
@@ -245,106 +259,114 @@ export function ProxyTable({
                           </div>
                         </div>
                       </TableCell>
-                    {/* Protocol */}
-                    <TableCell className="hidden sm:table-cell">
-                      <Badge variant="outline" className="text-[10px] uppercase font-mono tracking-wider py-0">
-                        {item.protocol}
-                      </Badge>
-                    </TableCell>
+                      {/* Protocol */}
+                      <TableCell className="hidden sm:table-cell">
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] uppercase font-mono tracking-wider py-0"
+                        >
+                          {item.protocol}
+                        </Badge>
+                      </TableCell>
 
-                    {/* Health Status */}
-                    <TableCell>{renderHealthBadge(item.health || item.status)}</TableCell>
+                      {/* Health Status */}
+                      <TableCell>{renderHealthBadge(item.health || item.status)}</TableCell>
 
-                    {/* Pool Tier */}
-                    <TableCell className="hidden sm:table-cell">{renderPoolBadge(item.poolTier ?? (item.sync as string), item.routerState)}</TableCell>
+                      {/* Pool Tier */}
+                      <TableCell className="hidden sm:table-cell">
+                        {renderPoolBadge(item.poolTier ?? (item.sync as string), item.routerState)}
+                      </TableCell>
 
-                    {/* Exit IP & Location / ISP */}
-                    <TableCell className="text-xs hidden md:table-cell">
-                      {item.exitIp ? (
-                        <div className="space-y-0.5">
-                          <span className="font-mono text-xs font-medium text-foreground block">
-                            {item.exitIp}
-                          </span>
-                          <span className="text-[11px] text-muted-foreground flex items-center gap-1 truncate max-w-[200px] 3xl:max-w-xs 5xl:max-w-md" title={item.isp || locationText}>
-                            {locationText && <Globe2 className="h-2.5 w-2.5 shrink-0" />}
-                            {locationText || item.isp || "Unknown location"}
-                          </span>
+                      {/* Exit IP & Location / ISP */}
+                      <TableCell className="text-xs hidden md:table-cell">
+                        {item.exitIp ? (
+                          <div className="space-y-0.5">
+                            <span className="font-mono text-xs font-medium text-foreground block">
+                              {item.exitIp}
+                            </span>
+                            <span
+                              className="text-[11px] text-muted-foreground flex items-center gap-1 truncate max-w-[200px] 3xl:max-w-xs 5xl:max-w-md"
+                              title={item.isp || locationText}
+                            >
+                              {locationText && <Globe2 className="h-2.5 w-2.5 shrink-0" />}
+                              {locationText || item.isp || "Unknown location"}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground/60 font-mono text-[11px]">—</span>
+                        )}
+                      </TableCell>
+                      {/* 4K/Ultra-wide Safety Audit Score */}
+                      <TableCell className="hidden 3xl:table-cell font-mono text-xs">
+                        {safetyScore != null ? (
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "text-[10px] font-mono px-1.5 py-0",
+                              safetyScore >= 80
+                                ? "text-emerald-400 border-emerald-500/30 bg-emerald-500/10"
+                                : safetyScore >= 60
+                                  ? "text-amber-400 border-amber-500/30 bg-amber-500/10"
+                                  : "text-rose-400 border-rose-500/30 bg-rose-500/10",
+                            )}
+                          >
+                            {safetyScore}%
+                          </Badge>
+                        ) : auditVerdict ? (
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "text-[10px] font-mono uppercase px-1.5 py-0",
+                              auditVerdict === "PASS"
+                                ? "text-emerald-400 border-emerald-500/30 bg-emerald-500/10"
+                                : "text-amber-400 border-amber-500/30 bg-amber-500/10",
+                            )}
+                          >
+                            {auditVerdict}
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground/50 font-mono text-[11px]">—</span>
+                        )}
+                      </TableCell>
+
+                      {/* Latency */}
+                      <TableCell className="text-right hidden sm:table-cell">
+                        <LatencyIndicator
+                          latencyMs={item.latencyMs}
+                          isDead={item.health === "dead"}
+                          showBar={false}
+                        />
+                      </TableCell>
+
+                      {/* Row Actions */}
+                      <TableCell className="text-right pr-4" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => onCheckSingle(item)}
+                            disabled={isChecking}
+                            className="h-8 w-8 sm:h-7 sm:w-7 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
+                            aria-label={`Test connectivity for ${endpoint}`}
+                          >
+                            {isChecking ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                            ) : (
+                              <Play className="h-3.5 w-3.5" />
+                            )}
+                          </Button>
+
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => onOpenDetail(item)}
+                            className="h-8 w-8 sm:h-7 sm:w-7 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
+                            aria-label={`Inspect details for ${endpoint}`}
+                          >
+                            <SlidersHorizontal className="h-3.5 w-3.5" />
+                          </Button>
                         </div>
-                      ) : (
-                        <span className="text-muted-foreground/60 font-mono text-[11px]">—</span>
-                      )}
-                    </TableCell>
-                    {/* 4K/Ultra-wide Safety Audit Score */}
-                    <TableCell className="hidden 3xl:table-cell font-mono text-xs">
-                      {safetyScore != null ? (
-                        <Badge
-                          variant="outline"
-                          className={cn(
-                            "text-[10px] font-mono px-1.5 py-0",
-                            safetyScore >= 80
-                              ? "text-emerald-400 border-emerald-500/30 bg-emerald-500/10"
-                              : safetyScore >= 60
-                              ? "text-amber-400 border-amber-500/30 bg-amber-500/10"
-                              : "text-rose-400 border-rose-500/30 bg-rose-500/10"
-                          )}
-                        >
-                          {safetyScore}%
-                        </Badge>
-                      ) : auditVerdict ? (
-                        <Badge
-                          variant="outline"
-                          className={cn(
-                            "text-[10px] font-mono uppercase px-1.5 py-0",
-                            auditVerdict === "PASS"
-                              ? "text-emerald-400 border-emerald-500/30 bg-emerald-500/10"
-                              : "text-amber-400 border-amber-500/30 bg-amber-500/10"
-                          )}
-                        >
-                          {auditVerdict}
-                        </Badge>
-                      ) : (
-                        <span className="text-muted-foreground/50 font-mono text-[11px]">—</span>
-                      )}
-                    </TableCell>
-
-                    {/* Latency */}
-                    <TableCell className="text-right hidden sm:table-cell">
-                      <LatencyIndicator
-                        latencyMs={item.latencyMs}
-                        isDead={item.health === "dead"}
-                        showBar={false}
-                      />
-                    </TableCell>
-
-                    {/* Row Actions */}
-                    <TableCell className="text-right pr-4" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => onCheckSingle(item)}
-                          disabled={isChecking}
-                          className="h-8 w-8 sm:h-7 sm:w-7 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
-                          aria-label={`Test connectivity for ${endpoint}`}
-                        >
-                          {isChecking ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                          ) : (
-                            <Play className="h-3.5 w-3.5" />
-                          )}
-                        </Button>
-
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => onOpenDetail(item)}
-                          className="h-8 w-8 sm:h-7 sm:w-7 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
-                          aria-label={`Inspect details for ${endpoint}`}
-                        >
-                          <SlidersHorizontal className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    </TableCell>
+                      </TableCell>
                     </TableRow>
                   </ProxyContextMenu>
                 );
@@ -365,7 +387,8 @@ export function ProxyTable({
           <strong className="font-semibold text-foreground">
             {Math.min(page * pageSize, total)}
           </strong>{" "}
-          of <strong className="font-semibold text-foreground">{total.toLocaleString()}</strong> proxies
+          of <strong className="font-semibold text-foreground">{total.toLocaleString()}</strong>{" "}
+          proxies
         </div>
 
         <div className="flex items-center gap-1.5">

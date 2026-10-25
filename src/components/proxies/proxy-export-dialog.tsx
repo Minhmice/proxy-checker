@@ -13,10 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  ToggleGroup,
-  ToggleGroupItem,
-} from "@/components/ui/toggle-group";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 export interface ProxyExportDialogProps {
   open: boolean;
@@ -38,7 +35,9 @@ export function ProxyExportDialog({
   onExport,
 }: ProxyExportDialogProps) {
   // ponytail: ToggleGroup single-select covers txt/csv and filtered/selected without custom radio machinery. Upgrade to full presets if multi-destination export is added.
-  const [scope, setScope] = useState<"filtered" | "selected">(selectedCount > 0 ? "selected" : "filtered");
+  const [scope, setScope] = useState<"filtered" | "selected">(
+    selectedCount > 0 ? "selected" : "filtered",
+  );
   const [format, setFormat] = useState<"txt" | "csv">("txt");
   const [includeCredentials, setIncludeCredentials] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -80,7 +79,10 @@ export function ProxyExportDialog({
         <div className="overflow-y-auto min-h-0 space-y-4 py-2 text-xs pr-1">
           {/* Scope Selector */}
           <div className="space-y-1.5">
-            <label id="export-scope-label" className="text-[11px] font-semibold text-muted-foreground uppercase">
+            <label
+              id="export-scope-label"
+              className="text-[11px] font-semibold text-muted-foreground uppercase"
+            >
               Export Scope
             </label>
             <ToggleGroup
@@ -121,7 +123,10 @@ export function ProxyExportDialog({
 
           {/* Format Selector */}
           <div className="space-y-1.5">
-            <label id="export-format-label" className="text-[11px] font-semibold text-muted-foreground uppercase">
+            <label
+              id="export-format-label"
+              className="text-[11px] font-semibold text-muted-foreground uppercase"
+            >
               File Format
             </label>
             <ToggleGroup
@@ -140,8 +145,12 @@ export function ProxyExportDialog({
                 aria-label="Plain Text (.txt)"
                 className="h-auto min-h-[44px] p-2.5 rounded-lg border text-left flex flex-col items-start justify-start transition-colors data-[state=on]:border-primary data-[state=on]:bg-primary/10 data-[state=on]:text-foreground data-[state=off]:border-border/60 data-[state=off]:bg-surface/50 data-[state=off]:text-muted-foreground hover:bg-surface cursor-pointer"
               >
-                <div className="font-semibold text-xs text-foreground font-mono">Plain Text (.txt)</div>
-                <div className="text-[11px] text-muted-foreground mt-0.5">protocol://host:port lines</div>
+                <div className="font-semibold text-xs text-foreground font-mono">
+                  Plain Text (.txt)
+                </div>
+                <div className="text-[11px] text-muted-foreground mt-0.5">
+                  protocol://host:port lines
+                </div>
               </ToggleGroupItem>
 
               <ToggleGroupItem
@@ -150,7 +159,9 @@ export function ProxyExportDialog({
                 className="h-auto min-h-[44px] p-2.5 rounded-lg border text-left flex flex-col items-start justify-start transition-colors data-[state=on]:border-primary data-[state=on]:bg-primary/10 data-[state=on]:text-foreground data-[state=off]:border-border/60 data-[state=off]:bg-surface/50 data-[state=off]:text-muted-foreground hover:bg-surface cursor-pointer"
               >
                 <div className="font-semibold text-xs text-foreground font-mono">CSV (.csv)</div>
-                <div className="text-[11px] text-muted-foreground mt-0.5">Structured spreadsheet rows</div>
+                <div className="text-[11px] text-muted-foreground mt-0.5">
+                  Structured spreadsheet rows
+                </div>
               </ToggleGroupItem>
             </ToggleGroup>
           </div>
@@ -184,7 +195,8 @@ export function ProxyExportDialog({
                   <span>Plaintext Secret Warning</span>
                 </div>
                 <p className="text-[11px] text-amber-300/90 leading-relaxed">
-                  The exported file will contain unencrypted credentials. Anyone who obtains this file can authenticate through these proxies.
+                  The exported file will contain unencrypted credentials. Anyone who obtains this
+                  file can authenticate through these proxies.
                 </p>
               </div>
             )}
@@ -192,7 +204,12 @@ export function ProxyExportDialog({
         </div>
 
         <DialogFooter className="shrink-0 gap-2 sm:gap-0 pt-2 border-t border-border/40">
-          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} className="text-xs">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onOpenChange(false)}
+            className="text-xs"
+          >
             Cancel
           </Button>
 
@@ -206,7 +223,11 @@ export function ProxyExportDialog({
                 : "bg-primary text-primary-foreground hover:bg-primary-hover"
             }`}
           >
-            {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+            {exporting ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Download className="h-3.5 w-3.5" />
+            )}
             <span>{includeCredentials ? "Export with credentials" : "Export proxies"}</span>
           </Button>
         </DialogFooter>

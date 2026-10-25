@@ -1,39 +1,60 @@
-# Product
+# Product Context — minhmiceProxy
 
-## Register
+## 1. Register & Identity
+- **Product Name:** minhmiceProxy
+- **Product Type:** High-Performance Dual-9Router Fleet Management & Antigravity Quota Proxy Operations Console
+- **Mode:** Operate (Task completion, rapid triage, situational awareness under live traffic)
+- **Primary Domain:** Enterprise Proxy Infrastructure, LLM Quota Balancing (Antigravity & Gemini Session Quotas), Dual-Master 9Router Sync & WireGuard/Tailscale Worker Node Fleet.
 
-product
+## 2. Target Users & Operating Conditions
+- **Primary Users:** Site Reliability Engineers (SRE), Network Operators, and AI Infrastructure Developers managing production proxy pools.
+- **Operating Conditions:** High pressure, continuous uptime monitoring, dim control-room lighting, rapid decision-making during proxy bans or LLM session quota drops.
+- **Cognitive Load Ceiling:** Operators must assess node/pool health within 2 seconds, execute routing adjustments or sync within 5 seconds, and never decipher cryptic error codes without contextual remediation tooltips.
 
-## Users
+## 3. Core Product Capabilities & Architecture
+1. **Dual-Master 9Router Synchronization:**
+   - Synchronizes routing topologies across dual-master 9Router instances with three-way merge conflict resolution.
+   - Dual-node modifier dashboards, console streaming, proxy-account bindings.
+   - Automatic background sync toggleable with zero UI blocking; manual sync trigger on demand.
+2. **Antigravity AI Session Quota Rotator:**
+   - Automatically tracks Gemini session quota percentages across active accounts.
+   - Triggers account rotation when quota drops below 20%, activating standby accounts with quota > 20% and prioritizing those with the shortest reset time.
+   - Default concurrency limit of 3 active accounts; keeps proxy-to-account bindings persistent unless the assigned proxy fails.
+3. **Proxy Intelligence & Health Auditing:**
+   - Continuous latency testing, country/ASN fingerprinting, and routability checks.
+   - Proxy health audit centralized in backend database (no client-side bypass).
+   - Strict proxy lifecycle: invalid or unparseable proxies are dropped immediately; healthy proxies ranked and bound to active services.
+4. **Worker Node Fleet Management:**
+   - Orchestrates worker nodes via Tailscale SSH & WireGuard meshes.
+   - Controller node managed as an audited inventory node.
+   - Public IP gate validation prevents collisions or rogue IP drift.
 
-Infrastructure operators and developers who manage proxy pools through 9Router. They use minhmiceProxy frequently — often under time pressure — to monitor pool health, trigger syncs, and activate or deactivate routes before routing production traffic.
+## 4. Operational Modes & Design Philosophy
+- **Mode: Operate:**
+  - Every UI element exists to communicate status, throughput, latency, or configuration safety.
+  - No decorative AI gimmicks, no fake mock data, no gratuitous glassmorphic blur that degrades FPS on dense grids.
+  - Visuals inspired by modern obsidian financial/infrastructure control decks (Image #1): deep charcoal slate (`#0B0B0E`), crisp typography, matte surfaces (`#141418`), and high-energy flame amber/orange accents (`#FF5B22`) to highlight active status, metrics, and warnings.
+- **Motion with Purpose:**
+  - Motion is functional choreography: communicates state transitions, hover lift affordances, accordion disclosures, and animated chart data feeds without layout thrashing.
+  - All animations respect `prefers-reduced-motion`.
 
-## Product Purpose
+## 5. Key Workflows & User Journeys
+1. **Pool Health Monitoring & Triage:**
+   - Operator opens `/ninerouter/dashboard` or `/` Overview.
+   - High-contrast stat cards highlight active vs degraded pools, current Gemini session quota, and aggregate throughput.
+   - Real-time flame gradient bar charts indicate latency and request distribution.
+2. **Proxy Pool Audit & Binding:**
+   - Operator navigates to `/ninerouter/proxies`.
+   - Data table surfaces active proxies, latency sparklines, protocol, and assigned Antigravity accounts.
+   - Inline `FieldInfo` tooltips provide configuration guidance without vertical helper clutter.
+3. **Dual-Router State Reconciliation:**
+   - Operator triggers manual sync or inspects live console logs via `live-console-terminal.tsx`.
+   - Visual feedback confirms 3-way merge outcome across Node A & Node B with zero lost state.
+4. **System Settings & Account Management:**
+   - Operator manages rotation thresholds, concurrency limits, and Tailscale credentials in `/settings`.
+   - High-contrast tabs with `forceMount` prevent draft loss during tab switches.
 
-minhmiceProxy is a 9Router companion dashboard for monitoring proxy pools, syncing and ranking proxies by latency, and toggling active routes. Success means seeing pool health at a glance, acting on sync/toggle within seconds, and trusting that chart data reflects real check history.
-
-## Brand Personality
-
-**Focused · Precise · Confident**
-
-Voice is direct and ops-focused — no marketing fluff on functional screens. The interface should feel like a control room: calm, data-dense, trustworthy under dim ambient light.
-
-## Anti-references
-
-- Generic SaaS cream-and-purple landing aesthetics on operational screens
-- Decorative charts with mocked data
-- Glassmorphism-heavy cards without purpose
-- Hero-metric template (big number + gradient accent + tiny label)
-- Over-rounded cards (32px+ radius) and ghost-card borders with wide shadows
-
-## Design Principles
-
-1. **Data first** — every visual element serves pool status, latency, or sync state
-2. **Earned familiarity** — standard dashboard patterns (sidebar, top bar, tables) so the tool disappears into the task
-3. **Real metrics only** — charts and sparklines reflect actual sync and check history, never placeholder data
-4. **Actionable states** — empty, error, and unconfigured states tell the user exactly what to do next
-5. **Consistent vocabulary** — same button shapes, form controls, and status colors across every route
-
-## Accessibility & Inclusion
-
-WCAG AA minimum. Body text ≥4.5:1 contrast; interactive targets ≥44px where practical. Respect `prefers-reduced-motion` on all animations. Color is never the sole indicator of status — pair with labels or icons.
+## 6. Accessibility & Operational Guardrails
+- **WCAG AA Compliance:** Body text contrast ≥ 4.5:1 against card backgrounds; interactive focus targets ≥ 44px.
+- **Non-Color Reliance:** Statuses combine color dots with clear semantic labels (e.g. `Active`, `Degraded`, `Syncing`, `Offline`).
+- **State Integrity:** Unsaved draft states are never displayed as observed daemon health. Persistence outcomes explicitly surfaced via toast/inline alerts.

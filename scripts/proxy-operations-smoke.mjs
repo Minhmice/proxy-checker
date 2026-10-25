@@ -44,7 +44,9 @@ async function runSmoke() {
   assert.ok(unifiedBody.pagination, "Response must include pagination");
   assert.ok(unifiedBody.facets, "Response must include facets");
   assert.ok(unifiedBody.meta?.generatedAt, "Response must include server metadata");
-  console.log(`✓ Unified proxies query succeeded (${unifiedBody.total} total proxies, ${unifiedBody.items.length} returned)`);
+  console.log(
+    `✓ Unified proxies query succeeded (${unifiedBody.total} total proxies, ${unifiedBody.items.length} returned)`,
+  );
 
   // 5. Test Import Preview (does not mutate DB)
   const previewRes = await fetch(`${BASE_URL}/api/intelligence/import/preview`, {
@@ -65,15 +67,19 @@ async function runSmoke() {
   // Requesting credentials without confirmation MUST be 403 Forbidden
   const unconfirmedExportRes = await fetch(
     `${BASE_URL}/api/settings/proxy-export?includeCredentials=true`,
-    { headers: authHeaders }
+    { headers: authHeaders },
   );
-  assert.equal(unconfirmedExportRes.status, 403, "Credential export without confirmation must be forbidden");
+  assert.equal(
+    unconfirmedExportRes.status,
+    403,
+    "Credential export without confirmation must be forbidden",
+  );
   console.log("✓ Credential export strictly blocked without confirmation");
 
   // Confirmed credential export succeeds
   const confirmedExportRes = await fetch(
     `${BASE_URL}/api/settings/proxy-export?includeCredentials=true&confirmCredentials=yes`,
-    { headers: authHeaders }
+    { headers: authHeaders },
   );
   assert.equal(confirmedExportRes.status, 200, "Confirmed credential export must succeed");
   console.log("✓ Confirmed credential export succeeded");

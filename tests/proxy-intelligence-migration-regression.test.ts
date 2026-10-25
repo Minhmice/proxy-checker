@@ -23,9 +23,11 @@ test("migration preserves legacy quick sync proxies rows without corruption", ()
     `);
 
     for (let i = 1; i <= 10; i++) {
-      raw.prepare(
-        "INSERT INTO proxies (proxy_key, endpoint, protocol, status, successes, failures) VALUES (?, ?, ?, ?, ?, ?)"
-      ).run(`key-${i}`, `10.0.0.${i}:8080`, "http", i % 2 === 0 ? "usable" : "dead", i, 0);
+      raw
+        .prepare(
+          "INSERT INTO proxies (proxy_key, endpoint, protocol, status, successes, failures) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .run(`key-${i}`, `10.0.0.${i}:8080`, "http", i % 2 === 0 ? "usable" : "dead", i, 0);
     }
     raw.close();
 
@@ -35,9 +37,12 @@ test("migration preserves legacy quick sync proxies rows without corruption", ()
     assert.equal(count, 10);
 
     // Verify fields preserved
-    const row2 = db.get<{ status: string; successes: number; source: string; lifecycle_state: string }>(
-      "SELECT status, successes, source, lifecycle_state FROM proxies WHERE proxy_key = 'key-2'"
-    );
+    const row2 = db.get<{
+      status: string;
+      successes: number;
+      source: string;
+      lifecycle_state: string;
+    }>("SELECT status, successes, source, lifecycle_state FROM proxies WHERE proxy_key = 'key-2'");
     assert.equal(row2?.status, "usable");
     assert.equal(row2?.successes, 2);
     assert.equal(row2?.source, "legacy");

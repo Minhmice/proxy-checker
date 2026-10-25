@@ -1,11 +1,14 @@
 "use client";
 
 import * as React from "react";
-import { useCallback, useEffect, useMemo, useState, useRef } from "react";
-import { Gauge, RotateCw, Clock, Cpu } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Gauge, RotateCw, Clock, Cpu, ChevronDown, ChevronUp } from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
 import { toast } from "sonner";
 import { useAuth } from "./auth-provider";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useSidebar } from "@/components/ui/sidebar";
 import { fetchAntigravityStatus, refreshAntigravityQuota } from "@/lib/api";
 import type { AntigravityRotatorSnapshot, AntigravityAccountState } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -35,10 +38,10 @@ function quotaColor(percentage: number): { text: string; bg: string; border: str
   }
   if (percentage > 20) {
     return {
-      text: "text-amber-400",
-      bg: "bg-amber-500/10",
-      border: "border-amber-500/20",
-      bar: "bg-amber-500",
+      text: "text-[#FF5B22]",
+      bg: "bg-[#FF5B22]/10",
+      border: "border-[#FF5B22]/25",
+      bar: "bg-[#FF5B22]",
     };
   }
   return {
@@ -51,23 +54,29 @@ function quotaColor(percentage: number): { text: string; bg: string; border: str
 
 export function AntigravityQuotaWidget() {
   const { password, authenticated } = useAuth();
+  const { state: sidebarState, setOpen: setSidebarOpen } = useSidebar();
   const [snapshot, setSnapshot] = useState<AntigravityRotatorSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
+  const [, setTick] = useState(0);
+  const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const hoverTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const hoverTimerRef = useRef<number | undefined>(undefined);
   const abortRef = useRef<AbortController | null>(null);
+  const lastManualRefreshAtRef = useRef<number>(0);
   const panelId = React.useId();
   const loadStatus = useCallback(
     async (signal?: AbortSignal) => {
       if (!password && !authenticated) return;
       if (signal?.aborted) return;
+      const startedAt = Date.now();
       setLoading(true);
       try {
         const data = await fetchAntigravityStatus(password, signal);
         if (signal?.aborted) return;
+        if (startedAt < lastManualRefreshAtRef.current) return;
         if (data) {
           setSnapshot(data);
           setUnavailable(false);
@@ -76,6 +85,7 @@ export function AntigravityQuotaWidget() {
         }
       } catch (err) {
         if (signal?.aborted || isAbortError(err)) return;
+        if (startedAt < lastManualRefreshAtRef.current) return;
         setUnavailable(true);
       } finally {
         if (!signal?.aborted) setLoading(false);
@@ -83,25 +93,6 @@ export function AntigravityQuotaWidget() {
     },
     [password, authenticated],
   );
-  const handleMouseEnter = () => {
-    clearTimeout(hoverTimerRef.current ?? undefined);
-    hoverTimerRef.current = null;
-    setIsOpen(true);
-  };
-
-  const handleMouseLeave = () => {
-    clearTimeout(hoverTimerRef.current ?? undefined);
-    hoverTimerRef.current = setTimeout(() => {
-      setIsOpen(false);
-    }, 200);
-  };
-
-  useEffect(() => {
-    return () => {
-      clearTimeout(hoverTimerRef.current ?? undefined);
-    };
-  }, []);
-
   useEffect(() => {
     if (!isOpen) return;
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -109,19 +100,27 @@ export function AntigravityQuotaWidget() {
       setIsOpen(false);
       triggerRef.current?.focus();
     };
-    const closeOnOutsidePointer = (event: PointerEvent) => {
-      if (event.target instanceof Element && !event.target.closest("[data-quota-widget]")) {
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
         setIsOpen(false);
       }
     };
     document.addEventListener("keydown", closeOnEscape);
-    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    document.addEventListener("mousedown", handleOutsideClick);
     return () => {
       document.removeEventListener("keydown", closeOnEscape);
-      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      document.removeEventListener("mousedown", handleOutsideClick);
     };
   }, [isOpen]);
 
+  // Live countdown ticker to prevent stale countdown display when panel stays open
+  useEffect(() => {
+    if (!isOpen) return;
+    const interval = setInterval(() => {
+      setTick((t) => t + 1);
+    }, 10_000);
+    return () => clearInterval(interval);
+  }, [isOpen]);
   useEffect(() => {
     if (!password && !authenticated) return;
     if (abortRef.current) {
@@ -152,8 +151,14 @@ export function AntigravityQuotaWidget() {
     e.stopPropagation();
     if (refreshing) return;
     setRefreshing(true);
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    lastManualRefreshAtRef.current = Date.now();
     try {
       const res = await refreshAntigravityQuota(password);
+      lastManualRefreshAtRef.current = Date.now();
       if (res.snapshot) {
         setSnapshot(res.snapshot);
         setUnavailable(false);
@@ -168,6 +173,36 @@ export function AntigravityQuotaWidget() {
       setRefreshing(false);
     }
   };
+
+  const handleToggle = () => {
+    if (sidebarState === "collapsed") {
+      setSidebarOpen(true);
+      setIsOpen(true);
+    } else {
+      setIsOpen((prev) => !prev);
+    }
+  };
+
+  const handleMouseEnter = () => {
+    if (sidebarState === "collapsed") return;
+    clearTimeout(hoverTimerRef.current);
+    hoverTimerRef.current = window.setTimeout(() => {
+      setIsOpen(true);
+    }, 180);
+  };
+
+  const handleMouseLeave = () => {
+    clearTimeout(hoverTimerRef.current);
+    hoverTimerRef.current = window.setTimeout(() => {
+      setIsOpen(false);
+    }, 220);
+  };
+
+  useEffect(() => {
+    return () => {
+      clearTimeout(hoverTimerRef.current);
+    };
+  }, []);
 
   const activeAccounts = useMemo(() => {
     if (!snapshot) return [];
@@ -194,205 +229,223 @@ export function AntigravityQuotaWidget() {
 
   return (
     <div
-      className="relative w-full"
+      ref={containerRef}
+      className="relative w-full rounded-xl border border-[#23232C] bg-[#131318]/90 group-data-[collapsible=icon]:w-auto group-data-[collapsible=icon]:border-none group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:flex group-data-[collapsible=icon]:justify-center"
       data-quota-widget
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >
-      {/* Drop-up Panel (Pops UP above the footer) */}
-      <div
-        id={panelId}
-        hidden={!isOpen}
-        className="absolute bottom-full left-0 mb-2 z-50 w-[min(22rem,calc(100vw-1.5rem))] max-h-[min(28rem,calc(100dvh-2rem))] overflow-y-auto rounded-xl border border-border/80 bg-sidebar shadow-2xl p-3.5 space-y-3 origin-bottom"
-        role="region"
-        aria-label="Antigravity active accounts detail"
-        aria-hidden={!isOpen}
-        inert={!isOpen}
-      >
-        {/* Panel Header */}
-        <div className="flex items-center justify-between pb-2 border-b border-border/60">
-          <div className="flex items-center gap-2">
-            <div className="flex size-5 items-center justify-center rounded-md bg-primary/10 text-primary">
-              <Cpu className="size-3" />
-            </div>
-            <span className="text-xs font-semibold text-sidebar-foreground">Active Accounts</span>
-            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono font-medium bg-surface-raised border border-border text-muted-foreground">
-              {activeAccounts.length} / {snapshot?.totalAccounts ?? 0}
-            </span>
-          </div>
-
+      {/* Trigger Header */}
+      <Tooltip>
+        <TooltipTrigger asChild>
           <Button
+            ref={triggerRef}
             type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleRefresh}
-            disabled={refreshing || (!password && !authenticated)}
-            className="min-h-11 h-auto text-[11px] font-medium text-muted-foreground hover:text-sidebar-foreground hover:bg-surface-raised border-border/60"
-            title="Refresh quotas now"
-          >
-            <RotateCw className={cn("size-3", refreshing && "animate-spin text-primary")} />
-            <span>{refreshing ? "Checking…" : "Refresh"}</span>
-          </Button>
-        </div>
-
-        {/* Active Accounts List */}
-        <div className="space-y-2 max-h-60 overflow-y-auto pr-0.5">
-          {!snapshot ? (
-            <div className="py-4 text-center text-xs text-muted-foreground">
-              {loading ? "Loading active accounts…" : "Accounts data unavailable."}
-            </div>
-          ) : activeAccounts.length === 0 ? (
-            <div className="py-4 text-center text-xs text-muted-foreground">
-              No active accounts running.
-            </div>
-          ) : (
-            activeAccounts.map((acc) => {
-              const sessionColors = quotaColor(acc.sessionPercentage);
-              const weeklyColors = quotaColor(acc.weeklyPercentage);
-
-              return (
-                <div
-                  key={acc.id}
-                  className="p-2.5 rounded-lg border border-border/60 bg-surface/50 hover:bg-surface transition-colors space-y-2"
-                >
-                  <div className="flex items-center justify-between gap-1.5 min-w-0">
-                    <span
-                      className="truncate text-xs font-medium text-sidebar-foreground font-mono"
-                      title={acc.email}
-                    >
-                      {acc.email}
-                    </span>
-                    <span className="shrink-0 text-[10px] text-muted-foreground flex items-center gap-1 font-mono">
-                      <Clock className="size-2.5" />
-                      {formatCountdown(acc.resetAt)}
-                    </span>
-                  </div>
-
-                  {/* Quotas & Proxy row */}
-                  <div className="flex items-center justify-between gap-1 text-[11px]">
-                    <div className="flex items-center gap-1.5">
-                      <span
-                        className={cn(
-                          "px-1.5 py-0.5 rounded font-mono font-semibold text-[10px] border",
-                          sessionColors.bg,
-                          sessionColors.text,
-                          sessionColors.border,
-                        )}
-                        title="Gemini Session Quota (5h)"
-                      >
-                        S:{" "}
-                        {Number.isFinite(acc.sessionPercentage)
-                          ? `${acc.sessionPercentage.toFixed(0)}%`
-                          : "Unknown"}
-                      </span>
-
-                      <span
-                        className={cn(
-                          "px-1.5 py-0.5 rounded font-mono text-[10px] border border-border/60 bg-surface-raised text-muted-foreground",
-                          weeklyColors.text,
-                        )}
-                        title="Gemini Weekly Quota"
-                      >
-                        W:{" "}
-                        {Number.isFinite(acc.weeklyPercentage)
-                          ? `${acc.weeklyPercentage.toFixed(0)}%`
-                          : "Unknown"}
-                      </span>
-                    </div>
-
-                    {/* Proxy Badge */}
-                    <div
-                      className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-surface-raised border border-border/60 text-[10px] font-mono text-muted-foreground truncate max-w-[110px]"
-                      title={acc.proxyName ? `Proxy: ${acc.proxyName}` : "No proxy assigned"}
-                    >
-                      <span
-                        className={cn(
-                          "size-1.5 rounded-full shrink-0",
-                          acc.proxyHealthy
-                            ? "bg-emerald-500 shadow-[0_0_4px_var(--success)]"
-                            : "bg-rose-500",
-                        )}
-                      />
-                      <span className="truncate">{acc.proxyName || "Direct"}</span>
-                    </div>
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-
-        {/* Panel Footer note */}
-        <div className="pt-2 border-t border-border/40 text-[10px] text-muted-foreground/80">
-          Automatic rotation uses Gemini session quota only: deactivate at or below the configured
-          threshold; activate reserves above it, earliest reset first. Weekly quota is informational
-          only.
-        </div>
-      </div>
-
-      {/* Collapsed Bar in SidebarFooter */}
-      <Button
-        ref={triggerRef}
-        type="button"
-        variant="ghost"
-        onClick={() => setIsOpen((prev) => !prev)}
-        className={cn(
-          "min-h-11 h-auto w-full p-2.5 flex flex-col items-stretch text-left justify-start rounded-xl border border-border/70 transition-all cursor-pointer group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring whitespace-normal",
-          isOpen
-            ? "bg-surface-raised border-primary/50 shadow-md"
-            : "bg-card/70 hover:bg-surface-raised hover:border-border/90 shadow-2xs",
-        )}
-        aria-expanded={isOpen}
-        aria-controls={panelId}
-      >
-        <div className="flex items-center justify-between mb-1.5">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <Gauge
-              className={cn(
-                "size-3.5 shrink-0 transition-colors",
-                overallRatio === null ? "text-muted-foreground" : overallColors.text,
-              )}
-            />
-            <span className="text-[11px] font-semibold text-sidebar-foreground truncate tracking-tight">
-              Antigravity quota
-            </span>
-          </div>
-          <span className="text-[11px] font-mono font-bold text-ink shrink-0">
-            {quotaLabel}{" "}
-            {snapshot && (
-              <span className="text-[10px] text-muted-foreground font-normal">/ {maxQuota}%</span>
-            )}
-          </span>
-        </div>
-
-        {/* Micro Progress Bar */}
-        <div className="w-full h-1.5 rounded-full bg-surface-raised overflow-hidden">
-          <div
+            variant="ghost"
+            onClick={handleToggle}
             className={cn(
-              "h-full rounded-full transition-all duration-500",
-              overallRatio === null ? "bg-muted-foreground/40" : overallColors.bar,
+              "min-h-11 h-auto w-full p-2 flex flex-col items-stretch text-left justify-start transition-colors cursor-pointer group focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5B22] focus-visible:ring-offset-1 focus-visible:ring-offset-sidebar whitespace-normal rounded-xl",
+              "group-data-[collapsible=icon]:size-9! group-data-[collapsible=icon]:min-h-9! group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:flex-row",
+              isOpen && sidebarState !== "collapsed" ? "bg-[#181820]" : "hover:bg-[#181820]/70",
             )}
-            style={{ width: `${overallRatio ?? 0}%` }}
-          />
-        </div>
+            aria-expanded={isOpen}
+            aria-controls={panelId}
+          >
+            <div className="flex items-center justify-between mb-1.5 w-full group-data-[collapsible=icon]:mb-0 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:w-auto">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <Gauge
+                  className={cn(
+                    "size-3.5 group-data-[collapsible=icon]:size-4 shrink-0 transition-colors",
+                    overallRatio === null ? "text-muted-foreground" : overallColors.text,
+                  )}
+                />
+                <span className="text-[11px] font-semibold text-sidebar-foreground truncate tracking-tight group-data-[collapsible=icon]:hidden">
+                  Antigravity quota
+                </span>
+              </div>
+              <div className="flex items-center gap-1 shrink-0 group-data-[collapsible=icon]:hidden">
+                <span className="text-[11px] font-mono font-bold text-ink">
+                  {quotaLabel}{" "}
+                  {snapshot && (
+                    <span className="text-[10px] text-muted-foreground font-normal">
+                      / {maxQuota}%
+                    </span>
+                  )}
+                </span>
+                {isOpen ? (
+                  <ChevronUp className="size-3 text-muted-foreground group-hover:text-ink transition-colors ml-0.5" />
+                ) : (
+                  <ChevronDown className="size-3 text-muted-foreground group-hover:text-ink transition-colors ml-0.5" />
+                )}
+              </div>
+            </div>
 
-        <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground font-mono">
-          <span>
-            {snapshot
-              ? unavailable
-                ? `${snapshot.totalAccounts} accounts (stale)`
-                : `${snapshot.totalAccounts} accounts`
-              : unavailable
-                ? "Status unavailable"
-                : loading
-                  ? "Loading quota"
-                  : "Status unknown"}
-          </span>
-          <span className="text-emerald-400 font-medium">
-            {snapshot ? `${activeAccounts.length} active` : "—"}
-          </span>
-        </div>
-      </Button>
+            {/* Micro Progress Bar with Accessible Semantics */}
+            <div
+              role="progressbar"
+              aria-valuenow={overallRatio !== null ? Math.round(overallRatio) : 0}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label={`Antigravity quota capacity: ${overallRatio !== null ? Math.round(overallRatio) : 0}%`}
+              className="w-full h-1.5 rounded-full bg-surface-raised overflow-hidden group-data-[collapsible=icon]:hidden"
+            >
+              <div
+                className={cn(
+                  "h-full rounded-full transition-all duration-500",
+                  overallRatio === null ? "bg-muted-foreground/40" : overallColors.bar,
+                )}
+                style={{ width: `${overallRatio ?? 0}%` }}
+              />
+            </div>
+
+            <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground font-mono w-full group-data-[collapsible=icon]:hidden">
+              <span>
+                {snapshot
+                  ? unavailable
+                    ? `${snapshot.totalAccounts} accounts (stale)`
+                    : `${snapshot.totalAccounts} accounts`
+                  : unavailable
+                    ? "Unavailable"
+                    : loading
+                      ? "Loading quota"
+                      : "Unknown"}
+              </span>
+              <span className="text-emerald-400 font-medium">
+                {snapshot ? `${activeAccounts.length} active` : "—"}
+              </span>
+            </div>
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="right" align="center" hidden={sidebarState !== "collapsed"}>
+          <div className="font-semibold text-xs">Antigravity Quota</div>
+          <div className="text-[10px] text-muted-foreground">
+            {quotaLabel} / {maxQuota}% · {activeAccounts.length} active
+          </div>
+        </TooltipContent>
+      </Tooltip>
+
+      {/* Upward Drop-up Accounts Section (strictly bounded inside sidebar width) */}
+      <AnimatePresence>
+        {isOpen && sidebarState !== "collapsed" && (
+          <motion.div
+            id={panelId}
+            initial={{ opacity: 0, y: 8, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 6, scale: 0.97 }}
+            transition={{ type: "spring", stiffness: 350, damping: 28 }}
+            className="absolute bottom-full left-0 right-0 mb-2 w-full z-50 rounded-xl border border-[#23232C] bg-[#131318]/98 backdrop-blur-md p-2.5 shadow-2xl space-y-2 text-xs"
+            role="region"
+            aria-label="Antigravity active accounts detail"
+          >
+            <div className="flex items-center justify-between pb-1 border-b border-[#23232C]">
+              <div className="flex items-center gap-1.5 text-[11px] text-sidebar-foreground font-medium">
+                <Cpu className="size-3 text-[#FF5B22]" />
+                <span>
+                  Active ({activeAccounts.length}/{snapshot?.totalAccounts ?? 0})
+                </span>
+                {unavailable && snapshot && (
+                  <span className="text-[9px] text-[#FF5B22] font-mono px-1 py-0.2 rounded bg-[#FF5B22]/10 border border-[#FF5B22]/20">
+                    cached
+                  </span>
+                )}
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={handleRefresh}
+                disabled={refreshing || (!password && !authenticated)}
+                aria-busy={refreshing}
+                aria-label={refreshing ? "Refreshing quotas" : "Refresh quotas now"}
+                className="h-6 px-1.5 text-[10px] text-muted-foreground hover:text-foreground hover:bg-white/[0.04]"
+                title="Refresh quotas now"
+              >
+                <RotateCw
+                  className={cn("size-2.5 mr-1", refreshing && "animate-spin text-[#FF5B22]")}
+                />
+                <span>{refreshing ? "Checking…" : "Refresh"}</span>
+              </Button>
+            </div>
+
+            <div className="space-y-1.5 max-h-48 overflow-y-auto pr-0.5 scrollbar-thin">
+              {!snapshot ? (
+                <div className="py-2 text-center text-[11px] text-muted-foreground">
+                  {loading ? "Loading active accounts…" : "Data unavailable."}
+                </div>
+              ) : activeAccounts.length === 0 ? (
+                <div className="py-2 text-center text-[11px] text-muted-foreground">
+                  No active accounts running.
+                </div>
+              ) : (
+                activeAccounts.map((acc) => {
+                  const sessionColors = quotaColor(acc.sessionPercentage);
+                  const emailPrefix = acc.email.split("@")[0] || acc.email;
+
+                  return (
+                    <div
+                      key={acc.id}
+                      className="p-1.5 rounded-md border border-[#23232C] bg-[#09090C]/60 hover:bg-[#09090C] transition-colors space-y-1"
+                    >
+                      <div className="flex items-center justify-between gap-1 min-w-0">
+                        <span
+                          className="truncate text-[11px] font-medium text-sidebar-foreground font-mono"
+                          title={acc.email}
+                        >
+                          {emailPrefix}
+                        </span>
+                        <span className="shrink-0 text-[10px] text-muted-foreground/80 flex items-center gap-0.5 font-mono">
+                          <Clock className="size-2.5" />
+                          {formatCountdown(acc.resetAt)}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-1 text-[10px]">
+                        <div className="flex items-center gap-1 font-mono">
+                          <span
+                            className={cn(
+                              "px-1 py-0.5 leading-none rounded font-semibold border",
+                              sessionColors.bg,
+                              sessionColors.text,
+                              sessionColors.border,
+                            )}
+                            title="Session Quota"
+                          >
+                            {Number.isFinite(acc.sessionPercentage)
+                              ? `${acc.sessionPercentage.toFixed(0)}%`
+                              : "—"}
+                          </span>
+                          <span
+                            className="text-muted-foreground text-[9px]"
+                            title="Weekly Quota (informational)"
+                          >
+                            W:
+                            {Number.isFinite(acc.weeklyPercentage)
+                              ? `${acc.weeklyPercentage.toFixed(0)}%`
+                              : "—"}
+                          </span>
+                        </div>
+
+                        <div
+                          className="flex items-center gap-1 px-1 py-0.5 leading-none rounded bg-surface-raised border border-border/50 text-[9px] font-mono text-muted-foreground truncate max-w-[90px]"
+                          title={acc.proxyName ? `Proxy: ${acc.proxyName}` : "Direct connection"}
+                        >
+                          <span
+                            className={cn(
+                              "size-1.5 rounded-full shrink-0",
+                              acc.proxyHealthy ? "bg-emerald-500" : "bg-rose-500",
+                            )}
+                          />
+                          <span className="truncate">{acc.proxyName || "Direct"}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

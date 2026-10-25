@@ -1,4 +1,9 @@
-import type { FleetNodeStatus, FleetHealthStatus, FleetPublicIpStatus, FleetProxyActivation } from "../proxyfleet/types.js";
+import type {
+  FleetNodeStatus,
+  FleetHealthStatus,
+  FleetPublicIpStatus,
+  FleetProxyActivation,
+} from "../proxyfleet/types.js";
 
 export function redactCredential(val: string): string {
   if (!val) return "";

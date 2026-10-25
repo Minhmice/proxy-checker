@@ -37,7 +37,7 @@ test("fetch client helpers gracefully handle aborted signals without rejections"
         () => {
           reject(new DOMException("signal is aborted without reason", "AbortError"));
         },
-        { once: true }
+        { once: true },
       );
     }
     return promise;

@@ -54,10 +54,7 @@ export function validatePublicIpv4(value: string): string {
 
   const [a, b, c] = octets;
   // Non-global / private / loopback / link-local / multicast / reserved exclusions
-  const isPrivate =
-    a === 10 ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168);
+  const isPrivate = a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
   const isLoopback = a === 127;
   const isLinkLocal = a === 169 && b === 254;
   const isTailscaleCgnat = a === 100 && b >= 64 && b <= 127;

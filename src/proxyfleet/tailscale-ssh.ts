@@ -23,10 +23,7 @@ export function computeSha256Fingerprint(keyBuffer: Buffer): string {
   return `SHA256:${hash}`;
 }
 
-export function inspectSshHostKey(
-  target: SshTarget,
-  timeoutMs = 10_000
-): Promise<HostKeyInfo> {
+export function inspectSshHostKey(target: SshTarget, timeoutMs = 10_000): Promise<HostKeyInfo> {
   const { promise, resolve, reject } = Promise.withResolvers<HostKeyInfo>();
   const client = new Client();
   let discovered = false;
@@ -78,7 +75,7 @@ export interface TailscaleSshClient {
 
 export function createTailscaleSshClient(
   target: SshTarget,
-  credentials: SshCredentials
+  credentials: SshCredentials,
 ): TailscaleSshClient {
   const host = target.host;
   const port = target.port || 22;
@@ -130,7 +127,7 @@ export function createTailscaleSshClient(
           if (actualFingerprint !== expected) {
             client.destroy();
             const err = new Error(
-              `SSH host key fingerprint mismatch! Expected: ${expected}, Got: ${actualFingerprint}`
+              `SSH host key fingerprint mismatch! Expected: ${expected}, Got: ${actualFingerprint}`,
             );
             if (!settled) {
               settled = true;
@@ -215,7 +212,8 @@ export function createTailscaleSshClient(
 
     async readPublicIp(timeoutMs = 15_000): Promise<string> {
       // Fixed curl command executed on remote worker via https://api.ipify.org
-      const cmd = "curl -4 --noproxy '*' --proto '=https' --fail --silent --show-error --connect-timeout 5 --max-time 10 --max-filesize 1024 https://api.ipify.org";
+      const cmd =
+        "curl -4 --noproxy '*' --proto '=https' --fail --silent --show-error --connect-timeout 5 --max-time 10 --max-filesize 1024 https://api.ipify.org";
       const raw = await this.execute(cmd, timeoutMs);
       const trimmed = raw.trim();
       return validatePublicIpv4(trimmed);

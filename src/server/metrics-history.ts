@@ -23,7 +23,10 @@ export function createMetricsHistory({ dataDir }: { dataDir: string }) {
     fs.renameSync(temp, historyFile);
   }
 
-  function recordFromPools(pools: PoolRecord[], stats: { active: number; reserve: number; dead: number }) {
+  function recordFromPools(
+    pools: PoolRecord[],
+    stats: { active: number; reserve: number; dead: number },
+  ) {
     const usable = pools.filter((p) => p.status === "usable" && p.latency_ms !== null);
     const avgLatencyMs =
       usable.length > 0

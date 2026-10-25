@@ -1,7 +1,7 @@
-import crypto from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
-import Database from 'better-sqlite3';
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import Database from "better-sqlite3";
 
 export interface DatabaseInspection {
   tables: Array<{
@@ -23,14 +23,14 @@ export class DatabasePreflightError extends Error {
     message: string,
   ) {
     super(message);
-    this.name = 'DatabasePreflightError';
+    this.name = "DatabasePreflightError";
   }
 }
 
 export function inspectDatabase(filePath: string): DatabaseInspection {
   const db = new Database(filePath, { readonly: true, fileMustExist: true });
   try {
-    db.exec('BEGIN');
+    db.exec("BEGIN");
     const schema = db
       .prepare(
         "SELECT name, sql FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
@@ -39,21 +39,18 @@ export function inspectDatabase(filePath: string): DatabaseInspection {
     const rowDigests: Record<string, string> = {};
     const tables = schema.map((table) => {
       const identifier = `"${table.name.replaceAll('"', '""')}"`;
-      const rows = db
-        .prepare(`SELECT * FROM ${identifier}`)
-        .safeIntegers()
-        .all();
+      const rows = db.prepare(`SELECT * FROM ${identifier}`).safeIntegers().all();
       const serialized = rows
         .map((row) =>
           JSON.stringify(row, (_key, value) =>
-            typeof value === 'bigint' ? { integer: value.toString() } : value,
+            typeof value === "bigint" ? { integer: value.toString() } : value,
           ),
         )
         .sort();
       rowDigests[table.name] = crypto
-        .createHash('sha256')
+        .createHash("sha256")
         .update(JSON.stringify(serialized))
-        .digest('hex');
+        .digest("hex");
       return {
         ...table,
         columns: db.prepare(`PRAGMA table_info(${identifier})`).all(),
@@ -62,16 +59,14 @@ export function inspectDatabase(filePath: string): DatabaseInspection {
       };
     });
     const indexes = db
-      .prepare(
-        "SELECT name, tbl_name, sql FROM sqlite_schema WHERE type = 'index' ORDER BY name",
-      )
-      .all() as DatabaseInspection['indexes'];
+      .prepare("SELECT name, tbl_name, sql FROM sqlite_schema WHERE type = 'index' ORDER BY name")
+      .all() as DatabaseInspection["indexes"];
     return {
       tables,
       indexes,
       rowDigests,
-      userVersion: Number(db.pragma('user_version', { simple: true })),
-      journalMode: String(db.pragma('journal_mode', { simple: true })),
+      userVersion: Number(db.pragma("user_version", { simple: true })),
+      journalMode: String(db.pragma("journal_mode", { simple: true })),
     };
   } finally {
     db.close();
@@ -85,13 +80,13 @@ export function preflightAndBackupDatabase(
 ): void {
   if (!fs.existsSync(sourcePath)) {
     throw new DatabasePreflightError(
-      'FILE_NOT_FOUND',
+      "FILE_NOT_FOUND",
       `Database file does not exist: ${sourcePath}`,
     );
   }
   if (fs.existsSync(backupPath)) {
     throw new DatabasePreflightError(
-      'DESTINATION_EXISTS',
+      "DESTINATION_EXISTS",
       `Backup destination already exists: ${backupPath}`,
     );
   }
@@ -102,21 +97,18 @@ export function preflightAndBackupDatabase(
   });
   try {
     try {
-      db.exec('BEGIN IMMEDIATE; ROLLBACK');
+      db.exec("BEGIN IMMEDIATE; ROLLBACK");
     } catch (error) {
-      const code =
-        error && typeof error === 'object' && 'code' in error
-          ? error.code
-          : undefined;
-      if (code === 'SQLITE_BUSY' || code === 'SQLITE_LOCKED') {
+      const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+      if (code === "SQLITE_BUSY" || code === "SQLITE_LOCKED") {
         throw new DatabasePreflightError(
-          'WRITER_ACTIVE',
+          "WRITER_ACTIVE",
           `Database has an active writer: ${sourcePath}`,
         );
       }
       throw error;
     }
-    db.prepare('VACUUM INTO ?').run(path.resolve(backupPath));
+    db.prepare("VACUUM INTO ?").run(path.resolve(backupPath));
   } finally {
     db.close();
   }
@@ -128,7 +120,7 @@ export function preflightAndBackupDatabase(
     JSON.stringify(source.rowDigests) !== JSON.stringify(backup.rowDigests)
   ) {
     throw new DatabasePreflightError(
-      'BACKUP_MISMATCH',
+      "BACKUP_MISMATCH",
       `Backup verification failed: ${backupPath}`,
     );
   }

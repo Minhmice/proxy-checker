@@ -15,13 +15,16 @@ const { privateKey: serverPrivKey, publicKey: serverPubKey } = crypto.generateKe
 });
 const serverKeyPem = serverPrivKey.export({ type: "pkcs1", format: "pem" }).toString();
 
-function startMockSshServer(port: number, options: {
-  validUser: string;
-  validPass: string;
-  publicIpOutput?: string;
-  hostnameOutput?: string;
-  unameOutput?: string;
-}) {
+function startMockSshServer(
+  port: number,
+  options: {
+    validUser: string;
+    validPass: string;
+    publicIpOutput?: string;
+    hostnameOutput?: string;
+    unameOutput?: string;
+  },
+) {
   const server = new SshServer({ hostKeys: [serverKeyPem] }, (client) => {
     client
       .on("authentication", (ctx) => {

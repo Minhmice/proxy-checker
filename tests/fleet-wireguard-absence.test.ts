@@ -10,7 +10,10 @@ import * as wireguard from "../src/proxyfleet/wireguard.js";
 test("unconfigured controller releases removal only after native overlay absence is verified", async (t) => {
   const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "fleet-wg-absent-"));
   const repo = createFleetRepository({ sqlitePath: ":memory:" });
-  t.after(() => { repo.close(); fs.rmSync(configDir, { recursive: true, force: true }); });
+  t.after(() => {
+    repo.close();
+    fs.rmSync(configDir, { recursive: true, force: true });
+  });
   await repo.migrate();
   const node = await repo.createNode({ name: "never-provisioned", wireguardIp: "10.77.0.11" });
   await repo.setNodeAgentToken(node.id, "old-worker-token");
@@ -34,8 +37,13 @@ test("unconfigured controller releases removal only after native overlay absence
   const removal = createNodeRemovalService({
     repo,
     removeOwnedPeer: async () => {
-      assert.equal(typeof wireguard.verifyFleetWireGuardAbsent, "function", "cleanup needs native absence verification without setup");
-      if (!(await wireguard.verifyFleetWireGuardAbsent(options))) throw new Error("Existing overlay requires verified cleanup");
+      assert.equal(
+        typeof wireguard.verifyFleetWireGuardAbsent,
+        "function",
+        "cleanup needs native absence verification without setup",
+      );
+      if (!(await wireguard.verifyFleetWireGuardAbsent(options)))
+        throw new Error("Existing overlay requires verified cleanup");
     },
     unlinkManagedEndpoints: async () => {},
   });
@@ -43,11 +51,19 @@ test("unconfigured controller releases removal only after native overlay absence
   assert.equal(await repo.verifyNodeAgentToken(node.id, "old-worker-token"), false);
   assert.notEqual(await repo.getNextWireguardIp(), "10.77.0.11");
   inspectionFails = false;
-  assert.equal((await removal.remove(node.id)).status, "pending", "live interface cannot be forgotten");
+  assert.equal(
+    (await removal.remove(node.id)).status,
+    "pending",
+    "live interface cannot be forgotten",
+  );
   nativeInterface = false;
   if (process.platform === "win32") {
     serviceExists = true;
-    assert.equal((await removal.remove(node.id)).status, "pending", "stopped service can restore peers");
+    assert.equal(
+      (await removal.remove(node.id)).status,
+      "pending",
+      "stopped service can restore peers",
+    );
     serviceExists = false;
   }
   for (const name of ["proxyfleet.conf", "proxyfleet-owner.json", "proxyfleet.key"]) {

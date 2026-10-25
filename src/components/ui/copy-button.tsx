@@ -19,10 +19,13 @@ export function CopyButton({ value, label, className, size = "sm" }: CopyButtonP
   const resetRef = useRef<number | undefined>(undefined);
   const requestRef = useRef(0);
 
-  useEffect(() => () => {
-    requestRef.current += 1;
-    window.clearTimeout(resetRef.current);
-  }, []);
+  useEffect(
+    () => () => {
+      requestRef.current += 1;
+      window.clearTimeout(resetRef.current);
+    },
+    [],
+  );
 
   async function handleCopy() {
     if (!value) return;
@@ -40,7 +43,12 @@ export function CopyButton({ value, label, className, size = "sm" }: CopyButtonP
     resetRef.current = window.setTimeout(() => setState("idle"), 2200);
   }
 
-  const statusLabel = state === "copied" ? `${label} copied` : state === "error" ? `Could not copy ${label.toLowerCase()}` : `Copy ${label}`;
+  const statusLabel =
+    state === "copied"
+      ? `${label} copied`
+      : state === "error"
+        ? `Could not copy ${label.toLowerCase()}`
+        : `Copy ${label}`;
 
   return (
     <Button
@@ -59,7 +67,9 @@ export function CopyButton({ value, label, className, size = "sm" }: CopyButtonP
       ) : (
         <Copy className="size-3.5" aria-hidden="true" />
       )}
-      <span className="sr-only sm:not-sr-only">{state === "copied" ? "Copied" : state === "error" ? "Retry" : "Copy"}</span>
+      <span className="sr-only sm:not-sr-only">
+        {state === "copied" ? "Copied" : state === "error" ? "Retry" : "Copy"}
+      </span>
     </Button>
   );
 }

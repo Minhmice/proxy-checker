@@ -92,7 +92,7 @@ export function CobeGlobe({ markers = [], className, size = 300 }: CobeGlobeProp
       <div
         className={cn(
           "flex items-center justify-center rounded-full border border-border/60 bg-muted/20 font-mono text-xs text-muted-foreground",
-          className
+          className,
         )}
         style={{ width: size, height: size }}
       >

@@ -11,7 +11,10 @@ const serverNeedle = "src/server/server.ts";
 function readPort() {
   const fallback = 1300;
   if (!fs.existsSync(envFile)) return fallback;
-  const match = fs.readFileSync(envFile, "utf8").replace(/^\uFEFF/, "").match(/^\s*PORT=(\d+)\s*$/m);
+  const match = fs
+    .readFileSync(envFile, "utf8")
+    .replace(/^\uFEFF/, "")
+    .match(/^\s*PORT=(\d+)\s*$/m);
   return match ? Number(match[1]) : fallback;
 }
 
@@ -68,17 +71,23 @@ function projectServerPids() {
   try {
     const psCmd = `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"name = 'node.exe'\\" | Where-Object { $_.CommandLine -like '*${serverNeedle}*' } | Select-Object -ExpandProperty ProcessId"`;
     const out = execSync(psCmd, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-    const pids = out.split(/\r?\n/).map((s) => s.trim()).filter((s) => /^\d+$/.test(s));
+    const pids = out
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter((s) => /^\d+$/.test(s));
     if (pids.length) return pids;
   } catch {
     // fallback if PowerShell is unavailable
   }
 
   try {
-    const out = execSync('wmic process where "name=\'node.exe\'" get ProcessId,CommandLine /format:csv', {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
+    const out = execSync(
+      "wmic process where \"name='node.exe'\" get ProcessId,CommandLine /format:csv",
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    );
     const pids = [];
     for (const line of out.split(/\r?\n/)) {
       if (!line.includes(serverNeedle)) continue;

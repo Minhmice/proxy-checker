@@ -9,7 +9,7 @@ export async function startBrowserMocks(): Promise<void> {
     return;
   }
   // Dynamic import required: prevents bundling MSW browser mocks into client production bundles
-  const { worker } = await import("./browser.js");
+  const { worker } = await import("./browser");
   await worker.start({
     onUnhandledFrame: "bypass",
     serviceWorker: { url: "/mockServiceWorker.js" },

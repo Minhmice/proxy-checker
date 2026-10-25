@@ -61,7 +61,11 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
     } catch (err) {
       if (controller.signal.aborted) return;
       const message = err instanceof Error ? err.message.toLowerCase() : "";
-      if (message.includes("password") || message.includes("401") || message.includes("unauthorized")) {
+      if (
+        message.includes("password") ||
+        message.includes("401") ||
+        message.includes("unauthorized")
+      ) {
         setError("Session expired or unauthorized. Please sign in again.");
       } else {
         setError("Unable to load proxy pools. Check your session and try again.");
@@ -114,12 +118,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
             <AlertCircle className="size-5 text-destructive" />
             <p className="text-xs text-destructive font-medium">{error}</p>
             <div className="flex items-center gap-2 mt-1">
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs"
-                onClick={retryLoad}
-              >
+              <Button variant="outline" size="sm" className="h-7 text-xs" onClick={retryLoad}>
                 Retry
               </Button>
               <Button
@@ -138,9 +137,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
           <div className="flex flex-col items-center justify-center gap-1.5 py-8 px-4 text-center text-xs text-muted-foreground">
             <Server className="size-5 opacity-40 mb-1" />
             <p className="font-medium text-foreground">No proxy pools configured</p>
-            <p className="text-muted-foreground/80">
-              No router pools found for this session.
-            </p>
+            <p className="text-muted-foreground/80">No router pools found for this session.</p>
           </div>
         )}
         {!loading && !error && pools.length > 0 && (
@@ -166,7 +163,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                 }}
                 className="flex items-center gap-2.5 px-3 py-2 cursor-pointer"
               >
-                <Layers className="size-4 shrink-0 text-accent-violet" />
+                <Layers className="size-4 shrink-0 text-primary" />
                 <span className="font-medium text-sm text-foreground">Proxy Fleet & Tables</span>
               </CommandItem>
               <CommandItem
@@ -189,7 +186,9 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                 className="flex items-center gap-2.5 px-3 py-2 cursor-pointer"
               >
                 <Gauge className="size-4 shrink-0 text-accent-teal" />
-                <span className="font-medium text-sm text-foreground">Fleet Telemetry & Diagnostics</span>
+                <span className="font-medium text-sm text-foreground">
+                  Fleet Telemetry & Diagnostics
+                </span>
               </CommandItem>
               <CommandItem
                 value="settings configuration runtime"
@@ -211,7 +210,9 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                 className="flex items-center gap-2.5 px-3 py-2 cursor-pointer"
               >
                 <HelpCircle className="size-4 shrink-0 text-muted-foreground" />
-                <span className="font-medium text-sm text-foreground">Operations Reference & Guides</span>
+                <span className="font-medium text-sm text-foreground">
+                  Operations Reference & Guides
+                </span>
               </CommandItem>
             </CommandGroup>
             <CommandGroup heading={`Proxy Pools (${pools.length})`}>

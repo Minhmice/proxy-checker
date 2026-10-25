@@ -9,6 +9,8 @@
     "dev:stop": "node scripts/dev-stop.mjs",
     "dev:restart": "node scripts/dev-stop.mjs && node --import tsx src/server/server.ts",
     "build": "next build",
+    "build:agent": "node scripts/build-agent.mjs",
+    "test:agent": "cd agent && go test ./...",
     "start": "node --import tsx src/server/server.ts",
     "test": "node --import tsx --test tests/**/*.test.ts",
     "typecheck": "tsc --noEmit",
@@ -21,7 +23,11 @@
     "test:a11y": "node --import tsx --test tests/a11y/dashboard.spec.ts",
     "healthcheck:9router": "node --import tsx scripts/9router-healthcheck.ts",
     "test:fleet": "node --import tsx --test tests/fleet-*.test.ts",
-    "acceptance": "node --import tsx scripts/proxyfleet-acceptance.mjs"
+    "acceptance": "node --import tsx scripts/proxyfleet-acceptance.mjs",
+    "backup:sync": "node --import tsx scripts/backup-sync.ts backup",
+    "backup:restore": "node --import tsx scripts/backup-sync.ts restore",
+    "backup:status": "node --import tsx scripts/backup-sync.ts status",
+    "test:crucible": "node --import tsx --test tests/crucible-skill.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.5",

@@ -1,6 +1,13 @@
 import type { FleetWireGuardSettings } from "../proxyfleet/wireguard.js";
 export type AuditVerdict = "PASS" | "WARN" | "FAIL" | "UNKNOWN";
-export type ProbeStatus = "PASS" | "WARN" | "FAIL" | "UNKNOWN" | "UNSUPPORTED" | "SKIPPED" | "ERROR";
+export type ProbeStatus =
+  | "PASS"
+  | "WARN"
+  | "FAIL"
+  | "UNKNOWN"
+  | "UNSUPPORTED"
+  | "SKIPPED"
+  | "ERROR";
 
 export interface AuditReason {
   code: string;
@@ -58,12 +65,21 @@ export interface ProxyAuditResult {
   };
   connectivity?: { reachable: boolean; latencyMs?: number };
   exitIp?: { ip: string; isp?: string };
-  riskFactors?: Array<{ code: string; severity: string; title?: string; description?: string; id?: string; message?: string }>;
+  riskFactors?: Array<{
+    code: string;
+    severity: string;
+    title?: string;
+    description?: string;
+    id?: string;
+    message?: string;
+  }>;
   recommendations?: string[];
   metadata?: Record<string, unknown>;
 }
 
-export type ProxyInput = string | { protocol: string; host: string; port: number; username?: string; password?: string };
+export type ProxyInput =
+  | string
+  | { protocol: string; host: string; port: number; username?: string; password?: string };
 import type {
   ProxyLifecycleState,
   ProxyInventoryItem,
@@ -106,7 +122,6 @@ export interface UnifiedProxyHistoryEntry {
   timestamp: number;
   errorMessage: string | null;
 }
-
 
 export type ProxyProtocol = "http" | "socks5";
 
@@ -193,10 +208,10 @@ export interface PoolStatus {
   authMode?: "password" | "api_key" | "none";
   lastSyncAt: number | null;
   lastError: string;
-   stats: PoolStats;
+  stats: PoolStats;
   autoSync?: boolean;
-   syncIntervalMinutes: number;
-   activeLimit: number;
+  syncIntervalMinutes: number;
+  activeLimit: number;
   activity?: ActivityEntry[];
   syncProgress?: SyncProgress;
 }
@@ -215,6 +230,7 @@ export interface MetricsHistory {
 
 export interface AppSettingsPublic {
   nineRouterUrl: string;
+  nineRouterUrls?: string[];
   controlPasswordSet: boolean;
   nineRouterPasswordSet: boolean;
   nineRouterApiKeySet: boolean;
@@ -241,6 +257,14 @@ export interface SettingsResponse {
   meta: SettingsMeta;
 }
 
+export interface NineRouterTestResult {
+  ok: boolean;
+  poolCount?: number;
+  error?: string;
+  partial?: boolean;
+  endpoints?: Array<{ url: string; ok: boolean; poolCount?: number; error?: string }>;
+}
+
 export interface SettingsUpdatePayload {
   controlPassword?: string;
   currentPassword?: string;
@@ -260,12 +284,6 @@ export interface SettingsUpdatePayload {
   fleetWireguard?: FleetWireGuardSettings | null;
 }
 
-export interface NineRouterTestResult {
-  ok: boolean;
-  poolCount?: number;
-  error?: string;
-}
-
 export interface AntigravityAccountState {
   id: string;
   email: string;
@@ -281,6 +299,15 @@ export interface AntigravityAccountState {
   lastCheckedAt: number;
   turnCount?: number;
   lastActivatedAt?: number | null;
+  routerUrl?: string;
+}
+
+export interface AntigravityRotatorEndpointSummary {
+  url: string;
+  ok: boolean;
+  totalAccounts?: number;
+  activeCount?: number;
+  error?: string;
 }
 
 export interface AntigravityRotatorSnapshot {
@@ -291,6 +318,7 @@ export interface AntigravityRotatorSnapshot {
   totalSessionQuotaPercentage: number;
   maxPossiblePercentage: number;
   accounts: AntigravityAccountState[];
+  endpoints?: AntigravityRotatorEndpointSummary[];
 }
 
 export interface DetailedDiagnosticResult {
@@ -371,4 +399,143 @@ export interface AuditorJob {
   resultsCapped: boolean;
   persistenceWarning: string;
   error: string;
+}
+
+export type DualRouterValue =
+  | null
+  | boolean
+  | number
+  | string
+  | DualRouterValue[]
+  | { [key: string]: DualRouterValue };
+export type DualRouterResource = "pool" | "account" | "settings" | "role" | "history";
+export type DualRouterOutcome = "applied" | "rejected" | "conflicted" | "unsupported" | "unknown";
+export type DualRouterRunStatus =
+  | "verified"
+  | "partial"
+  | "conflicted"
+  | "blocked"
+  | "busy"
+  | "idle"
+  | "unconfigured";
+
+export interface DualRouterConflict {
+  id: string;
+  resource: DualRouterResource;
+  key: string;
+  field: string | null;
+  revision: number;
+  reason: "divergent" | "delete-edit" | "identity" | "ownership" | "credential";
+  base: DualRouterValue;
+  a: DualRouterValue;
+  b: DualRouterValue;
+}
+
+export interface DualRouterCapability {
+  resource: DualRouterResource | "usage";
+  read: boolean;
+  export: boolean;
+  write: boolean;
+  conditional: boolean;
+  evidence: string;
+}
+
+export interface DualRouterRunReport {
+  id: string;
+  status: "verified" | "partial" | "conflicted" | "blocked" | "busy";
+  operations: Array<{ id: string; outcome: DualRouterOutcome }>;
+  conflicts: DualRouterConflict[];
+  unmetCapabilities: string[];
+  verifiedAt: number | null;
+}
+
+export interface DualRouterSyncPolicy {
+  enabled: boolean;
+  usageWriteBackAuthorized: boolean;
+  nextIncrementalAt: number;
+  nextFullAt: number;
+}
+
+export interface DualRouterInfo {
+  id: string;
+  url: string;
+  reachable?: boolean;
+  latencyMs?: number | null;
+  activePools?: number | null;
+  totalPools?: number | null;
+  activeAccounts?: number | null;
+  error?: string | null;
+}
+
+export interface DualRouterStatusResponse {
+  ok: boolean;
+  status: DualRouterRunStatus;
+  capabilities: Record<string, DualRouterCapability[]> | DualRouterCapability[];
+  lastVerifiedRun: DualRouterRunReport | null;
+  policy: DualRouterSyncPolicy;
+  activeConflictsCount: number;
+  routers?: DualRouterInfo[];
+}
+
+export interface DualRouterConflictResponse {
+  ok: boolean;
+  conflicts: DualRouterConflict[];
+  total: number;
+}
+
+export interface DualRouterAuditResponse {
+  ok: boolean;
+  report: DualRouterRunReport;
+}
+
+export interface DualRouterReconcileResponse {
+  ok: boolean;
+  report: DualRouterRunReport;
+}
+
+export interface DualRouterResolveConflictResponse {
+  ok: boolean;
+  report: DualRouterRunReport;
+}
+
+export interface DualRouterUsageWriteBackResponse {
+  ok: boolean;
+  receipts: Array<{
+    operationId: string;
+    outcome: DualRouterOutcome;
+    boundary: string | null;
+    evidence: string | null;
+  }>;
+  errors?: string[];
+}
+
+export interface ModelUsageStats {
+  requests: number;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+  cost: number;
+  provider?: string;
+}
+
+export interface NodeUsageSummary {
+  id: string;
+  name: string;
+  url: string;
+  online: boolean;
+  error?: string;
+  totalTokens: number;
+  requests: number;
+}
+
+export interface AggregatedTokenUsage {
+  period: string;
+  totalRequests: number;
+  totalPromptTokens: number;
+  totalCompletionTokens: number;
+  totalCachedTokens: number;
+  totalTokens: number;
+  totalCost: number;
+  byModel: Record<string, ModelUsageStats>;
+  nodes: NodeUsageSummary[];
 }

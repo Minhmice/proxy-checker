@@ -42,7 +42,11 @@ export function EndpointContextMenu({
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
       <ContextMenuContent className="w-56">
         <ContextMenuItem onSelect={onReveal} disabled={isRevealing}>
-          {isRevealing ? <Loader2 className="size-4 animate-spin mr-2" /> : <Eye className="size-4 mr-2" />}
+          {isRevealing ? (
+            <Loader2 className="size-4 animate-spin mr-2" />
+          ) : (
+            <Eye className="size-4 mr-2" />
+          )}
           <span>Reveal credentials</span>
         </ContextMenuItem>
         <ContextMenuItem onSelect={onCopyUrl}>
@@ -56,7 +60,11 @@ export function EndpointContextMenu({
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem onSelect={onToggle}>
-          {endpoint.enabled ? <PowerOff className="size-4 mr-2 text-destructive" /> : <Power className="size-4 mr-2 text-emerald-500" />}
+          {endpoint.enabled ? (
+            <PowerOff className="size-4 mr-2 text-destructive" />
+          ) : (
+            <Power className="size-4 mr-2 text-emerald-500" />
+          )}
           <span>{endpoint.enabled ? "Disable endpoint" : "Enable endpoint"}</span>
         </ContextMenuItem>
       </ContextMenuContent>
@@ -92,7 +100,11 @@ export function EndpointActionsDropdown({
       </DropdownMenuTrigger>
       <DropdownMenuContent align={align} className="w-56">
         <DropdownMenuItem onSelect={onReveal} disabled={isRevealing}>
-          {isRevealing ? <Loader2 className="size-4 animate-spin mr-2" /> : <Eye className="size-4 mr-2" />}
+          {isRevealing ? (
+            <Loader2 className="size-4 animate-spin mr-2" />
+          ) : (
+            <Eye className="size-4 mr-2" />
+          )}
           <span>Reveal credentials</span>
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={onCopyUrl}>

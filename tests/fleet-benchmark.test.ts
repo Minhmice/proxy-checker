@@ -64,31 +64,38 @@ v6i7pUIKtm5rYQ==
 -----END CERTIFICATE-----`;
 
 test("benchmark arg parser validates constraints, schemes, and IPv6 normalization", () => {
-  const env: Record<string, string | undefined> = { BENCHMARK_PROXY_URL: "socks5://127.0.0.1:1080" };
+  const env: Record<string, string | undefined> = {
+    BENCHMARK_PROXY_URL: "socks5://127.0.0.1:1080",
+  };
 
   assert.throws(
     () => parseBenchmarkConfig(["--target", "https://127.0.0.1:8443/"], env),
-    /--confirm-required flag is required/
+    /--confirm-required flag is required/,
   );
 
   assert.throws(
     () => parseBenchmarkConfig(["--confirm-required", "--target", "https://127.0.0.1:8443/"], {}),
-    /BENCHMARK_PROXY_URL environment variable must be set/
+    /BENCHMARK_PROXY_URL environment variable must be set/,
   );
 
   assert.throws(
     () =>
       parseBenchmarkConfig(
-        ["--confirm-required", "--proxy-url", "socks5://127.0.0.1:1080", "--target", "https://127.0.0.1:8443/"],
-        env
+        [
+          "--confirm-required",
+          "--proxy-url",
+          "socks5://127.0.0.1:1080",
+          "--target",
+          "https://127.0.0.1:8443/",
+        ],
+        env,
       ),
-    /--proxy-url cannot be passed via CLI/
+    /--proxy-url cannot be passed via CLI/,
   );
 
   assert.throws(
-    () =>
-      parseBenchmarkConfig(["--confirm-required", "--target", "http://127.0.0.1:8080/"], env),
-    /Target URL scheme must be 'https:'/
+    () => parseBenchmarkConfig(["--confirm-required", "--target", "http://127.0.0.1:8080/"], env),
+    /Target URL scheme must be 'https:'/,
   );
 
   // Reject unsupported https proxy scheme
@@ -97,7 +104,7 @@ test("benchmark arg parser validates constraints, schemes, and IPv6 normalizatio
       parseBenchmarkConfig(["--confirm-required", "--target", "https://127.0.0.1:8443/"], {
         BENCHMARK_PROXY_URL: "https://127.0.0.1:8443",
       }),
-    /Unsupported proxy scheme 'https:'/
+    /Unsupported proxy scheme 'https:'/,
   );
 
   // Reject unknown CLI args
@@ -105,15 +112,15 @@ test("benchmark arg parser validates constraints, schemes, and IPv6 normalizatio
     () =>
       parseBenchmarkConfig(
         ["--confirm-required", "--target", "https://127.0.0.1:8443/", "--unknown-flag"],
-        env
+        env,
       ),
-    /Unknown argument '--unknown-flag'/
+    /Unknown argument '--unknown-flag'/,
   );
 
   // IPv6 bracket normalization
   const parsedIpv6 = parseBenchmarkConfig(
     ["--confirm-required", "--target", "https://[::1]:8443/healthz", "--concurrency", "2"],
-    env
+    env,
   );
   assert.equal(parsedIpv6.target.hostname, "::1");
   assert.equal(parsedIpv6.target.authority, "[::1]:8443");
@@ -147,14 +154,11 @@ test("readBytes and readUntil reject immediately on pre-aborted signal without l
   const abortedCtrl = new AbortController();
   abortedCtrl.abort();
 
-  await assert.rejects(
-    () => readBytes(socket, 10, 15000, abortedCtrl.signal),
-    /Operation aborted/
-  );
+  await assert.rejects(() => readBytes(socket, 10, 15000, abortedCtrl.signal), /Operation aborted/);
 
   await assert.rejects(
     () => readUntil(socket, "\r\n\r\n", 15000, abortedCtrl.signal),
-    /Operation aborted/
+    /Operation aborted/,
   );
 });
 
@@ -170,7 +174,7 @@ test("readUntil rejects oversized headers but accepts valid delimiter with coale
   const c1 = net.connect(p1, "127.0.0.1");
   await assert.rejects(
     () => readUntil(c1, "\r\n\r\n", 5000, undefined, 100),
-    /Header size limit of 100 bytes exceeded/
+    /Header size limit of 100 bytes exceeded/,
   );
   c1.destroy();
   s1.close();
@@ -217,7 +221,9 @@ test("HTTP CONNECT tunnel routes through proxy and executes HTTPS GET with custo
   const proxyServer = net.createServer((clientSocket) => {
     void (async () => {
       const headers = await readUntil(clientSocket, "\r\n\r\n");
-      const match = headers.toString("latin1").match(/Proxy-Authorization: Basic ([A-Za-z0-9+/=]+)/i);
+      const match = headers
+        .toString("latin1")
+        .match(/Proxy-Authorization: Basic ([A-Za-z0-9+/=]+)/i);
       if (match) {
         authReceived = Buffer.from(match[1], "base64").toString("utf8");
       }
@@ -256,7 +262,7 @@ test("HTTP CONNECT tunnel routes through proxy and executes HTTPS GET with custo
     ],
     {
       BENCHMARK_PROXY_URL: `http://benchuser:benchpass@127.0.0.1:${proxyPort}`,
-    }
+    },
   );
 
   const res = await executeRequest(config);
@@ -315,7 +321,7 @@ test("HTTP 503 response counts as failure while accounting for actual received b
     ],
     {
       BENCHMARK_PROXY_URL: `http://127.0.0.1:${proxyPort}`,
-    }
+    },
   );
 
   const res = await executeRequest(config);
@@ -362,14 +368,10 @@ test("TLS rejects untrusted certificates when CA is not supplied", async (t) => 
   });
 
   const config = parseBenchmarkConfig(
-    [
-      "--confirm-required",
-      "--target",
-      `https://127.0.0.1:${targetPort}/`,
-    ],
+    ["--confirm-required", "--target", `https://127.0.0.1:${targetPort}/`],
     {
       BENCHMARK_PROXY_URL: `http://127.0.0.1:${proxyPort}`,
-    }
+    },
   );
 
   const res = await executeRequest(config);

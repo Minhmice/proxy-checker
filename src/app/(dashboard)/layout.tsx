@@ -1,23 +1,16 @@
-'use client';
+"use client";
 
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { AuthProvider, useAuth } from '@/components/auth-provider';
-import {
-  CommandPalette,
-  useCommandPalette,
-} from '@/components/command-palette';
-import { RightPanel } from '@/components/right-panel';
-import { AppSidebar } from '@/components/app-sidebar';
-import { TopBar } from '@/components/topbar';
-import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
-import KineticGrid from '@/components/ui/kinetic-grid';
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { AuthProvider, useAuth } from "@/components/auth-provider";
+import { CommandPalette, useCommandPalette } from "@/components/command-palette";
+import { RightPanel } from "@/components/right-panel";
+import { AppSidebar } from "@/components/app-sidebar";
+import { TopBar } from "@/components/topbar";
+import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
+import KineticGrid from "@/components/ui/kinetic-grid";
 
-export default function DashboardLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { open, setOpen, close } = useCommandPalette();
 
   return (
@@ -32,16 +25,12 @@ export default function DashboardLayout({
 function DashboardRedirect() {
   const router = useRouter();
   useEffect(() => {
-    router.replace('/auth');
+    router.replace("/auth");
   }, [router]);
   return <div className="auth-loading" aria-busy="true" />;
 }
 
-function DashboardRedirectBoundary({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+function DashboardRedirectBoundary({ children }: { children: React.ReactNode }) {
   const { authenticated, password } = useAuth();
   return authenticated || Boolean(password) ? children : <DashboardRedirect />;
 }
@@ -80,14 +69,9 @@ function DashboardFrame({
                 id="main-content"
                 className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 3xl:p-10 5xl:p-12 min-w-0 cyber-grid-bg"
               >
-                <DashboardRedirectBoundary>
-                  {children}
-                </DashboardRedirectBoundary>
+                <DashboardRedirectBoundary>{children}</DashboardRedirectBoundary>
               </main>
-              <RightPanel
-                open={operationsOpen}
-                onOpenChange={setOperationsOpen}
-              />
+              <RightPanel open={operationsOpen} onOpenChange={setOperationsOpen} />
             </div>
           </SidebarInset>
         </SidebarProvider>

@@ -43,7 +43,11 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { formatFleetNodeStatus, formatFleetNodeRole, formatRelativeTime } from "@/lib/fleet-ui-utils";
+import {
+  formatFleetNodeStatus,
+  formatFleetNodeRole,
+  formatRelativeTime,
+} from "@/lib/fleet-ui-utils";
 import { NodeRuntimeCard } from "@/components/nodes/node-runtime-card";
 import { DeleteNodeDialog } from "@/components/nodes/delete-node-dialog";
 import type {
@@ -121,7 +125,9 @@ export default function NodeDetailPage({ params }: { params: Promise<{ id: strin
         setLastUpdated(new Date());
         if (!isCapacityDirty) {
           setCapacityInput(
-            data.node?.capacity?.maxConnections != null ? String(data.node.capacity.maxConnections) : ""
+            data.node?.capacity?.maxConnections != null
+              ? String(data.node.capacity.maxConnections)
+              : "",
           );
         }
       }
@@ -205,7 +211,7 @@ export default function NodeDetailPage({ params }: { params: Promise<{ id: strin
       toast.success(
         maxConnections != null
           ? `Capacity ceiling set to ${maxConnections} maxconn`
-          : "Capacity ceiling reset to engine default"
+          : "Capacity ceiling reset to engine default",
       );
       setIsCapacityDirty(false);
       if (resetToDefault) {
@@ -308,7 +314,11 @@ export default function NodeDetailPage({ params }: { params: Promise<{ id: strin
               <h2 className="text-lg font-semibold text-foreground">Node Not Found</h2>
             </div>
             <p className="text-sm text-muted-foreground">
-              Node <code className="font-mono text-foreground font-semibold px-1 py-0.5 rounded bg-muted/60">{nodeId}</code> could not be found in the fleet registry.
+              Node{" "}
+              <code className="font-mono text-foreground font-semibold px-1 py-0.5 rounded bg-muted/60">
+                {nodeId}
+              </code>{" "}
+              could not be found in the fleet registry.
             </p>
             <div className="pt-2">
               <Button asChild size="sm">
@@ -337,7 +347,11 @@ export default function NodeDetailPage({ params }: { params: Promise<{ id: strin
               <h2 className="text-lg font-semibold">Failed to Load Node</h2>
             </div>
             <p className="text-sm text-muted-foreground">
-              Could not load details for node <code className="font-mono text-foreground px-1 py-0.5 rounded bg-muted/60">{nodeId}</code>: {fetchError}
+              Could not load details for node{" "}
+              <code className="font-mono text-foreground px-1 py-0.5 rounded bg-muted/60">
+                {nodeId}
+              </code>
+              : {fetchError}
             </p>
             <div className="flex items-center gap-2 pt-2">
               <Button size="sm" onClick={() => loadData()}>
@@ -382,7 +396,10 @@ export default function NodeDetailPage({ params }: { params: Promise<{ id: strin
     switch (config.status) {
       case "applied":
         return (
-          <Badge variant="default" className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30">
+          <Badge
+            variant="default"
+            className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+          >
             Applied
           </Badge>
         );
@@ -407,7 +424,8 @@ export default function NodeDetailPage({ params }: { params: Promise<{ id: strin
           <div className="flex items-center gap-2.5">
             <AlertTriangle className="size-4 text-amber-400 shrink-0" />
             <span>
-              Sync failed: {fetchError}. Showing cached snapshot{lastUpdated ? ` from ${lastUpdated.toLocaleTimeString()}` : ""}.
+              Sync failed: {fetchError}. Showing cached snapshot
+              {lastUpdated ? ` from ${lastUpdated.toLocaleTimeString()}` : ""}.
             </span>
           </div>
           <Button
@@ -433,14 +451,14 @@ export default function NodeDetailPage({ params }: { params: Promise<{ id: strin
               </Link>
             </Button>
             <span className="text-muted-foreground">/</span>
-            <span className="font-mono text-sm truncate max-w-[200px]" title={node.name}>{node.name}</span>
+            <span className="font-mono text-sm truncate max-w-[200px]" title={node.name}>
+              {node.name}
+            </span>
           </div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2.5 flex-wrap">
             <Server className="size-6 text-primary shrink-0" />
             <span className="truncate">{node.name}</span>
-            <Badge variant={roleInfo.badgeVariant}>
-              {roleInfo.label}
-            </Badge>
+            <Badge variant={roleInfo.badgeVariant}>{roleInfo.label}</Badge>
             <Badge variant={statusInfo.variant === "destructive" ? "destructive" : "secondary"}>
               {statusInfo.label}
             </Badge>
@@ -448,12 +466,23 @@ export default function NodeDetailPage({ params }: { params: Promise<{ id: strin
         </div>
 
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => loadData()} disabled={loading} className="h-8 text-xs">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => loadData()}
+            disabled={loading}
+            className="h-8 text-xs"
+          >
             <RefreshCw className={`size-4 mr-1.5 ${loading ? "animate-spin" : ""}`} />
             Refresh
           </Button>
           {node.role === "controller-worker" || node.id === "controller-node-master" ? (
-            <Button variant="outline" size="sm" disabled className="h-8 text-xs text-muted-foreground border-border/50">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled
+              className="h-8 text-xs text-muted-foreground border-border/50"
+            >
               <ShieldAlert className="size-3.5 mr-1.5 text-amber-400" />
               Controller Protected
             </Button>
@@ -491,7 +520,8 @@ export default function NodeDetailPage({ params }: { params: Promise<{ id: strin
               Configured Listener Capacity Ceiling
             </CardTitle>
             <CardDescription className="text-xs">
-              Configured per-listener ceiling (3proxy maxconn) — limits concurrent client connections. Does not imply measured hardware capacity.
+              Configured per-listener ceiling (3proxy maxconn) — limits concurrent client
+              connections. Does not imply measured hardware capacity.
             </CardDescription>
           </div>
         </CardHeader>
@@ -544,7 +574,9 @@ export default function NodeDetailPage({ params }: { params: Promise<{ id: strin
           <p className="text-[11px] text-muted-foreground">
             Current setting:{" "}
             <strong className="text-foreground font-mono">
-              {node.capacity?.maxConnections ? `${node.capacity.maxConnections} maxconn` : "engine default"}
+              {node.capacity?.maxConnections
+                ? `${node.capacity.maxConnections} maxconn`
+                : "engine default"}
             </strong>
             . Benchmarks and throughput verification are operator-run separate tools.
           </p>
@@ -560,7 +592,8 @@ export default function NodeDetailPage({ params }: { params: Promise<{ id: strin
               {convergenceBadge}
             </div>
             <CardDescription className="text-xs">
-              State reconciliation between controller desired revision and node agent applied configuration.
+              State reconciliation between controller desired revision and node agent applied
+              configuration.
             </CardDescription>
           </div>
         </CardHeader>
@@ -577,7 +610,9 @@ export default function NodeDetailPage({ params }: { params: Promise<{ id: strin
               </div>
             </div>
             <div>
-              <div className="text-xs text-muted-foreground font-medium">Latest Reported Revision</div>
+              <div className="text-xs text-muted-foreground font-medium">
+                Latest Reported Revision
+              </div>
               <div className="mt-1 font-mono text-lg font-bold">
                 {config.deploymentRevision != null ? `rev ${config.deploymentRevision}` : "None"}
               </div>
@@ -594,7 +629,9 @@ export default function NodeDetailPage({ params }: { params: Promise<{ id: strin
             <Alert variant="destructive" className="mt-3">
               <AlertTriangle className="size-4 shrink-0" />
               <div className="ml-2">
-                <AlertTitle className="text-xs font-semibold">Configuration Deployment Error</AlertTitle>
+                <AlertTitle className="text-xs font-semibold">
+                  Configuration Deployment Error
+                </AlertTitle>
                 <AlertDescription className="text-xs mt-1 font-mono whitespace-pre-wrap break-words">
                   {config.error}
                 </AlertDescription>
@@ -604,13 +641,16 @@ export default function NodeDetailPage({ params }: { params: Promise<{ id: strin
         </CardContent>
       </Card>
 
-
       {/* Proxy Endpoints on Node */}
       <Card>
         <CardHeader className="p-4 border-b flex flex-row items-center justify-between">
           <div>
-            <CardTitle className="text-base">Managed Proxy Endpoints ({endpoints.length})</CardTitle>
-            <CardDescription>3proxy listeners bound to WireGuard IP {node.wireguard_ip}</CardDescription>
+            <CardTitle className="text-base">
+              Managed Proxy Endpoints ({endpoints.length})
+            </CardTitle>
+            <CardDescription>
+              3proxy listeners bound to WireGuard IP {node.wireguard_ip}
+            </CardDescription>
           </div>
 
           <Dialog
@@ -643,7 +683,9 @@ export default function NodeDetailPage({ params }: { params: Promise<{ id: strin
 
               <div className="space-y-4 py-2">
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Protocol</label>
+                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Protocol
+                  </label>
                   <div className="flex gap-2" role="radiogroup" aria-label="Protocol">
                     <Button
                       type="button"
@@ -673,7 +715,12 @@ export default function NodeDetailPage({ params }: { params: Promise<{ id: strin
                 </div>
 
                 <div className="space-y-1.5">
-                  <label htmlFor="ep-port" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Port</label>
+                  <label
+                    htmlFor="ep-port"
+                    className="text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+                  >
+                    Port
+                  </label>
                   <Input
                     id="ep-port"
                     type="number"
@@ -692,7 +739,12 @@ export default function NodeDetailPage({ params }: { params: Promise<{ id: strin
                 </div>
 
                 <div className="space-y-1.5">
-                  <label htmlFor="ep-username" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Username</label>
+                  <label
+                    htmlFor="ep-username"
+                    className="text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+                  >
+                    Username
+                  </label>
                   <Input
                     id="ep-username"
                     value={newUsername}
@@ -705,7 +757,12 @@ export default function NodeDetailPage({ params }: { params: Promise<{ id: strin
                 </div>
 
                 <div className="space-y-1.5">
-                  <label htmlFor="ep-password" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Password</label>
+                  <label
+                    htmlFor="ep-password"
+                    className="text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+                  >
+                    Password
+                  </label>
                   <Input
                     id="ep-password"
                     type="password"
@@ -752,29 +809,47 @@ export default function NodeDetailPage({ params }: { params: Promise<{ id: strin
                 ) : (
                   endpoints.map((ep) => (
                     <TableRow key={ep.id}>
-                      <TableCell className="uppercase font-semibold text-xs">{ep.protocol}</TableCell>
+                      <TableCell className="uppercase font-semibold text-xs">
+                        {ep.protocol}
+                      </TableCell>
                       <TableCell className="font-mono text-xs">
                         {ep.listen_ip}:{ep.listen_port}
                       </TableCell>
                       <TableCell className="font-mono text-xs">{ep.username}</TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">••••••••</TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">
+                        ••••••••
+                      </TableCell>
                       <TableCell>
-                        <Badge variant={ep.enabled ? "secondary" : "outline"} className={ep.enabled ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" : "text-muted-foreground"}>
+                        <Badge
+                          variant={ep.enabled ? "secondary" : "outline"}
+                          className={
+                            ep.enabled
+                              ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+                              : "text-muted-foreground"
+                          }
+                        >
                           {ep.enabled ? "Enabled" : "Disabled"}
                         </Badge>
                       </TableCell>
                       <TableCell>
                         {ep.health ? (
-                          <Badge variant="outline" className={`text-[10px] capitalize ${
-                            ep.health.status === "healthy" ? "text-emerald-400 border-emerald-500/30 bg-emerald-500/10" : "text-rose-400 border-rose-500/30 bg-rose-500/10"
-                          }`}>
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] capitalize ${
+                              ep.health.status === "healthy"
+                                ? "text-emerald-400 border-emerald-500/30 bg-emerald-500/10"
+                                : "text-rose-400 border-rose-500/30 bg-rose-500/10"
+                            }`}
+                          >
                             {ep.health.status}
                           </Badge>
                         ) : (
                           <span className="text-xs text-muted-foreground">Unknown</span>
                         )}
                       </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">rev {ep.current_revision}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        rev {ep.current_revision}
+                      </TableCell>
                     </TableRow>
                   ))
                 )}
@@ -788,7 +863,9 @@ export default function NodeDetailPage({ params }: { params: Promise<{ id: strin
       <Card>
         <CardHeader className="p-4 border-b">
           <CardTitle className="text-base">Node Audit Events ({events.length})</CardTitle>
-          <CardDescription>Recent lifecycle and deployment events reported for {node.name}.</CardDescription>
+          <CardDescription>
+            Recent lifecycle and deployment events reported for {node.name}.
+          </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto w-full">
@@ -830,8 +907,12 @@ export default function NodeDetailPage({ params }: { params: Promise<{ id: strin
       {/* Configuration Deployment History */}
       <Card>
         <CardHeader className="p-4 border-b">
-          <CardTitle className="text-base">Configuration Deployments ({deployments.length})</CardTitle>
-          <CardDescription>Recent agent deployment outcomes and configuration watermark convergence.</CardDescription>
+          <CardTitle className="text-base">
+            Configuration Deployments ({deployments.length})
+          </CardTitle>
+          <CardDescription>
+            Recent agent deployment outcomes and configuration watermark convergence.
+          </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto w-full">
@@ -848,7 +929,10 @@ export default function NodeDetailPage({ params }: { params: Promise<{ id: strin
               <TableBody>
                 {deployments.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center py-6 text-muted-foreground text-xs">
+                    <TableCell
+                      colSpan={5}
+                      className="text-center py-6 text-muted-foreground text-xs"
+                    >
                       No configuration deployments recorded for this node yet.
                     </TableCell>
                   </TableRow>
@@ -864,8 +948,8 @@ export default function NodeDetailPage({ params }: { params: Promise<{ id: strin
                             dep.status === "applied"
                               ? "default"
                               : dep.status === "failed"
-                              ? "destructive"
-                              : "secondary"
+                                ? "destructive"
+                                : "secondary"
                           }
                           className={
                             dep.status === "applied"
@@ -876,10 +960,16 @@ export default function NodeDetailPage({ params }: { params: Promise<{ id: strin
                           {dep.status}
                         </Badge>
                       </TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground truncate max-w-[140px]" title={dep.config_digest}>
+                      <TableCell
+                        className="font-mono text-xs text-muted-foreground truncate max-w-[140px]"
+                        title={dep.config_digest}
+                      >
                         {dep.config_digest ? dep.config_digest.slice(0, 12) + "…" : "—"}
                       </TableCell>
-                      <TableCell className="text-xs font-mono max-w-[240px] truncate" title={dep.error_message || undefined}>
+                      <TableCell
+                        className="text-xs font-mono max-w-[240px] truncate"
+                        title={dep.error_message || undefined}
+                      >
                         {dep.error_message ? (
                           <span className="text-rose-400">{dep.error_message}</span>
                         ) : (

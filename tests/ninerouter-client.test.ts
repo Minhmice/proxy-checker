@@ -11,7 +11,10 @@ test("listPools preserves remote metadata and testPool parses structured error o
     if (url.includes("/api/auth/login")) {
       return new Response(JSON.stringify({ ok: true }), {
         status: 200,
-        headers: { "content-type": "application/json", "set-cookie": "auth_token=mock-token; Path=/" },
+        headers: {
+          "content-type": "application/json",
+          "set-cookie": "auth_token=mock-token; Path=/",
+        },
       });
     }
     if (url.endsWith("/api/proxy-pools?includeUsage=true")) {
@@ -30,7 +33,7 @@ test("listPools preserves remote metadata and testPool parses structured error o
             },
           ],
         }),
-        { status: 200, headers: { "content-type": "application/json" } }
+        { status: 200, headers: { "content-type": "application/json" } },
       );
     }
     if (url.includes("/api/proxy-pools/remote-1/test")) {
@@ -40,10 +43,13 @@ test("listPools preserves remote metadata and testPool parses structured error o
           error: "Proxy test timed out",
           elapsedMs: 6000,
         }),
-        { status: 500, headers: { "content-type": "application/json" } }
+        { status: 500, headers: { "content-type": "application/json" } },
       );
     }
-    return new Response(JSON.stringify({}), { status: 200, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify({}), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
   }) as typeof fetch;
 
   try {
@@ -74,13 +80,20 @@ test("does not classify proxy-originated ECONNRESET as 9Router transport failure
     if (url.includes("/api/auth/login")) {
       return new Response(JSON.stringify({ ok: true }), {
         status: 200,
-        headers: { "content-type": "application/json", "set-cookie": "auth_token=mock-token; Path=/" },
+        headers: {
+          "content-type": "application/json",
+          "set-cookie": "auth_token=mock-token; Path=/",
+        },
       });
     }
-    return new Response(JSON.stringify({
-      ok: false,
-      error: "fetch failed: Client network socket disconnected before secure TLS connection established (ECONNRESET)",
-    }), { status: 500, headers: { "content-type": "application/json" } });
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error:
+          "fetch failed: Client network socket disconnected before secure TLS connection established (ECONNRESET)",
+      }),
+      { status: 500, headers: { "content-type": "application/json" } },
+    );
   }) as typeof fetch;
 
   try {
@@ -100,14 +113,20 @@ test("testPool preserves explicitly reported 9Router transport failure", async (
     if (url.includes("/api/auth/login")) {
       return new Response(JSON.stringify({ ok: true }), {
         status: 200,
-        headers: { "content-type": "application/json", "set-cookie": "auth_token=mock-token; Path=/" },
+        headers: {
+          "content-type": "application/json",
+          "set-cookie": "auth_token=mock-token; Path=/",
+        },
       });
     }
-    return new Response(JSON.stringify({
-      ok: false,
-      failureKind: "transport",
-      error: "9Router test service unavailable",
-    }), { status: 500, headers: { "content-type": "application/json" } });
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        failureKind: "transport",
+        error: "9Router test service unavailable",
+      }),
+      { status: 500, headers: { "content-type": "application/json" } },
+    );
   }) as typeof fetch;
 
   try {
@@ -126,17 +145,19 @@ test("testPool preserves thrown transport errors for caller infrastructure handl
     if (url.includes("/api/auth/login")) {
       return new Response(JSON.stringify({ ok: true }), {
         status: 200,
-        headers: { "content-type": "application/json", "set-cookie": "auth_token=mock-token; Path=/" },
+        headers: {
+          "content-type": "application/json",
+          "set-cookie": "auth_token=mock-token; Path=/",
+        },
       });
     }
-    throw new Error("fetch failed: Client network socket disconnected before secure TLS connection established (ECONNRESET)");
+    throw new Error(
+      "fetch failed: Client network socket disconnected before secure TLS connection established (ECONNRESET)",
+    );
   }) as typeof fetch;
 
   try {
-    await assert.rejects(
-      () => testPool("remote-transport"),
-      /ECONNRESET/
-    );
+    await assert.rejects(() => testPool("remote-transport"), /ECONNRESET/);
   } finally {
     globalThis.fetch = originalFetch;
     clearNineRouterSession();

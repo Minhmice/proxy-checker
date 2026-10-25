@@ -167,27 +167,35 @@ export function DeleteNodeDialog({
         </DialogHeader>
 
         {isController ? (
-          <Alert variant="destructive" className="border-amber-500/40 bg-amber-500/10 text-amber-200">
+          <Alert
+            variant="destructive"
+            className="border-amber-500/40 bg-amber-500/10 text-amber-200"
+          >
             <ShieldAlert className="size-4 text-amber-400" />
             <AlertTitle className="text-amber-300 font-semibold">Protected Role</AlertTitle>
             <AlertDescription className="text-xs text-amber-200/90 mt-1">
-              Nodes with role <code>controller-worker</code> or ID <code>controller-node-master</code> cannot be deleted.
+              Nodes with role <code>controller-worker</code> or ID{" "}
+              <code>controller-node-master</code> cannot be deleted.
             </AlertDescription>
           </Alert>
         ) : (
           <div className="space-y-3 py-2 text-xs text-muted-foreground">
             {fetchingDetails ? (
-              <div className="flex items-center gap-2 text-muted-foreground/75 py-2">
+              <div className="flex items-center gap-2 text-muted-foreground py-2">
                 <Loader2 className="size-4 animate-spin" />
                 <span>Checking attached endpoints...</span>
               </div>
             ) : endpointCount !== null && endpointCount > 0 ? (
-              <Alert variant="destructive" className="border-rose-500/40 bg-rose-500/10 text-rose-200">
+              <Alert
+                variant="destructive"
+                className="border-rose-500/40 bg-rose-500/10 text-rose-200"
+              >
                 <AlertTriangle className="size-4 text-rose-400" />
                 <AlertTitle className="text-rose-300 font-semibold">Active Endpoints</AlertTitle>
                 <AlertDescription className="text-xs text-rose-200/90 mt-1">
-                  This node hosts <strong>{endpointCount}</strong> proxy endpoint{endpointCount === 1 ? "" : "s"}.
-                  Deleting the node will purge all associated proxy listeners.
+                  This node hosts <strong>{endpointCount}</strong> proxy endpoint
+                  {endpointCount === 1 ? "" : "s"}. Deleting the node will purge all associated
+                  proxy listeners.
                 </AlertDescription>
               </Alert>
             ) : null}
@@ -197,8 +205,8 @@ export function DeleteNodeDialog({
               <ul className="list-disc pl-4 space-y-1 text-muted-foreground">
                 <li>WireGuard peer allocation and tunnel routes will be revoked.</li>
                 <li>
-                  If the host machine is currently offline, agent daemon and local 3proxy processes cannot be
-                  uninstalled remotely and require manual cleanup on that host.
+                  If the host machine is currently offline, agent daemon and local 3proxy processes
+                  cannot be uninstalled remotely and require manual cleanup on that host.
                 </li>
               </ul>
             </div>

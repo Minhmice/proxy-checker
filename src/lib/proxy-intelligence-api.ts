@@ -34,7 +34,7 @@ export interface ProxyImportPayload {
 export async function fetchIntelligenceProxies(
   arg1?: string | ProxyInventoryFilter | AbortSignal,
   arg2?: ProxyInventoryFilter | AbortSignal,
-  arg3?: AbortSignal
+  arg3?: AbortSignal,
 ): Promise<ProxyInventoryPage> {
   let filter: ProxyInventoryFilter = {};
   let signal: AbortSignal | undefined;
@@ -76,7 +76,9 @@ export async function fetchIntelligenceProxies(
     });
     if (signal?.aborted) return emptyPage;
     if (!response.ok) {
-      throw new Error(response.status === 401 ? "Wrong control password" : "Failed to load proxies");
+      throw new Error(
+        response.status === 401 ? "Wrong control password" : "Failed to load proxies",
+      );
     }
     const data = await response.json();
     if (signal?.aborted) return emptyPage;
@@ -92,7 +94,7 @@ export async function fetchIntelligenceProxies(
 export async function fetchIntelligenceProxyDetail(
   arg1: string,
   arg2?: string | AbortSignal,
-  arg3?: AbortSignal
+  arg3?: AbortSignal,
 ): Promise<ProxyInventoryDetail> {
   let proxyKey: string;
   let signal: AbortSignal | undefined;
@@ -117,7 +119,9 @@ export async function fetchIntelligenceProxyDetail(
     });
     if (signal?.aborted) return {} as ProxyInventoryDetail;
     if (!response.ok) {
-      throw new Error(response.status === 401 ? "Wrong control password" : "Proxy detail unavailable");
+      throw new Error(
+        response.status === 401 ? "Wrong control password" : "Proxy detail unavailable",
+      );
     }
     const data = (await response.json()) as { proxy: ProxyInventoryDetail };
     if (signal?.aborted) return {} as ProxyInventoryDetail;
@@ -130,7 +134,7 @@ export async function fetchIntelligenceProxyDetail(
 
 export async function importIntelligenceProxies(
   arg1: string | ProxyImportPayload,
-  arg2?: ProxyImportPayload
+  arg2?: ProxyImportPayload,
 ): Promise<ProxyImportSummary> {
   const payload = typeof arg1 === "object" ? arg1 : arg2!;
   const password = typeof arg1 === "string" ? arg1 : undefined;
@@ -152,7 +156,7 @@ export async function importIntelligenceProxies(
 
 export async function previewIntelligenceImport(
   arg1: string | ProxyImportPayload,
-  arg2?: ProxyImportPayload
+  arg2?: ProxyImportPayload,
 ): Promise<ProxyImportPreview> {
   const payload = typeof arg1 === "object" ? arg1 : arg2!;
   const password = typeof arg1 === "string" ? arg1 : undefined;
@@ -184,7 +188,7 @@ export interface SyncWorkingResult {
 
 export async function syncWorkingIntelligenceProxies(
   arg1?: string | SyncWorkingPayload,
-  arg2?: SyncWorkingPayload
+  arg2?: SyncWorkingPayload,
 ): Promise<SyncWorkingResult> {
   const payload = typeof arg1 === "object" ? arg1 : (arg2 ?? {});
   const password = typeof arg1 === "string" ? arg1 : undefined;
@@ -206,7 +210,7 @@ export async function syncWorkingIntelligenceProxies(
 
 export async function createIntelligenceJob(
   arg1: string | CreateIntelligenceJobPayload,
-  arg2?: CreateIntelligenceJobPayload
+  arg2?: CreateIntelligenceJobPayload,
 ): Promise<IntelligenceJob> {
   const payload = typeof arg1 === "object" ? arg1 : arg2!;
   const password = typeof arg1 === "string" ? arg1 : undefined;
@@ -229,7 +233,7 @@ export async function createIntelligenceJob(
 export async function fetchIntelligenceJob(
   arg1: string,
   arg2?: string | AbortSignal,
-  arg3?: AbortSignal
+  arg3?: AbortSignal,
 ): Promise<IntelligenceJob> {
   let id: string;
   let signal: AbortSignal | undefined;
@@ -275,10 +279,7 @@ export async function fetchIntelligenceJob(
     throw err;
   }
 }
-export async function cancelIntelligenceJob(
-  arg1: string,
-  arg2?: string
-): Promise<IntelligenceJob> {
+export async function cancelIntelligenceJob(arg1: string, arg2?: string): Promise<IntelligenceJob> {
   const id = arg2 !== undefined ? arg2 : arg1;
   const password = arg2 !== undefined ? arg1 : undefined;
 
@@ -298,7 +299,7 @@ export async function cancelIntelligenceJob(
 
 export async function fetchIntelligenceJobs(
   arg1?: string | AbortSignal,
-  arg2?: AbortSignal
+  arg2?: AbortSignal,
 ): Promise<IntelligenceJob[]> {
   const signal = arg1 instanceof AbortSignal ? arg1 : arg2;
   const password = typeof arg1 === "string" ? arg1 : undefined;

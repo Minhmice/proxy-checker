@@ -17,21 +17,34 @@ test("computes working, dead, and regressed proxy statuses accurately", async ()
     db.run(
       `INSERT INTO proxies (proxy_key, endpoint, protocol, host, port, status, exit_ip, latency_ms, successes, failures, source, lifecycle_state)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ["p1", "10.0.0.1:8080", "http", "10.0.0.1", 8080, "usable", "1.1.1.1", 120, 5, 0, "test", "working"]
+      [
+        "p1",
+        "10.0.0.1:8080",
+        "http",
+        "10.0.0.1",
+        8080,
+        "usable",
+        "1.1.1.1",
+        120,
+        5,
+        0,
+        "test",
+        "working",
+      ],
     );
 
     // Proxy 2: Dead with 0 successes, 0 audit passes -> dead
     db.run(
       `INSERT INTO proxies (proxy_key, endpoint, protocol, host, port, status, exit_ip, latency_ms, successes, failures, source, lifecycle_state)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ["p2", "10.0.0.2:8080", "socks5", "10.0.0.2", 8080, "dead", null, null, 0, 3, "test", "dead"]
+      ["p2", "10.0.0.2:8080", "socks5", "10.0.0.2", 8080, "dead", null, null, 0, 3, "test", "dead"],
     );
 
     // Proxy 3: Dead with past successes > 0 -> regressed
     db.run(
       `INSERT INTO proxies (proxy_key, endpoint, protocol, host, port, status, exit_ip, latency_ms, successes, failures, source, lifecycle_state)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ["p3", "10.0.0.3:1080", "socks5", "10.0.0.3", 1080, "dead", null, null, 2, 1, "test", "dead"]
+      ["p3", "10.0.0.3:1080", "socks5", "10.0.0.3", 1080, "dead", null, null, 2, 1, "test", "dead"],
     );
 
     // 2. Fetch unified proxies

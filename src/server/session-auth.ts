@@ -69,18 +69,12 @@ export function sessionCookie(token: string, secure = false): string {
 }
 
 export function clearSessionCookie(): string {
-  return [
-    `${SESSION_COOKIE_NAME}=`,
-    "Path=/",
-    "Max-Age=0",
-    "HttpOnly",
-    "SameSite=Lax",
-  ].join("; ");
+  return [`${SESSION_COOKIE_NAME}=`, "Path=/", "Max-Age=0", "HttpOnly", "SameSite=Lax"].join("; ");
 }
 
 export function requireDashboardAuth(
   request: IncomingMessage,
-  now = Date.now()
+  now = Date.now(),
 ): { authenticated: boolean } {
   // 1. Primary: Session cookie
   if (readSession(request.headers.cookie, now)) {

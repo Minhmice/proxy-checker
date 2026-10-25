@@ -3,7 +3,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { openProxyIntelligenceDb, migrateProxyIntelligence } from "../src/server/proxy-intelligence-db.js";
+import {
+  openProxyIntelligenceDb,
+  migrateProxyIntelligence,
+} from "../src/server/proxy-intelligence-db.js";
 import { createProxyIntelligenceRepository } from "../src/server/proxy-intelligence-repository.js";
 import type { ProxyAuditResult } from "../src/lib/types.js";
 
@@ -45,7 +48,7 @@ test("persistAuditSnapshot stores audit, updates snapshot columns and ever_passe
     db.run(
       `INSERT INTO proxies (proxy_key, endpoint, protocol, host, port, status)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [key, "192.0.2.1:1080", "socks5", "192.0.2.1", 1080, "dead"]
+      [key, "192.0.2.1:1080", "socks5", "192.0.2.1", 1080, "dead"],
     );
 
     const mockResult: ProxyAuditResult = {
@@ -89,7 +92,10 @@ test("persistAuditSnapshot stores audit, updates snapshot columns and ever_passe
       last_exit_ip: string;
       ever_passed: number;
       status: string;
-    }>("SELECT last_verdict, last_latency_ms, last_exit_ip, ever_passed, status FROM proxies WHERE proxy_key = ?", [key]);
+    }>(
+      "SELECT last_verdict, last_latency_ms, last_exit_ip, ever_passed, status FROM proxies WHERE proxy_key = ?",
+      [key],
+    );
 
     assert.ok(row);
     assert.equal(row.last_verdict, "PASS");

@@ -1,4 +1,7 @@
-import { validateFleetWireGuardSettings, type FleetWireGuardSettings } from "../proxyfleet/wireguard.js";
+import {
+  validateFleetWireGuardSettings,
+  type FleetWireGuardSettings,
+} from "../proxyfleet/wireguard.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -29,6 +32,7 @@ export interface AppSettings {
 
 export interface AppSettingsPublic {
   nineRouterUrl: string;
+  nineRouterUrls?: string[];
   controlPasswordSet: boolean;
   nineRouterPasswordSet: boolean;
   nineRouterApiKeySet: boolean;
@@ -88,7 +92,6 @@ function envBoolean(key: string, fallback: boolean): boolean {
   return value === "true" || value === "1";
 }
 
-
 function defaultsFromEnv(): AppSettings {
   return {
     controlPassword: envString("CONTROL_PASSWORD"),
@@ -113,7 +116,7 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-export function normalizeNineRouterUrl(raw: string): string {
+export function normalizeSingleNineRouterUrl(raw: string): string {
   let url = (raw ?? "").trim();
   if (!url) throw new Error("9Router URL cannot be empty");
   if (/^[a-z0-9+.-]+:\/\//i.test(url)) {
@@ -125,18 +128,54 @@ export function normalizeNineRouterUrl(raw: string): string {
   }
   try {
     const parsed = new URL(url);
-    if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("URL must use http or https");
+    if (!["http:", "https:"].includes(parsed.protocol))
+      throw new Error("URL must use http or https");
     return url.replace(/\/+$/, "");
   } catch (err) {
     if ((err as Error).message.includes("http")) throw err;
-    throw new Error("Invalid 9Router URL", { cause: err });
+    throw new Error(`Invalid 9Router URL: ${raw}`, { cause: err });
   }
+}
+
+export function parseNineRouterUrls(raw: string | string[] | undefined | null): string[] {
+  if (!raw) return [];
+  const entries: string[] = Array.isArray(raw)
+    ? raw.flatMap((item) => (typeof item === "string" ? item.split(/[,\n;]+/) : []))
+    : String(raw).split(/[,\n;]+/);
+
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+
+  for (const entry of entries) {
+    const trimmed = entry.trim();
+    if (!trimmed) continue;
+    const url = normalizeSingleNineRouterUrl(trimmed);
+    if (!seen.has(url)) {
+      seen.add(url);
+      normalized.push(url);
+    }
+  }
+  return normalized;
+}
+
+export function normalizeNineRouterUrl(raw: string): string {
+  const urls = parseNineRouterUrls(raw);
+  if (urls.length === 0) throw new Error("9Router URL cannot be empty");
+  return urls.join(", ");
+}
+
+export function getNineRouterUrls(settingsValue?: AppSettings): string[] {
+  const target = settingsValue ?? settings;
+  if (!target?.nineRouterUrl) return [];
+  return parseNineRouterUrls(target.nineRouterUrl);
 }
 
 function normalize(settingsValue: AppSettings): AppSettings {
   return {
     controlPassword: settingsValue.controlPassword,
-    nineRouterUrl: normalizeNineRouterUrl(settingsValue.nineRouterUrl || "https://9router.minhmice.com"),
+    nineRouterUrl: normalizeNineRouterUrl(
+      settingsValue.nineRouterUrl || "https://9router.minhmice.com",
+    ),
     nineRouterPassword: settingsValue.nineRouterPassword,
     nineRouterApiKey: settingsValue.nineRouterApiKey,
     nineRouterAutoSync: settingsValue.nineRouterAutoSync !== false,
@@ -147,9 +186,20 @@ function normalize(settingsValue: AppSettings): AppSettings {
     proxyTtlMinutes: clamp(Math.round(settingsValue.proxyTtlMinutes), 1, 1440),
     antigravityRotatorEnabled: settingsValue.antigravityRotatorEnabled !== false,
     antigravityActiveLimit: clamp(Math.round(settingsValue.antigravityActiveLimit ?? 3), 1, 10),
-    antigravityRotateMinutes: clamp(Math.round(settingsValue.antigravityRotateMinutes ?? 10), 1, 60),
-    antigravitySessionThreshold: clamp(Math.round(settingsValue.antigravitySessionThreshold ?? 20), 5, 50),
-    fleetWireguard: settingsValue.fleetWireguard == null ? null : validateFleetWireGuardSettings(settingsValue.fleetWireguard),
+    antigravityRotateMinutes: clamp(
+      Math.round(settingsValue.antigravityRotateMinutes ?? 10),
+      1,
+      60,
+    ),
+    antigravitySessionThreshold: clamp(
+      Math.round(settingsValue.antigravitySessionThreshold ?? 20),
+      5,
+      50,
+    ),
+    fleetWireguard:
+      settingsValue.fleetWireguard == null
+        ? null
+        : validateFleetWireGuardSettings(settingsValue.fleetWireguard),
   };
 }
 
@@ -218,6 +268,7 @@ export function getSettingsPublic(): { settings: AppSettingsPublic; meta: Settin
   return {
     settings: {
       nineRouterUrl: settings.nineRouterUrl,
+      nineRouterUrls: parseNineRouterUrls(settings.nineRouterUrl),
       controlPasswordSet: Boolean(settings.controlPassword),
       nineRouterPasswordSet: Boolean(settings.nineRouterPassword),
       nineRouterApiKeySet: Boolean(settings.nineRouterApiKey),
@@ -250,7 +301,8 @@ export function updateSettings(patch: SettingsUpdatePatch) {
   const next = { ...settings };
   const changed: string[] = [];
   if (patch.fleetWireguard !== undefined) {
-    next.fleetWireguard = patch.fleetWireguard === null ? null : validateFleetWireGuardSettings(patch.fleetWireguard);
+    next.fleetWireguard =
+      patch.fleetWireguard === null ? null : validateFleetWireGuardSettings(patch.fleetWireguard);
     changed.push("fleetWireguard");
   }
 

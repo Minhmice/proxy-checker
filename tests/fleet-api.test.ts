@@ -35,7 +35,7 @@ function createMockRequestResponse(
   method: string,
   urlPath: string,
   headers: Record<string, string> = {},
-  bodyObj?: unknown
+  bodyObj?: unknown,
 ): { req: http.IncomingMessage; res: MockResponse } {
   const req = new http.IncomingMessage({} as unknown as Socket);
   req.method = method;
@@ -96,7 +96,7 @@ test("fleet api routes enforce auth, node enrollment, and endpoint management", 
       "POST",
       "/api/fleet/enrollment-tokens",
       { authorization: `Basic ${Buffer.from("admin:admin-secret-pass").toString("base64")}` },
-      { nodeName: "worker-001" }
+      { nodeName: "worker-001" },
     );
     await handler(issueReq.req, issueReq.res, "/api/fleet/enrollment-tokens");
     assert.equal(issueReq.res.statusCode, 201);
@@ -112,7 +112,7 @@ test("fleet api routes enforce auth, node enrollment, and endpoint management", 
         token,
         nodeName: "worker-001",
         wireguardPublicKey: "MTExMTExMTEyMjIyMjIyMjMzMzMzMzMzNDQ0NDQ0NDQ=",
-      }
+      },
     );
     await handler(enrollReq.req, enrollReq.res, "/api/fleet/enroll");
     assert.equal(enrollReq.res.statusCode, 200);
@@ -134,7 +134,7 @@ test("fleet api routes enforce auth, node enrollment, and endpoint management", 
         listenPort: 20001,
         username: "proxyuser",
         password: "proxypassword",
-      }
+      },
     );
     await handler(createEpReq.req, createEpReq.res, "/api/fleet/endpoints");
     assert.equal(createEpReq.res.statusCode, 201);
@@ -142,7 +142,11 @@ test("fleet api routes enforce auth, node enrollment, and endpoint management", 
     assert.ok(endpointId);
 
     // 5. Agent requests desired state
-    const desiredStateReq = createMockRequestResponse("GET", `/api/fleet/agent/desired-state?nodeId=${nodeId}`, { authorization: `Bearer ${agentToken}` });
+    const desiredStateReq = createMockRequestResponse(
+      "GET",
+      `/api/fleet/agent/desired-state?nodeId=${nodeId}`,
+      { authorization: `Bearer ${agentToken}` },
+    );
     await handler(desiredStateReq.req, desiredStateReq.res, "/api/fleet/agent/desired-state");
     assert.equal(desiredStateReq.res.statusCode, 200);
     assert.equal(desiredStateReq.res.body?.proxies?.length, 1);
@@ -152,9 +156,13 @@ test("fleet api routes enforce auth, node enrollment, and endpoint management", 
     const revealReq = createMockRequestResponse(
       "POST",
       `/api/fleet/endpoints/${endpointId}/credentials/reveal`,
-      { authorization: `Basic ${Buffer.from("admin:admin-secret-pass").toString("base64")}` }
+      { authorization: `Basic ${Buffer.from("admin:admin-secret-pass").toString("base64")}` },
     );
-    await handler(revealReq.req, revealReq.res, `/api/fleet/endpoints/${endpointId}/credentials/reveal`);
+    await handler(
+      revealReq.req,
+      revealReq.res,
+      `/api/fleet/endpoints/${endpointId}/credentials/reveal`,
+    );
     assert.equal(revealReq.res.statusCode, 200);
     assert.equal(revealReq.res.body?.username, "proxyuser");
     assert.equal(revealReq.res.body?.password, "proxypassword");
@@ -164,13 +172,17 @@ test("fleet api routes enforce auth, node enrollment, and endpoint management", 
       "PATCH",
       `/api/fleet/endpoints/${endpointId}`,
       { authorization: `Basic ${Buffer.from("admin:admin-secret-pass").toString("base64")}` },
-      { enabled: false }
+      { enabled: false },
     );
     await handler(patchReq.req, patchReq.res, `/api/fleet/endpoints/${endpointId}`);
     assert.equal(patchReq.res.statusCode, 200);
     assert.equal(patchReq.res.body?.enabled, false);
 
-    const disabledState = createMockRequestResponse("GET", `/api/fleet/agent/desired-state?nodeId=${nodeId}`, { authorization: `Bearer ${agentToken}` });
+    const disabledState = createMockRequestResponse(
+      "GET",
+      `/api/fleet/agent/desired-state?nodeId=${nodeId}`,
+      { authorization: `Bearer ${agentToken}` },
+    );
     await handler(disabledState.req, disabledState.res, "/api/fleet/agent/desired-state");
     assert.equal(disabledState.res.statusCode, 200);
     assert.deepEqual(disabledState.res.body?.proxies, []);
@@ -274,23 +286,39 @@ test("node removal API handles auth, 404, 409 controller guard, 202 pending and 
       repo,
       verifyAuth: (c) => c === "valid-secret",
     });
-    const unconfDelete = createMockRequestResponse("DELETE", `/api/fleet/nodes/${worker.id}`, adminAuth);
+    const unconfDelete = createMockRequestResponse(
+      "DELETE",
+      `/api/fleet/nodes/${worker.id}`,
+      adminAuth,
+    );
     await unconfHandler(unconfDelete.req, unconfDelete.res, `/api/fleet/nodes/${worker.id}`);
     assert.equal(unconfDelete.res.statusCode, 503);
     assert.equal((await repo.getNode(worker.id))?.id, worker.id);
 
     // 2. Non-existent node returns 404
-    const notFoundDelete = createMockRequestResponse("DELETE", "/api/fleet/nodes/missing-node", adminAuth);
+    const notFoundDelete = createMockRequestResponse(
+      "DELETE",
+      "/api/fleet/nodes/missing-node",
+      adminAuth,
+    );
     await handler(notFoundDelete.req, notFoundDelete.res, "/api/fleet/nodes/missing-node");
     assert.equal(notFoundDelete.res.statusCode, 404);
 
     // 3. Controller deletion returns 409
-    const ctrlDelete = createMockRequestResponse("DELETE", `/api/fleet/nodes/${ctrl.id}`, adminAuth);
+    const ctrlDelete = createMockRequestResponse(
+      "DELETE",
+      `/api/fleet/nodes/${ctrl.id}`,
+      adminAuth,
+    );
     await handler(ctrlDelete.req, ctrlDelete.res, `/api/fleet/nodes/${ctrl.id}`);
     assert.equal(ctrlDelete.res.statusCode, 409);
 
     // 4. Worker deletion with failing cleanup returns 202 pending
-    const pendingDelete = createMockRequestResponse("DELETE", `/api/fleet/nodes/${worker.id}`, adminAuth);
+    const pendingDelete = createMockRequestResponse(
+      "DELETE",
+      `/api/fleet/nodes/${worker.id}`,
+      adminAuth,
+    );
     await handler(pendingDelete.req, pendingDelete.res, `/api/fleet/nodes/${worker.id}`);
     assert.equal(pendingDelete.res.statusCode, 202);
     assert.equal(pendingDelete.res.body?.removal?.status, "pending");
@@ -304,14 +332,22 @@ test("node removal API handles auth, 404, 409 controller guard, 202 pending and 
     assert.equal(listReq.res.body.removals[0].nodeId, worker.id);
 
     // 6. GET /api/fleet/node-removals/:id returns detail
-    const detailReq = createMockRequestResponse("GET", `/api/fleet/node-removals/${worker.id}`, adminAuth);
+    const detailReq = createMockRequestResponse(
+      "GET",
+      `/api/fleet/node-removals/${worker.id}`,
+      adminAuth,
+    );
     await handler(detailReq.req, detailReq.res, `/api/fleet/node-removals/${worker.id}`);
     assert.equal(detailReq.res.statusCode, 200);
     assert.equal(detailReq.res.body?.removal?.nodeId, worker.id);
 
     // 7. Retry with successful cleanup returns 200 completed
     peerCleanupShouldFail = false;
-    const retryReq = createMockRequestResponse("POST", `/api/fleet/node-removals/${worker.id}/retry`, adminAuth);
+    const retryReq = createMockRequestResponse(
+      "POST",
+      `/api/fleet/node-removals/${worker.id}/retry`,
+      adminAuth,
+    );
     await handler(retryReq.req, retryReq.res, `/api/fleet/node-removals/${worker.id}/retry`);
     assert.equal(retryReq.res.statusCode, 200);
     assert.equal(retryReq.res.body?.removal?.status, "completed");

@@ -461,7 +461,7 @@ export default function ProxiesPage() {
             variant="halo"
             onClick={handleUnifiedSync}
             disabled={syncing}
-            className="h-9 text-xs font-mono gap-1.5 text-primary-foreground shadow-[0_0_15px_oklch(0.78_0.17_205/0.35)] cursor-pointer"
+            className="h-9 text-xs font-mono gap-1.5 text-primary-foreground shadow-[0_0_16px_rgba(255,91,34,0.35)] cursor-pointer"
           >
             {syncing ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />

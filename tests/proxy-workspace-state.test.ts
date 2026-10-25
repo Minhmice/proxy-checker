@@ -1,9 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseProxyQuery, serializeProxyQuery, type ProxyWorkspaceQuery } from "../src/lib/proxy-url-state.js";
+import {
+  parseProxyQuery,
+  serializeProxyQuery,
+  type ProxyWorkspaceQuery,
+} from "../src/lib/proxy-url-state.js";
 
 test("parseProxyQuery parses search, health, protocol, and pagination", () => {
-  const query = parseProxyQuery("?q=1.2.3.4&health=regressed&protocol=socks5&page=3&pageSize=25&sort=latency&direction=asc");
+  const query = parseProxyQuery(
+    "?q=1.2.3.4&health=regressed&protocol=socks5&page=3&pageSize=25&sort=latency&direction=asc",
+  );
   assert.equal(query.q, "1.2.3.4");
   assert.equal(query.health, "regressed");
   assert.equal(query.protocol, "socks5");

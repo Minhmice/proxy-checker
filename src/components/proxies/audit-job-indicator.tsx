@@ -17,7 +17,11 @@ export interface AuditJobIndicatorProps {
   onDismiss?: () => void;
 }
 
-export function AuditJobIndicator({ activeJobId, onJobFinished, onDismiss }: AuditJobIndicatorProps) {
+export function AuditJobIndicator({
+  activeJobId,
+  onJobFinished,
+  onDismiss,
+}: AuditJobIndicatorProps) {
   const [job, setJob] = useState<IntelligenceJob | null>(null);
   const [cancelling, setCancelling] = useState(false);
 
@@ -35,7 +39,10 @@ export function AuditJobIndicator({ activeJobId, onJobFinished, onDismiss }: Aud
         const current = await fetchIntelligenceJob(activeJobId!, controller.signal);
         setJob(current);
 
-        const isRunning = current.status === "queued" || current.status === "running" || current.status === "cancelling";
+        const isRunning =
+          current.status === "queued" ||
+          current.status === "running" ||
+          current.status === "cancelling";
         if (isRunning && !controller.signal.aborted) {
           timer = setTimeout(poll, 1200);
         } else if (!isRunning) {
@@ -59,7 +66,8 @@ export function AuditJobIndicator({ activeJobId, onJobFinished, onDismiss }: Aud
   if (!job) return null;
 
   const percent = job.total > 0 ? Math.min(100, Math.round((job.checked / job.total) * 100)) : 0;
-  const isRunning = job.status === "queued" || job.status === "running" || job.status === "cancelling";
+  const isRunning =
+    job.status === "queued" || job.status === "running" || job.status === "cancelling";
   const isInterrupted = job.status === "interrupted";
 
   const handleCancel = async () => {
@@ -94,8 +102,8 @@ export function AuditJobIndicator({ activeJobId, onJobFinished, onDismiss }: Aud
             {isRunning
               ? "Auditing proxy fleet..."
               : isInterrupted
-              ? "Audit interrupted (server restart)"
-              : "Audit job complete"}
+                ? "Audit interrupted (server restart)"
+                : "Audit job complete"}
           </span>
 
           <span className="font-mono text-muted-foreground text-[11px]">

@@ -41,7 +41,7 @@ function harness(records: PoolRecord[], overrides: Record<string, unknown> = {})
       lastSyncAt: null,
       stats: { total: records.length, active: 0, reserve: records.length, dead: 0 },
       lastError: "",
-    })
+    }),
   );
   const usable: CheckResult = {
     endpoint: "127.0.0.1:8001",
@@ -65,11 +65,10 @@ function harness(records: PoolRecord[], overrides: Record<string, unknown> = {})
       updatePool: async () => ({}),
       checkProxy: async () => usable,
       ...overrides,
-    }
+    },
   );
   return { ranker, dataDir };
 }
-
 
 test("delete_failed rename updates upstream first and throws conflict on 404", async () => {
   const updates: string[] = [];
@@ -91,30 +90,44 @@ test("delete_failed rename updates upstream first and throws conflict on 404", a
 test("promoting a verified diagnostic creates and activates missing router pool", async () => {
   const created: Array<{ name: string; proxyUrl: string; isActive: boolean }> = [];
   const { ranker } = harness([], {
-    createPool: async (input: { name: string; proxyUrl: string; type: string; isActive: boolean }) => {
+    createPool: async (input: {
+      name: string;
+      proxyUrl: string;
+      type: string;
+      isActive: boolean;
+    }) => {
       created.push(input);
       return { id: "remote-created", ...input };
     },
     setPoolActive: async () => ({}),
   });
-  const result = await ranker.promoteDiagnostics([{
-    id: "diagnostic-1",
-    endpoint: "127.0.0.1:8123",
-    protocol: "http",
-    status: "SUCCESS",
-    statusCode: 200,
-    latencyMs: 120,
-    exitIp: "203.0.113.7",
-    country: "US",
-    isp: "Test ISP",
-    isProxyOrHosting: false,
-    headerLeakage: false,
-    leakedHeaders: [],
-    checkedAt: Date.now(),
-  }]);
+  const result = await ranker.promoteDiagnostics([
+    {
+      id: "diagnostic-1",
+      endpoint: "127.0.0.1:8123",
+      protocol: "http",
+      status: "SUCCESS",
+      statusCode: 200,
+      latencyMs: 120,
+      exitIp: "203.0.113.7",
+      country: "US",
+      isp: "Test ISP",
+      isProxyOrHosting: false,
+      headerLeakage: false,
+      leakedHeaders: [],
+      checkedAt: Date.now(),
+    },
+  ]);
   assert.equal(result.promoted, 1);
   assert.equal(result.skipped, 0);
-  assert.deepEqual(created, [{ name: "Diagnostic 127.0.0.1:8123", proxyUrl: "http://127.0.0.1:8123", type: "http", isActive: false }]);
+  assert.deepEqual(created, [
+    {
+      name: "Diagnostic 127.0.0.1:8123",
+      proxyUrl: "http://127.0.0.1:8123",
+      type: "http",
+      isActive: false,
+    },
+  ]);
   const pool = ranker.readState().pools["remote-created"];
   assert.equal(pool.remoteState, "linked");
   assert.equal(pool.isActiveOnRouter, true);

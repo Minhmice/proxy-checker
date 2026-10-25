@@ -15,7 +15,9 @@ async function main() {
     return;
   }
 
-  console.log(`\x1b[32mFound ${pools.length} pool(s). Starting 9Router terminal health check...\x1b[0m\n`);
+  console.log(
+    `\x1b[32mFound ${pools.length} pool(s). Starting 9Router terminal health check...\x1b[0m\n`,
+  );
 
   let passed = 0;
   let failed = 0;
@@ -35,15 +37,21 @@ async function main() {
         if (res.ok) {
           passed++;
           const elapsed = res.elapsedMs ? `${res.elapsedMs}ms` : "OK";
-          console.log(`${indexStr} ${nameStr} (${pool.proxyUrl}) ... \x1b[32mPASS\x1b[0m (${elapsed})`);
+          console.log(
+            `${indexStr} ${nameStr} (${pool.proxyUrl}) ... \x1b[32mPASS\x1b[0m (${elapsed})`,
+          );
         } else {
           failed++;
           const errMsg = res.error || `HTTP ${res.status || "FAIL"}`;
-          console.log(`${indexStr} ${nameStr} (${pool.proxyUrl}) ... \x1b[31mFAIL\x1b[0m (${errMsg})`);
+          console.log(
+            `${indexStr} ${nameStr} (${pool.proxyUrl}) ... \x1b[31mFAIL\x1b[0m (${errMsg})`,
+          );
         }
       } catch (err: unknown) {
         failed++;
-        console.log(`${indexStr} ${nameStr} (${pool.proxyUrl}) ... \x1b[31mERROR\x1b[0m (${(err as Error).message})`);
+        console.log(
+          `${indexStr} ${nameStr} (${pool.proxyUrl}) ... \x1b[31mERROR\x1b[0m (${(err as Error).message})`,
+        );
       }
     }
   }
@@ -52,7 +60,9 @@ async function main() {
   await Promise.all(workers);
 
   const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-  console.log(`\n\x1b[36mCompleted in ${duration}s | Total: ${pools.length} | Passed: \x1b[32m${passed}\x1b[36m | Failed: \x1b[31m${failed}\x1b[0m\n`);
+  console.log(
+    `\n\x1b[36mCompleted in ${duration}s | Total: ${pools.length} | Passed: \x1b[32m${passed}\x1b[36m | Failed: \x1b[31m${failed}\x1b[0m\n`,
+  );
 }
 
 main().catch((err) => {

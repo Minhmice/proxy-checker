@@ -26,7 +26,7 @@ export interface SyncSessionSummary {
 export function sanitizeLogMessage(message: string): string {
   return message.replace(
     /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
-    (match) => `${match.slice(0, 8)}…`
+    (match) => `${match.slice(0, 8)}…`,
   );
 }
 
@@ -59,7 +59,11 @@ export function groupActivityBySync(entries: ActivityEntry[]): SyncSessionSummar
 
     if (msg.startsWith("Sync started")) {
       // If previous session had items, close and push it
-      if (current.highlights.length > 0 || current.errorMessages.length > 0 || current.warningMessages.length > 0) {
+      if (
+        current.highlights.length > 0 ||
+        current.errorMessages.length > 0 ||
+        current.warningMessages.length > 0
+      ) {
         sessions.push(current);
       }
       current = {

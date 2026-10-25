@@ -1,25 +1,108 @@
 import "./load-env.js";
-import { getSettingsSecrets, normalizeNineRouterUrl } from "./app-config.js";
+import {
+  getSettingsSecrets,
+  normalizeSingleNineRouterUrl,
+  parseNineRouterUrls,
+} from "./app-config.js";
 
-let authCookie: string | null = null;
+import type {
+  BindingUpdate,
+  ConditionalUpdateResult,
+  RouterBindingRevision,
+} from "./antigravity-contract.js";
+import type { TransportObservation } from "./antigravity-observation.js";
+const authCookiesByUrl = new Map<string, string>();
+const inFlightLoginsByUrl = new Map<string, Promise<string | null>>();
 
-function readConfig(overrides?: { url?: string; password?: string; apiKey?: string }) {
+export interface NineRouterRequestOverrides {
+  url?: string;
+  password?: string;
+  apiKey?: string;
+  timeoutMs?: number;
+}
+
+export interface NineRouterResolvedConfig {
+  url: string;
+  urls: string[];
+  password?: string;
+  apiKey?: string;
+}
+
+function readConfig(overrides?: NineRouterRequestOverrides): NineRouterResolvedConfig {
   const stored = getSettingsSecrets();
   const rawUrl = overrides?.url ?? stored.nineRouterUrl;
-  const url = rawUrl ? normalizeNineRouterUrl(rawUrl) : "";
+  const urls = parseNineRouterUrls(rawUrl);
+  const url = urls[0] ?? (rawUrl ? normalizeSingleNineRouterUrl(rawUrl) : "");
+  const hasAuthOverride = Boolean(overrides?.password || overrides?.apiKey);
   return {
     url,
-    password: overrides?.password ?? stored.nineRouterPassword,
-    apiKey: overrides?.apiKey ?? stored.nineRouterApiKey,
+    urls,
+    password: hasAuthOverride
+      ? overrides?.password
+      : (overrides?.password ?? stored.nineRouterPassword),
+    apiKey: hasAuthOverride ? overrides?.apiKey : (overrides?.apiKey ?? stored.nineRouterApiKey),
   };
 }
 
-export function clearNineRouterSession() {
-  authCookie = null;
+export function getNineRouterClientUrls(overrides?: { url?: string }): string[] {
+  if (overrides?.url) {
+    return parseNineRouterUrls(overrides.url);
+  }
+  const stored = getSettingsSecrets();
+  return parseNineRouterUrls(stored.nineRouterUrl);
+}
+
+export function clearNineRouterSession(url?: string) {
+  if (url) {
+    try {
+      const normalized = normalizeSingleNineRouterUrl(url);
+      authCookiesByUrl.delete(url);
+      authCookiesByUrl.delete(normalized);
+      inFlightLoginsByUrl.delete(url);
+      inFlightLoginsByUrl.delete(normalized);
+    } catch {
+      authCookiesByUrl.delete(url);
+      inFlightLoginsByUrl.delete(url);
+    }
+  } else {
+    authCookiesByUrl.clear();
+    inFlightLoginsByUrl.clear();
+  }
+}
+
+function combineSignals(timeoutMs = 10_000, callerSignal?: AbortSignal | null): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  if (!callerSignal) return timeoutSignal;
+  return AbortSignal.any([timeoutSignal, callerSignal]);
+}
+
+async function fetchWithSignal(
+  input: string | URL | Request,
+  init?: RequestInit,
+  signal?: AbortSignal,
+): Promise<Response> {
+  if (!signal) {
+    return fetch(input, init);
+  }
+  if (signal.aborted) {
+    throw signal.reason;
+  }
+  let onAbort: (() => void) | undefined;
+  const { promise: abortPromise, reject: rejectAbort } = Promise.withResolvers<never>();
+  onAbort = () => rejectAbort(signal.reason);
+  signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    return await Promise.race([fetch(input, { ...init, signal }), abortPromise]);
+  } finally {
+    if (onAbort) {
+      signal.removeEventListener("abort", onAbort);
+    }
+  }
 }
 
 function extractAuthCookie(response: Response): string | null {
-  const setCookies = typeof response.headers.getSetCookie === "function" ? response.headers.getSetCookie() : [];
+  const setCookies =
+    typeof response.headers.getSetCookie === "function" ? response.headers.getSetCookie() : [];
   for (const line of setCookies) {
     const match = line.match(/^auth_token=([^;]+)/);
     if (match) return `auth_token=${match[1]}`;
@@ -30,35 +113,85 @@ function extractAuthCookie(response: Response): string | null {
   return match ? `auth_token=${match[1]}` : null;
 }
 
-async function loginWithConfig(config: ReturnType<typeof readConfig>, cookieRef: { value: string | null }) {
+async function loginWithConfig(
+  config: NineRouterResolvedConfig,
+  cookieRef: { value: string | null },
+  options?: { timeoutMs?: number; signal?: AbortSignal | null },
+) {
   if (!config.password) throw new Error("9Router dashboard password is not configured");
-  const response = await fetch(`${config.url}/api/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ password: config.password }),
-  });
-  const text = await response.text();
-  let body: Record<string, unknown> = {};
+  const key = config.url || "default";
+  const existing = inFlightLoginsByUrl.get(key);
+  if (existing) {
+    const cookie = await existing;
+    cookieRef.value = cookie;
+    return;
+  }
+
+  const loginPromise = (async () => {
+    const signal = combineSignals(options?.timeoutMs ?? 10_000, options?.signal);
+    const response = await fetchWithSignal(
+      `${config.url}/api/auth/login`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ password: config.password }),
+      },
+      signal,
+    );
+    const text = await response.text();
+    let body: Record<string, unknown> = {};
+    try {
+      body = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+    } catch {
+      body = { error: text || response.statusText };
+    }
+    if (!response.ok) {
+      const message = (body.error as string) || `9Router login failed (${response.status})`;
+      throw new Error(message);
+    }
+    const cookie = extractAuthCookie(response);
+    if (!cookie) throw new Error("9Router login succeeded but no auth cookie was returned");
+    if (config.url) {
+      authCookiesByUrl.set(config.url, cookie);
+    }
+    return cookie;
+  })();
+
+  inFlightLoginsByUrl.set(key, loginPromise);
   try {
-    body = text ? (JSON.parse(text) as Record<string, unknown>) : {};
-  } catch {
-    body = { error: text || response.statusText };
+    const cookie = await loginPromise;
+    cookieRef.value = cookie;
+  } finally {
+    inFlightLoginsByUrl.delete(key);
   }
-  if (!response.ok) {
-    const message = (body.error as string) || `9Router login failed (${response.status})`;
-    throw new Error(message);
-  }
-  cookieRef.value = extractAuthCookie(response);
-  if (!cookieRef.value) throw new Error("9Router login succeeded but no auth cookie was returned");
 }
 
-async function buildHeaders(config: ReturnType<typeof readConfig>, cookieRef: { value: string | null }): Promise<Record<string, string>> {
+async function buildHeaders(
+  config: NineRouterResolvedConfig,
+  cookieRef: { value: string | null },
+  options?: { timeoutMs?: number; signal?: AbortSignal | null },
+): Promise<Record<string, string>> {
   if (config.password) {
-    if (!cookieRef.value) await loginWithConfig(config, cookieRef);
-    return { Cookie: cookieRef.value!, "Content-Type": "application/json", Accept: "application/json" };
+    if (!cookieRef.value) {
+      const cached = config.url ? authCookiesByUrl.get(config.url) : null;
+      if (cached) {
+        cookieRef.value = cached;
+      } else {
+        await loginWithConfig(config, cookieRef, options);
+      }
+    }
+    return {
+      Cookie: cookieRef.value!,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    };
   }
   if (config.apiKey) {
-    return { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json", Accept: "application/json" };
+    return {
+      Authorization: `Bearer ${config.apiKey}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    };
   }
   throw new Error("9Router password or API key is required");
 }
@@ -69,17 +202,28 @@ function isReportedTransportFailure(body: Record<string, unknown>): boolean {
 
 async function request<T>(
   path: string,
-  options: RequestInit = {},
+  options: RequestInit & { timeoutMs?: number } = {},
   retry = true,
-  overrides?: { url?: string; password?: string; apiKey?: string },
-  cookieRef: { value: string | null } = { value: authCookie },
-  clientOptions?: { acceptStructuredError?: boolean }
+  overrides?: NineRouterRequestOverrides,
+  cookieRef?: { value: string | null },
+  clientOptions?: { acceptStructuredError?: boolean },
 ): Promise<T> {
   const config = readConfig(overrides);
-  const response = await fetch(`${config.url}${path}`, {
-    ...options,
-    headers: { ...(await buildHeaders(config, cookieRef)), ...(options.headers as Record<string, string>) },
+  const timeoutMs = options.timeoutMs ?? overrides?.timeoutMs ?? 10_000;
+  const effectiveCookieRef = cookieRef ?? { value: authCookiesByUrl.get(config.url) ?? null };
+  const headers = await buildHeaders(config, effectiveCookieRef, {
+    timeoutMs,
+    signal: options.signal,
   });
+  const signal = combineSignals(timeoutMs, options.signal);
+  const response = await fetchWithSignal(
+    `${config.url}${path}`,
+    {
+      ...options,
+      headers: { ...headers, ...(options.headers as Record<string, string>) },
+    },
+    signal,
+  );
   const text = await response.text();
   let body: Record<string, unknown>;
   try {
@@ -88,48 +232,125 @@ async function request<T>(
     body = { error: text || response.statusText };
   }
   if (response.status === 401 && config.password && retry) {
-    cookieRef.value = null;
-    await loginWithConfig(config, cookieRef);
-    return request<T>(path, options, false, overrides, cookieRef, clientOptions);
+    effectiveCookieRef.value = null;
+    authCookiesByUrl.delete(config.url);
+    await loginWithConfig(config, effectiveCookieRef, {
+      timeoutMs,
+      signal: options.signal,
+    });
+    return request<T>(path, options, false, overrides, effectiveCookieRef, clientOptions);
   }
   if (!response.ok) {
     if (clientOptions?.acceptStructuredError && typeof body.ok === "boolean") {
       return (isReportedTransportFailure(body) ? { ...body, failureKind: "transport" } : body) as T;
     }
-    const message = (body.error as string) || (body.message as string) || `9Router API ${response.status}`;
+    const message =
+      (body.error as string) || (body.message as string) || `9Router API ${response.status}`;
     const error = new Error(message) as Error & { status?: number };
     error.status = response.status;
     throw error;
   }
-  if (!overrides) authCookie = cookieRef.value;
+  if (effectiveCookieRef.value && config.url) {
+    authCookiesByUrl.set(config.url, effectiveCookieRef.value);
+  }
   return body as T;
 }
 
-export function nineRouterConfigured(): boolean {
-  const config = readConfig();
+export function nineRouterConfigured(overrides?: NineRouterRequestOverrides): boolean {
+  const config = readConfig(overrides);
   return Boolean(config.password || config.apiKey);
 }
 
-export function nineRouterAuthMode(): "password" | "api_key" | "none" {
-  const config = readConfig();
+export function nineRouterAuthMode(
+  overrides?: NineRouterRequestOverrides,
+): "password" | "api_key" | "none" {
+  const config = readConfig(overrides);
   if (config.password) return "password";
   if (config.apiKey) return "api_key";
   return "none";
 }
 
-export async function testNineRouterConnection(overrides?: { url?: string; password?: string; apiKey?: string }) {
-  try {
-    const body = await request<{ proxyPools?: unknown[] }>(
-      "/api/proxy-pools?includeUsage=true",
-      {},
-      true,
-      overrides,
-      { value: null }
-    );
-    return { ok: true as const, poolCount: body.proxyPools?.length ?? 0 };
-  } catch (error) {
-    return { ok: false as const, error: (error as Error).message };
+export interface EndpointConnectionResult {
+  url: string;
+  ok: boolean;
+  poolCount?: number;
+  error?: string;
+}
+
+export async function testNineRouterConnection(overrides?: {
+  url?: string;
+  password?: string;
+  apiKey?: string;
+}) {
+  const config = readConfig(overrides);
+  const targetUrls = config.urls.length > 0 ? config.urls : config.url ? [config.url] : [];
+  if (targetUrls.length === 0) {
+    return { ok: false as const, error: "No 9Router URL configured" };
   }
+  if (targetUrls.length === 1) {
+    const singleUrl = targetUrls[0];
+    try {
+      const body = await request<{ proxyPools?: unknown[] }>(
+        "/api/proxy-pools?includeUsage=true",
+        {},
+        true,
+        { ...overrides, url: singleUrl },
+        { value: null },
+      );
+      const poolCount = body.proxyPools?.length ?? 0;
+      return {
+        ok: true as const,
+        poolCount,
+        endpoints: [{ url: singleUrl, ok: true, poolCount }],
+      };
+    } catch (error) {
+      const message = (error as Error).message;
+      return {
+        ok: false as const,
+        error: message,
+        endpoints: [{ url: singleUrl, ok: false, error: message }],
+      };
+    }
+  }
+
+  // Multiple URLs: test all in parallel
+  const results = await Promise.allSettled(
+    targetUrls.map(async (url) => {
+      const body = await request<{ proxyPools?: unknown[] }>(
+        "/api/proxy-pools?includeUsage=true",
+        {},
+        true,
+        { ...overrides, url },
+        { value: null },
+      );
+      return { url, ok: true, poolCount: body.proxyPools?.length ?? 0 };
+    }),
+  );
+
+  const endpoints: EndpointConnectionResult[] = results.map((res, idx) => {
+    const url = targetUrls[idx];
+    if (res.status === "fulfilled") {
+      return res.value;
+    }
+    return { url, ok: false, error: (res.reason as Error).message };
+  });
+
+  const successful = endpoints.filter((e) => e.ok);
+  if (successful.length === 0) {
+    return {
+      ok: false as const,
+      error: endpoints.map((e) => `${e.url}: ${e.error}`).join("; "),
+      endpoints,
+    };
+  }
+
+  const totalPoolCount = successful.reduce((sum, e) => sum + (e.poolCount ?? 0), 0);
+  return {
+    ok: true as const,
+    poolCount: totalPoolCount,
+    partial: successful.length < endpoints.length,
+    endpoints,
+  };
 }
 
 export interface NineRouterPool {
@@ -141,11 +362,15 @@ export interface NineRouterPool {
   testStatus?: string | null;
   lastError?: string | null;
   lastTestedAt?: string | null;
+  poolRevision?: number;
 }
 
-export async function listPools(): Promise<NineRouterPool[]> {
+export async function listPools(overrides?: NineRouterRequestOverrides): Promise<NineRouterPool[]> {
   const body = await request<{ proxyPools?: NineRouterPool[] }>(
-    "/api/proxy-pools?includeUsage=true"
+    "/api/proxy-pools?includeUsage=true",
+    {},
+    true,
+    overrides,
   );
   return body.proxyPools ?? [];
 }
@@ -159,35 +384,51 @@ export interface NineRouterTestResult {
   testedAt?: string;
 }
 
-export async function testPool(id: string): Promise<NineRouterTestResult> {
+export async function testPool(
+  id: string,
+  overrides?: NineRouterRequestOverrides,
+): Promise<NineRouterTestResult> {
   const body = await request<NineRouterTestResult>(
     `/api/proxy-pools/${encodeURIComponent(id)}/test`,
     {
       method: "POST",
     },
     true,
+    overrides,
     undefined,
-    undefined,
-    { acceptStructuredError: true }
+    { acceptStructuredError: true },
   );
   return !body.ok && isReportedTransportFailure(body as unknown as Record<string, unknown>)
     ? { ...body, failureKind: "transport" }
     : body;
 }
 
-export async function setPoolActive(id: string, isActive: boolean) {
-  const body = await request<{ proxyPool: unknown }>(`/api/proxy-pools/${id}`, {
-    method: "PUT",
-    body: JSON.stringify({ isActive: isActive === true }),
-  });
+export async function setPoolActive(
+  id: string,
+  isActive: boolean,
+  overrides?: NineRouterRequestOverrides,
+) {
+  const body = await request<{ proxyPool: unknown }>(
+    `/api/proxy-pools/${encodeURIComponent(id)}`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ isActive: isActive === true }),
+    },
+    true,
+    overrides,
+  );
   return body.proxyPool;
 }
 
-export async function bulkSetActive(updates: Array<{ id: string; isActive: boolean }>, delayMs = 80) {
+export async function bulkSetActive(
+  updates: Array<{ id: string; isActive: boolean }>,
+  delayMs = 80,
+  overrides?: NineRouterRequestOverrides,
+) {
   const results: Array<{ id: string; isActive: boolean; ok: boolean; error?: string }> = [];
   for (const { id, isActive } of updates) {
     try {
-      await setPoolActive(id, isActive);
+      await setPoolActive(id, isActive, overrides);
       results.push({ id, isActive, ok: true });
     } catch (error) {
       results.push({ id, isActive, ok: false, error: (error as Error).message });
@@ -197,31 +438,57 @@ export async function bulkSetActive(updates: Array<{ id: string; isActive: boole
   return results;
 }
 
-export async function updatePool(id: string, patch: { name?: string; isActive?: boolean }) {
-  const body = await request<{ proxyPool?: unknown }>(`/api/proxy-pools/${encodeURIComponent(id)}`, {
-    method: "PUT",
-    body: JSON.stringify(patch),
-  });
+export async function updatePool(
+  id: string,
+  patch: { name?: string; isActive?: boolean },
+  overrides?: NineRouterRequestOverrides,
+) {
+  const body = await request<{ proxyPool?: unknown }>(
+    `/api/proxy-pools/${encodeURIComponent(id)}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(patch),
+    },
+    true,
+    overrides,
+  );
   return body.proxyPool ?? body;
 }
 
-export async function renamePool(id: string, name: string) {
-  return updatePool(id, { name });
+export async function renamePool(id: string, name: string, overrides?: NineRouterRequestOverrides) {
+  return updatePool(id, { name }, overrides);
 }
 
-export async function deletePool(id: string) {
-  await request<unknown>(`/api/proxy-pools/${encodeURIComponent(id)}`, {
-    method: "DELETE",
-  });
+export async function deletePool(id: string, overrides?: NineRouterRequestOverrides) {
+  await request<unknown>(
+    `/api/proxy-pools/${encodeURIComponent(id)}`,
+    {
+      method: "DELETE",
+    },
+    true,
+    overrides,
+  );
 }
 
-export async function createPool(input: { name: string; proxyUrl: string; type: string; isActive: false }): Promise<{ id: string; name: string; proxyUrl: string; type?: string }> {
-  const body = await request<{ proxyPool: { id: string; name: string; proxyUrl: string; type?: string } }>(
+export async function createPool(
+  input: {
+    name: string;
+    proxyUrl: string;
+    type: string;
+    isActive: false;
+  },
+  overrides?: NineRouterRequestOverrides,
+): Promise<{ id: string; name: string; proxyUrl: string; type?: string }> {
+  const body = await request<{
+    proxyPool: { id: string; name: string; proxyUrl: string; type?: string };
+  }>(
     "/api/proxy-pools",
     {
       method: "POST",
       body: JSON.stringify(input),
-    }
+    },
+    true,
+    overrides,
   );
   return body.proxyPool;
 }
@@ -243,29 +510,39 @@ export interface NineRouterConnectionItem {
   };
 }
 
-export async function listAntigravityConnections(overrides?: { url?: string; password?: string; apiKey?: string }): Promise<NineRouterConnectionItem[]> {
+export async function listAntigravityConnections(
+  overrides?: NineRouterRequestOverrides & {
+    page?: number;
+    pageSize?: number;
+  },
+): Promise<NineRouterConnectionItem[]> {
+  const pageSize = overrides?.pageSize ?? 50;
+  const pageParam = overrides?.page !== undefined ? `&page=${overrides.page}` : "";
   const body = await request<{ connections?: NineRouterConnectionItem[] }>(
-    "/api/providers/client?pageSize=50&provider=antigravity",
+    `/api/providers/client?pageSize=${pageSize}${pageParam}&provider=antigravity`,
     {},
     true,
-    overrides
+    overrides,
   );
   return body.connections ?? [];
 }
 
-export async function getAccountUsage(id: string, overrides?: { url?: string; password?: string; apiKey?: string }): Promise<Record<string, unknown>> {
+export async function getAccountUsage(
+  id: string,
+  overrides?: NineRouterRequestOverrides,
+): Promise<Record<string, unknown>> {
   return await request<Record<string, unknown>>(
     `/api/usage/${encodeURIComponent(id)}`,
     {},
     true,
-    overrides
+    overrides,
   );
 }
 
 export async function updateConnection(
   id: string,
   patch: { isActive?: boolean; providerSpecificData?: Record<string, unknown> },
-  overrides?: { url?: string; password?: string; apiKey?: string }
+  overrides?: NineRouterRequestOverrides,
 ): Promise<{ connection?: unknown }> {
   return await request<{ connection?: unknown }>(
     `/api/providers/${encodeURIComponent(id)}`,
@@ -274,6 +551,91 @@ export async function updateConnection(
       body: JSON.stringify(patch),
     },
     true,
-    overrides
+    overrides,
+  );
+}
+
+export async function getSafetyCapabilities(overrides?: NineRouterRequestOverrides) {
+  return request<{
+    protocolVersion: number;
+    strictTls: boolean;
+    conditionalBinding: boolean;
+    nodeLocalAudit: boolean;
+    ownershipConfigured: boolean;
+  }>("/api/antigravity/safety-capabilities", {}, true, overrides);
+}
+export async function getConnectionBinding(id: string, overrides?: NineRouterRequestOverrides) {
+  return request<RouterBindingRevision>(
+    `/api/providers/${encodeURIComponent(id)}/binding`,
+    {},
+    true,
+    overrides,
+  );
+}
+export async function updateConnectionConditional(
+  id: string,
+  input: BindingUpdate,
+  overrides?: NineRouterRequestOverrides,
+): Promise<ConditionalUpdateResult> {
+  try {
+    return await request<ConditionalUpdateResult>(
+      `/api/providers/${encodeURIComponent(id)}/binding`,
+      { method: "PUT", body: JSON.stringify(input) },
+      true,
+      overrides,
+    );
+  } catch (error) {
+    const status = (error as Error & { status?: number }).status;
+    if (status === 404 || status === 503)
+      return { status: "unsupported", reason: "Router conditional binding unavailable" };
+    if (status === 409) return { status: "conflict", reason: "Binding or ownership changed" };
+    throw error;
+  }
+}
+export async function verifyConnectionQuota(
+  id: string,
+  input: { expectedRevision: number; expectedPoolId: string; expectedPoolRevision: number },
+  overrides?: NineRouterRequestOverrides,
+  signal?: AbortSignal,
+) {
+  return request<Record<string, unknown>>(
+    `/api/providers/${encodeURIComponent(id)}/quota-verification`,
+    { method: "POST", body: JSON.stringify(input), signal },
+    true,
+    overrides,
+  );
+}
+export async function auditRouterGooglePool(
+  poolId: string,
+  expectedPoolRevision: number,
+  overrides: NineRouterRequestOverrides,
+) {
+  const result = await request<{
+    poolId: string;
+    poolRevision: number;
+    observations: Omit<TransportObservation, "routerUrl">[];
+    complete: boolean;
+  }>(
+    `/api/proxy-pools/${encodeURIComponent(poolId)}/google-audit`,
+    { method: "POST", body: JSON.stringify({ expectedPoolRevision }) },
+    true,
+    overrides,
+  );
+  return {
+    ...result,
+    observations: result.observations.map((o) => ({ ...o, routerUrl: overrides.url || "" })),
+  };
+}
+
+export async function drainConnectionRoute(
+  id: string,
+  input: { operationId: string; expectedRevision: number; epoch: number },
+  overrides: NineRouterRequestOverrides,
+) {
+  return request<{ drained: boolean; epoch: number; revision: number }>(
+    `/api/providers/${encodeURIComponent(id)}/route-drain`,
+    { method: "POST", body: JSON.stringify(input) },
+    true,
+    overrides,
   );
 }

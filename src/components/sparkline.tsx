@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 interface SparklineProps {
   data: number[];
@@ -10,16 +10,14 @@ interface SparklineProps {
 
 export function Sparkline({
   data,
-  color = 'var(--primary)',
+  color = "var(--primary)",
   width = 80,
   height = 36,
   label,
 }: SparklineProps) {
   // ponytail: drop fake line on <2 points, add interactive exploration if hover tooltips requested
   const pointsData = Array.isArray(data)
-    ? data.filter(
-        (v): v is number => typeof v === 'number' && Number.isFinite(v),
-      )
+    ? data.filter((v): v is number => typeof v === "number" && Number.isFinite(v))
     : [];
 
   if (pointsData.length < 2) {
@@ -32,22 +30,17 @@ export function Sparkline({
   const points = pointsData
     .map((v, i) => {
       const x = (i / (pointsData.length - 1)) * width;
-      const y =
-        range === 0
-          ? height / 2
-          : height - ((v - min) / range) * (height - 4) - 2;
+      const y = range === 0 ? height / 2 : height - ((v - min) / range) * (height - 4) - 2;
       return `${x},${y}`;
     })
-    .join(' ');
+    .join(" ");
 
   return (
     <svg
       width={width}
       height={height}
       className="metric-card-spark"
-      {...(label
-        ? { role: 'img', 'aria-label': label }
-        : { 'aria-hidden': true })}
+      {...(label ? { role: "img", "aria-label": label } : { "aria-hidden": true })}
     >
       {label && <title>{label}</title>}
       <polyline

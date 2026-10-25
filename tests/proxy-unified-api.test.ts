@@ -16,7 +16,20 @@ test("repository and history serialization for unified proxies API", async () =>
     db.run(
       `INSERT INTO proxies (proxy_key, endpoint, protocol, host, port, status, exit_ip, latency_ms, successes, failures, source, lifecycle_state)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [key, "100.71.252.27:10001", "socks5", "100.71.252.27", 10001, "usable", "117.5.147.3", 2391, 10, 0, "test", "working"]
+      [
+        key,
+        "100.71.252.27:10001",
+        "socks5",
+        "100.71.252.27",
+        10001,
+        "usable",
+        "117.5.147.3",
+        2391,
+        10,
+        0,
+        "test",
+        "working",
+      ],
     );
 
     // Insert an audit run for this proxy
@@ -40,7 +53,7 @@ test("repository and history serialization for unified proxies API", async () =>
 
     db.run(
       `UPDATE proxies SET status = 'usable', last_verdict = 'PASS', exit_ip = '117.5.147.3', latency_ms = 2391 WHERE proxy_key = ?`,
-      [key]
+      [key],
     );
 
     // 1. Unified proxies query with activePoolEndpoints mapping

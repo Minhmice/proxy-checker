@@ -8,22 +8,44 @@ import type { CheckResult, PoolRecord, RemoteState } from "../src/lib/types.js";
 import { createPoolRanker, type PoolRankerDeps } from "../src/server/pool-ranker.js";
 
 function usable(ip = "203.0.113.4"): CheckResult {
-  return { endpoint: "127.0.0.1:8080", protocol: "http", status: "usable", exit_ip: ip, latency_ms: 10, checked_at: Date.now(), successes: 1, failures: 0, last_error: "" };
+  return {
+    endpoint: "127.0.0.1:8080",
+    protocol: "http",
+    status: "usable",
+    exit_ip: ip,
+    latency_ms: 10,
+    checked_at: Date.now(),
+    successes: 1,
+    failures: 0,
+    last_error: "",
+  };
 }
 
 function dead(message: string): CheckResult {
-  return { endpoint: "127.0.0.1:8080", protocol: "http", status: "dead", exit_ip: null, latency_ms: 10, checked_at: Date.now(), successes: 0, failures: 1, last_error: message };
+  return {
+    endpoint: "127.0.0.1:8080",
+    protocol: "http",
+    status: "dead",
+    exit_ip: null,
+    latency_ms: 10,
+    checked_at: Date.now(),
+    successes: 0,
+    failures: 1,
+    last_error: message,
+  };
 }
 
-function createHarness(options: {
-  remoteState?: RemoteState;
-  remoteId?: string | null;
-  checks?: CheckResult[];
-  deleteError?: Error & { status?: number };
-  updateError?: Error;
-  remotePools?: Array<{ id: string; name: string; proxyUrl: string; type?: string }>;
-  legacy?: boolean;
-} = {}) {
+function createHarness(
+  options: {
+    remoteState?: RemoteState;
+    remoteId?: string | null;
+    checks?: CheckResult[];
+    deleteError?: Error & { status?: number };
+    updateError?: Error;
+    remotePools?: Array<{ id: string; name: string; proxyUrl: string; type?: string }>;
+    legacy?: boolean;
+  } = {},
+) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "pool-ranker-"));
   const localId = "local-1";
   const record = {
@@ -45,27 +67,53 @@ function createHarness(options: {
     failures: 0,
   };
   fs.mkdirSync(dataDir, { recursive: true });
-  fs.writeFileSync(path.join(dataDir, "pool-state.json"), JSON.stringify({ pools: { [localId]: record }, lastSyncAt: null, stats: { total: 1, active: 0, reserve: 1, dead: 0 }, lastError: "" }));
+  fs.writeFileSync(
+    path.join(dataDir, "pool-state.json"),
+    JSON.stringify({
+      pools: { [localId]: record },
+      lastSyncAt: null,
+      stats: { total: 1, active: 0, reserve: 1, dead: 0 },
+      lastError: "",
+    }),
+  );
   const checks = [...(options.checks ?? [])];
   const deleted: string[] = [];
   const created: Array<{ name: string; proxyUrl: string; type: string; isActive: false }> = [];
   const updated: Array<{ id: string; patch: { name?: string; isActive?: boolean } }> = [];
-  const remotePools = options.remotePools ?? [{ id: "remote-1", name: "Original name", proxyUrl: "http://127.0.0.1:8080", type: "http" }];
-  const ranker = createPoolRanker({ dataDir }, {
-    listPools: async () => remotePools,
-    setPoolActive: async () => ({}),
-    bulkSetActive: async (updates) => updates.map((item) => ({ ...item, ok: true })),
-    deletePool: async (id) => { deleted.push(id); if (options.deleteError) throw options.deleteError; },
-    createPool: async (input) => { created.push(input); return { id: "remote-restored", ...input }; },
-    updatePool: async (id, patch) => { updated.push({ id, patch }); if (options.updateError) throw options.updateError; return {}; },
-    checkProxy: async () => checks.shift() ?? usable(),
-  });
+  const remotePools = options.remotePools ?? [
+    { id: "remote-1", name: "Original name", proxyUrl: "http://127.0.0.1:8080", type: "http" },
+  ];
+  const ranker = createPoolRanker(
+    { dataDir },
+    {
+      listPools: async () => remotePools,
+      setPoolActive: async () => ({}),
+      bulkSetActive: async (updates) => updates.map((item) => ({ ...item, ok: true })),
+      deletePool: async (id) => {
+        deleted.push(id);
+        if (options.deleteError) throw options.deleteError;
+      },
+      createPool: async (input) => {
+        created.push(input);
+        return { id: "remote-restored", ...input };
+      },
+      updatePool: async (id, patch) => {
+        updated.push({ id, patch });
+        if (options.updateError) throw options.updateError;
+        return {};
+      },
+      checkProxy: async () => checks.shift() ?? usable(),
+    },
+  );
   return { ranker, localId, deleted, created, updated };
 }
 
 test("linked rename updates 9Router before local state", async () => {
   const harness = createHarness({ updateError: new Error("rename refused") });
-  await assert.rejects(() => harness.ranker.renamePool(harness.localId, "New name"), /rename refused/);
+  await assert.rejects(
+    () => harness.ranker.renamePool(harness.localId, "New name"),
+    /rename refused/,
+  );
   assert.equal(harness.ranker.listByTier("all")[0].name, "Original name");
 });
 
@@ -80,7 +128,10 @@ test("local-only rename trims and persists without remote update", async () => {
 test("rename rejects empty and over 100 code-point names", async () => {
   const harness = createHarness();
   await assert.rejects(() => harness.ranker.renamePool(harness.localId, "   "), /cannot be empty/);
-  await assert.rejects(() => harness.ranker.renamePool(harness.localId, "a".repeat(101)), /cannot exceed 100/);
+  await assert.rejects(
+    () => harness.ranker.renamePool(harness.localId, "a".repeat(101)),
+    /cannot exceed 100/,
+  );
 });
 
 test("manual removal deletes remotely before updating local state", async () => {
@@ -97,7 +148,6 @@ test("unknown IDs reject lifecycle operations", async () => {
   await assert.rejects(() => harness.ranker.renamePool("missing", "Name"), /not found/);
   await assert.rejects(() => harness.ranker.removePool("missing"), /not found/);
 });
-
 
 test("legacy id records normalize to localId", () => {
   const harness = createHarness({ legacy: true });
@@ -128,7 +178,12 @@ test("refreshRemoteTracking updates metadata, reconciles tier without health che
   fs.mkdirSync(dataDir, { recursive: true });
   fs.writeFileSync(
     path.join(dataDir, "pool-state.json"),
-    JSON.stringify({ pools: { [localId]: record }, lastSyncAt: 123456, stats: { total: 1, active: 1, reserve: 0, dead: 0 }, lastError: "" })
+    JSON.stringify({
+      pools: { [localId]: record },
+      lastSyncAt: 123456,
+      stats: { total: 1, active: 1, reserve: 0, dead: 0 },
+      lastError: "",
+    }),
   );
 
   let listCalls = 0;
@@ -136,43 +191,44 @@ test("refreshRemoteTracking updates metadata, reconciles tier without health che
   let deleteCalls = 0;
   let updateCalls = 0;
 
-  const ranker = createPoolRanker(
-    { dataDir },
-    {
-      listPools: async () => {
-        listCalls++;
-        return [
-          {
-            id: "remote-1",
-            name: "1",
-            proxyUrl: "http://127.0.0.1:8080",
-            type: "http",
-            isActive: false,
-            testStatus: "failed",
-            lastError: "timeout",
-            lastTestedAt: "2026-09-24T09:00:00.000Z",
-          },
-        ];
-      },
-      testPool: async () => {
-        testCalls++;
-        return { ok: false };
-      },
-      deletePool: async () => {
-        deleteCalls++;
-      },
-      updatePool: async () => {
-        updateCalls++;
-        return {};
-      },
-      checkProxy: async () => {
-        throw new Error("checkProxy must not be called during tracking");
-      },
-    } as unknown as Partial<PoolRankerDeps>
-  );
+  const ranker = createPoolRanker({ dataDir }, {
+    listPools: async () => {
+      listCalls++;
+      return [
+        {
+          id: "remote-1",
+          name: "1",
+          proxyUrl: "http://127.0.0.1:8080",
+          type: "http",
+          isActive: false,
+          testStatus: "failed",
+          lastError: "timeout",
+          lastTestedAt: "2026-09-24T09:00:00.000Z",
+        },
+      ];
+    },
+    testPool: async () => {
+      testCalls++;
+      return { ok: false };
+    },
+    deletePool: async () => {
+      deleteCalls++;
+    },
+    updatePool: async () => {
+      updateCalls++;
+      return {};
+    },
+    checkProxy: async () => {
+      throw new Error("checkProxy must not be called during tracking");
+    },
+  } as unknown as Partial<PoolRankerDeps>);
 
   const beforeSync = ranker.readState().lastSyncAt;
-  const first = await (ranker as unknown as { refreshRemoteTracking: () => Promise<{ refreshed: boolean; skipped: boolean }> }).refreshRemoteTracking();
+  const first = await (
+    ranker as unknown as {
+      refreshRemoteTracking: () => Promise<{ refreshed: boolean; skipped: boolean }>;
+    }
+  ).refreshRemoteTracking();
   assert.equal(first.refreshed, true);
 
   const state = ranker.readState();
@@ -189,7 +245,11 @@ test("refreshRemoteTracking updates metadata, reconciles tier without health che
   assert.equal(listCalls, 1);
 
   // Second call within 60 seconds is deduped
-  const second = await (ranker as unknown as { refreshRemoteTracking: () => Promise<{ refreshed: boolean; skipped: boolean }> }).refreshRemoteTracking();
+  const second = await (
+    ranker as unknown as {
+      refreshRemoteTracking: () => Promise<{ refreshed: boolean; skipped: boolean }>;
+    }
+  ).refreshRemoteTracking();
   assert.equal(second.skipped, true);
   assert.equal(listCalls, 1);
 });
@@ -218,17 +278,23 @@ test("refreshRemoteTracking marks missing remote linked pool as removed locally"
   fs.mkdirSync(dataDir, { recursive: true });
   fs.writeFileSync(
     path.join(dataDir, "pool-state.json"),
-    JSON.stringify({ pools: { [localId]: record }, lastSyncAt: null, stats: { total: 1, active: 1, reserve: 0, dead: 0 }, lastError: "" })
+    JSON.stringify({
+      pools: { [localId]: record },
+      lastSyncAt: null,
+      stats: { total: 1, active: 1, reserve: 0, dead: 0 },
+      lastError: "",
+    }),
   );
 
-  const ranker = createPoolRanker(
-    { dataDir },
-    {
-      listPools: async () => [],
-    } as unknown as Partial<PoolRankerDeps>
-  );
+  const ranker = createPoolRanker({ dataDir }, {
+    listPools: async () => [],
+  } as unknown as Partial<PoolRankerDeps>);
 
-  await (ranker as unknown as { refreshRemoteTracking: () => Promise<{ refreshed: boolean; skipped: boolean }> }).refreshRemoteTracking();
+  await (
+    ranker as unknown as {
+      refreshRemoteTracking: () => Promise<{ refreshed: boolean; skipped: boolean }>;
+    }
+  ).refreshRemoteTracking();
   const pool = ranker.readState().pools[localId];
   assert.equal(pool.remoteId, null);
   assert.equal(pool.remoteState, "removed");
@@ -276,7 +342,12 @@ test("exportActiveProxies formats active proxies as txt and csv with credentials
   };
   fs.writeFileSync(
     path.join(dataDir, "pool-state.json"),
-    JSON.stringify({ pools: { p1: pool1, p2: pool2 }, lastSyncAt: null, stats: { total: 2, active: 1, reserve: 1, dead: 0 }, lastError: "" })
+    JSON.stringify({
+      pools: { p1: pool1, p2: pool2 },
+      lastSyncAt: null,
+      stats: { total: 2, active: 1, reserve: 1, dead: 0 },
+      lastError: "",
+    }),
   );
 
   const ranker = createPoolRanker({ dataDir }, {} as unknown as Partial<PoolRankerDeps>);

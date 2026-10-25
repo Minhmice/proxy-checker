@@ -1,53 +1,62 @@
-import './load-env.js';
-import { getRequestListener } from '@hono/node-server';
-import { createApiApp } from './api/app.js';
-import * as nineRouterClient from './nine-router-client.js';
-import * as appConfig from './app-config.js';
-import fs from 'node:fs';
-import http from 'node:http';
-import path from 'node:path';
-import os from 'node:os';
-import { fileURLToPath } from 'node:url';
-import next from 'next';
+import "./load-env.js";
+import { getRequestListener } from "@hono/node-server";
+import { createApiApp } from "./api/app.js";
+import * as nineRouterClient from "./nine-router-client.js";
+import * as appConfig from "./app-config.js";
+import fs from "node:fs";
+import http from "node:http";
+import path from "node:path";
+import os from "node:os";
+import { fileURLToPath } from "node:url";
+import next from "next";
 import {
+  getNineRouterUrls,
   getSettingsSecrets,
   getSettingsPublic,
   onSettingsChange,
   updateSettings,
   verifyControlPassword,
-} from './app-config.js';
-import { logActivity, logActivityThrottled } from './activity-log.js';
-import { createPoolRanker, PoolConflictError } from './pool-ranker.js';
-import { createAntigravityRotator } from './antigravity-rotator.js';
-import { createUnifiedSyncCoordinator } from './unified-sync-coordinator.js';
+} from "./app-config.js";
+import { logActivity, logActivityThrottled, logScoped } from "./activity-log.js";
+import { createPoolRanker, PoolConflictError } from "./pool-ranker.js";
+import { createAntigravityRotator } from "./antigravity-rotator.js";
+import { createUnifiedSyncCoordinator } from "./unified-sync-coordinator.js";
+import { openSyncRepository } from "./dual-router/repository.js";
+import { openSyncDb } from "../db/sync/client.js";
+import { createProxyOwnershipAuthority } from "./antigravity-ownership.js";
+import { createRouterAdapter } from "./dual-router/adapter.js";
+import { createDualRouterCoordinator } from "./dual-router/coordinator.js";
+import { createDualRouterScheduler } from "./dual-router/scheduler.js";
 import {
   clearNineRouterSession,
   listAntigravityConnections,
   nineRouterConfigured,
   testNineRouterConnection,
   updateConnection,
-} from './nine-router-client.js';
-import { testPool, createPool, deletePool } from './nine-router-client.js';
-import { openProxyIntelligenceDb } from './proxy-intelligence-db.js';
-import { createProxyIntelligenceRepository } from './proxy-intelligence-repository.js';
-import { createFleetRepository } from '../proxyfleet/db.js';
-import { createFleetApiHandler } from '../proxyfleet/api-router.js';
-import { createProxyCheckHandler } from './proxy-check-handler.js';
+} from "./nine-router-client.js";
+import { testPool, createPool, deletePool } from "./nine-router-client.js";
+import { openProxyIntelligenceDb } from "./proxy-intelligence-db.js";
+import { createProxyIntelligenceRepository } from "./proxy-intelligence-repository.js";
+import { createFleetRepository } from "../proxyfleet/db.js";
+import { createFleetApiHandler } from "../proxyfleet/api-router.js";
+import { createProxyCheckHandler } from "./proxy-check-handler.js";
 import {
   createFleetWireGuardManager,
   validateFleetWireGuardSettings,
   verifyFleetWireGuardAbsent,
   type FleetWireGuardManager,
-} from '../proxyfleet/wireguard.js';
-import { createFleetRuntimeApi } from '../proxyfleet/runtime-api.js';
-import { createControllerRuntimeObserver } from '../proxyfleet/controller-runtime.js';
-import { auditManagedFleetEndpoints } from '../proxyfleet/endpoint-audit.js';
-import { syncFleetEndpointsToIntelligence } from '../proxyfleet/pipeline-adapter.js';
-import { createNodeRemovalService } from '../proxyfleet/node-removal.js';
-import { createEnrollmentService } from '../proxyfleet/enrollment.js';
-import { createProvisioningService } from '../proxyfleet/provisioning.js';
-import { acquireDataLease } from '../db/common/maintenance-lease.js';
-import type { FleetOverlayObservation } from '../proxyfleet/runtime.js';
+} from "../proxyfleet/wireguard.js";
+import { createFleetRuntimeApi } from "../proxyfleet/runtime-api.js";
+import { createControllerRuntimeObserver } from "../proxyfleet/controller-runtime.js";
+import { auditManagedFleetEndpoints } from "../proxyfleet/endpoint-audit.js";
+import { auditRouterGooglePools } from "../proxyfleet/google-code-audit.js";
+import { syncFleetEndpointsToIntelligence } from "../proxyfleet/pipeline-adapter.js";
+import { createNodeRemovalService } from "../proxyfleet/node-removal.js";
+import { createEnrollmentService } from "../proxyfleet/enrollment.js";
+import { createProvisioningService } from "../proxyfleet/provisioning.js";
+import { acquireDataLease } from "../db/common/maintenance-lease.js";
+import { triggerFullBackupAndSync } from "./backup/git-sync.js";
+import type { FleetOverlayObservation } from "../proxyfleet/runtime.js";
 import {
   createSession,
   readSession,
@@ -55,14 +64,12 @@ import {
   sessionCookie,
   clearSessionCookie,
   requireDashboardAuth,
-} from './session-auth.js';
+} from "./session-auth.js";
 const here = path.dirname(fileURLToPath(import.meta.url));
-const root = path.resolve(here, '../..');
+const root = path.resolve(here, "../..");
 
-const dataDir = path.resolve(
-  process.env.APP_DATA_DIR || path.join(root, 'data'),
-);
-const releaseDataLease = acquireDataLease(dataDir, 'application');
+const dataDir = path.resolve(process.env.APP_DATA_DIR || path.join(root, "data"));
+const releaseDataLease = acquireDataLease(dataDir, "application");
 const proxyIntelligenceDb = openProxyIntelligenceDb(dataDir);
 const proxyIntelligenceRepo = createProxyIntelligenceRepository({
   db: proxyIntelligenceDb,
@@ -76,23 +83,23 @@ const handleProxyCheck = createProxyCheckHandler({
 });
 
 const fleetRepo = createFleetRepository({
-  sqlitePath: path.join(dataDir, 'fleet.sqlite3'),
+  sqlitePath: path.join(dataDir, "fleet.sqlite3"),
 });
 const controllerObserver = createControllerRuntimeObserver();
 const fleetReady = fleetRepo.migrate().then(async () => {
   const node = await fleetRepo.bootstrapControllerNode({
-    name: os.hostname() || 'controller-node',
-    wireguardIp: '10.77.0.1',
+    name: os.hostname() || "controller-node",
+    wireguardIp: "10.77.0.1",
     os: process.platform,
     arch: process.arch,
-    agentVersion: '0.2.0',
+    agentVersion: "0.2.0",
   });
   await fleetRepo.startRuntimeSession(node.id, controllerObserver.sessionId);
   await fleetRepo.recordNodeDevice(node.id, controllerObserver.device);
   return node;
 });
 let overlayManager: FleetWireGuardManager | null = null;
-let overlaySettingsKey = '';
+let overlaySettingsKey = "";
 function getFleetWireguard() {
   const settings = getSettingsSecrets().fleetWireguard;
   if (!settings) return null;
@@ -120,7 +127,7 @@ const nodeRemovalService = createNodeRemovalService({
     const absent = await verifyFleetWireGuardAbsent();
     if (!absent) {
       throw new Error(
-        'ProxyFleet WireGuard cleanup requires verified controller setup; IP remains reserved',
+        "ProxyFleet WireGuard cleanup requires verified controller setup; IP remains reserved",
       );
     }
   },
@@ -134,10 +141,7 @@ async function cleanupRemotePoolRef(remoteId: string): Promise<void> {
   const connections = await listAntigravityConnections();
   await Promise.all(
     connections
-      .filter(
-        (connection) =>
-          connection.providerSpecificData?.proxyPoolId === remoteId,
-      )
+      .filter((connection) => connection.providerSpecificData?.proxyPoolId === remoteId)
       .map((connection) => {
         const providerSpecificData = {
           ...(connection.providerSpecificData ?? {}),
@@ -158,9 +162,7 @@ const handleFleetApi = createFleetApiHandler({
     enrollNode: async (input) => {
       const configured = getFleetWireguard();
       if (!configured)
-        throw new Error(
-          'Configure and set up ProxyFleet WireGuard before enrolling nodes',
-        );
+        throw new Error("Configure and set up ProxyFleet WireGuard before enrolling nodes");
       const ready = await configured.manager.preflight();
       const enrolled = await createEnrollmentService(fleetRepo, {
         serverWireguardPublicKey: ready.publicKey,
@@ -177,10 +179,7 @@ const poolRanker = createPoolRanker({
     const connections = await listAntigravityConnections();
     await Promise.all(
       connections
-        .filter(
-          (connection) =>
-            connection.providerSpecificData?.proxyPoolId === remoteId,
-        )
+        .filter((connection) => connection.providerSpecificData?.proxyPoolId === remoteId)
         .map((connection) => {
           const providerSpecificData = {
             ...(connection.providerSpecificData ?? {}),
@@ -190,23 +189,50 @@ const poolRanker = createPoolRanker({
         }),
     );
   },
-  onSoftDelete: (key, err) =>
-    proxyIntelligenceRepo.softDeleteFromRouter(key, err),
-  onTestResult: (key, ok, lat, err) =>
-    proxyIntelligenceRepo.recordTestResult(key, ok, lat, err),
+  onSoftDelete: (key, err) => proxyIntelligenceRepo.softDeleteFromRouter(key, err),
+  onTestResult: (key, ok, lat, err) => proxyIntelligenceRepo.recordTestResult(key, ok, lat, err),
 });
 const antigravityRotator = createAntigravityRotator({
   dataDir,
   getUsableProxies: () =>
     Object.values(poolRanker.readState().pools)
-      .filter((p) => p.status === 'usable' && Boolean(p.remoteId))
+      .filter((p) => p.status === "usable" && Boolean(p.remoteId))
       .map((p) => ({ remoteId: p.remoteId!, name: p.name })),
 });
+const dualRouterRepo = openSyncRepository(path.join(dataDir, "router-sync.sqlite3"));
+const routerSettings = getSettingsSecrets();
+const routerUrls = getNineRouterUrls(routerSettings);
+const ownershipKeyPath = process.env.ANTIGRAVITY_AUTHORITY_PRIVATE_KEY_PATH;
+const ownershipClient = ownershipKeyPath
+  ? openSyncDb(path.join(dataDir, "router-sync.sqlite3"))
+  : null;
+const antigravityOwnership =
+  ownershipClient && ownershipKeyPath
+    ? createProxyOwnershipAuthority(ownershipClient.raw, fs.readFileSync(ownershipKeyPath, "utf8"))
+    : undefined;
+const dualRouterAdapters = routerUrls.map((url, idx) =>
+  createRouterAdapter({
+    routerId: idx === 0 ? "router-1" : `router-${idx + 1}`,
+    url,
+    password: routerSettings.nineRouterPassword,
+    apiKey: routerSettings.nineRouterApiKey,
+  }),
+);
+const dualRouterCoordinator = createDualRouterCoordinator({
+  repository: dualRouterRepo,
+  adapters: dualRouterAdapters,
+});
+const dualRouterScheduler = createDualRouterScheduler({
+  repository: dualRouterRepo,
+  coordinator: dualRouterCoordinator,
+});
+
 let lastFleetAuditAt = 0;
 const unifiedSyncCoordinator = createUnifiedSyncCoordinator({
   poolRanker,
   antigravityRotator,
   proxyIntelligenceRepo,
+  dualRouterScheduler,
   fleetMaintenance: async () => {
     const controller = await fleetReady;
     await nodeRemovalService.retryPending();
@@ -219,7 +245,7 @@ const unifiedSyncCoordinator = createUnifiedSyncCoordinator({
         const peers = nodes
           .filter(
             (node) =>
-              node.role !== 'controller-worker' &&
+              node.role !== "controller-worker" &&
               node.wireguard_public_key &&
               approvedIds.has(node.id),
           )
@@ -232,11 +258,9 @@ const unifiedSyncCoordinator = createUnifiedSyncCoordinator({
         overlay = await configured.manager.observe();
       } catch (error) {
         const errMessage =
-          error instanceof Error
-            ? error.message
-            : 'WireGuard reconciliation failed';
+          error instanceof Error ? error.message : "WireGuard reconciliation failed";
         overlay = {
-          state: 'unhealthy',
+          state: "unhealthy",
           interfacePresent: null,
           peerPresent: null,
           lastHandshakeAt: null,
@@ -249,14 +273,14 @@ const unifiedSyncCoordinator = createUnifiedSyncCoordinator({
       }
     } else {
       overlay = {
-        state: 'unknown',
+        state: "unknown",
         interfacePresent: null,
         peerPresent: null,
         lastHandshakeAt: null,
         probeOk: null,
         rxBytes: null,
         txBytes: null,
-        error: 'ProxyFleet WireGuard is not configured',
+        error: "ProxyFleet WireGuard is not configured",
         lastRecoveryAt: null,
       };
     }
@@ -269,8 +293,8 @@ const unifiedSyncCoordinator = createUnifiedSyncCoordinator({
       await controllerObserver.sample(endpoints, overlay),
     );
     await fleetRepo.recordHeartbeat(controller.id, {
-      status: 'online',
-      agentVersion: '0.2.0',
+      status: "online",
+      agentVersion: "0.2.0",
     });
     const syncedEndpoints = await syncFleetEndpointsToIntelligence(
       fleetRepo,
@@ -282,6 +306,10 @@ const unifiedSyncCoordinator = createUnifiedSyncCoordinator({
     if (Date.now() - lastFleetAuditAt >= 60_000) {
       lastFleetAuditAt = Date.now();
       await auditManagedFleetEndpoints(fleetRepo, proxyIntelligenceRepo);
+      await auditRouterGooglePools(
+        proxyIntelligenceDb,
+        routerUrls.map((url) => ({ url, timeoutMs: 8_000 })),
+      );
     }
     return {
       pendingRemovals: (await fleetRepo.listPendingNodeRemovals()).length,
@@ -292,11 +320,11 @@ const unifiedSyncCoordinator = createUnifiedSyncCoordinator({
 
 function auth(request: http.IncomingMessage): boolean {
   if (requireDashboardAuth(request).authenticated) return true;
-  const parsedUrl = new URL(request.url ?? '/', 'http://localhost');
+  const parsedUrl = new URL(request.url ?? "/", "http://localhost");
   const queryAuth =
-    parsedUrl.searchParams.get('password') ||
-    parsedUrl.searchParams.get('auth') ||
-    parsedUrl.searchParams.get('token');
+    parsedUrl.searchParams.get("password") ||
+    parsedUrl.searchParams.get("auth") ||
+    parsedUrl.searchParams.get("token");
   if (queryAuth && verifyControlPassword(queryAuth)) {
     return true;
   }
@@ -306,8 +334,8 @@ function auth(request: http.IncomingMessage): boolean {
 function json(response: http.ServerResponse, payload: unknown, status = 200) {
   const body = Buffer.from(JSON.stringify(payload));
   response.writeHead(status, {
-    'Content-Type': 'application/json',
-    'Content-Length': body.length,
+    "Content-Type": "application/json",
+    "Content-Length": body.length,
   });
   response.end(body);
 }
@@ -319,11 +347,11 @@ function readBody(
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let received = 0;
-    request.on('data', (chunk: Buffer) => {
+    request.on("data", (chunk: Buffer) => {
       received += chunk.length;
       if (received > maxBytes) {
         request.destroy();
-        const err = new Error('Request payload too large') as Error & {
+        const err = new Error("Request payload too large") as Error & {
           status?: number;
         };
         err.status = 413;
@@ -332,8 +360,8 @@ function readBody(
       }
       chunks.push(chunk);
     });
-    request.on('end', () => {
-      const raw = Buffer.concat(chunks).toString('utf8').trim();
+    request.on("end", () => {
+      const raw = Buffer.concat(chunks).toString("utf8").trim();
       if (!raw) return resolve({});
       try {
         resolve(JSON.parse(raw) as Record<string, unknown>);
@@ -341,7 +369,7 @@ function readBody(
         reject(error);
       }
     });
-    request.on('error', reject);
+    request.on("error", reject);
   });
 }
 
@@ -350,61 +378,55 @@ async function handleNineRouter(
   response: http.ServerResponse,
   pathname: string,
 ) {
-  if (request.method === 'GET' && pathname === '/api/ninerouter/status') {
+  if (request.method === "GET" && pathname === "/api/ninerouter/status") {
     return json(response, poolRanker.getStatus());
   }
 
-  if (request.method === 'GET' && pathname === '/api/ninerouter/metrics') {
-    const url = new URL(request.url ?? '/', 'http://localhost');
-    const hours = Number(url.searchParams.get('hours') ?? 24);
+  if (request.method === "GET" && pathname === "/api/ninerouter/metrics") {
+    const url = new URL(request.url ?? "/", "http://localhost");
+    const hours = Number(url.searchParams.get("hours") ?? 24);
     const sinceMs = Date.now() - hours * 60 * 60 * 1000;
     return json(response, { snapshots: poolRanker.getMetrics(sinceMs) });
   }
 
-  if (request.method === 'GET' && pathname === '/api/ninerouter/pools') {
+  if (request.method === "GET" && pathname === "/api/ninerouter/pools") {
     await poolRanker.startSyncIfStale().catch(() => {});
-    const tier = new URL(
-      request.url ?? '/',
-      'http://localhost',
-    ).searchParams.get('tier');
+    const tier = new URL(request.url ?? "/", "http://localhost").searchParams.get("tier");
     const pools = poolRanker.listByTier(tier).sort((a, b) => {
-      if (a.tier === 'active' && b.tier !== 'active') return -1;
-      if (b.tier === 'active' && a.tier !== 'active') return 1;
-      return (
-        (a.latency_ms ?? Number.MAX_SAFE_INTEGER) -
-        (b.latency_ms ?? Number.MAX_SAFE_INTEGER)
-      );
+      if (a.tier === "active" && b.tier !== "active") return -1;
+      if (b.tier === "active" && a.tier !== "active") return 1;
+      return (a.latency_ms ?? Number.MAX_SAFE_INTEGER) - (b.latency_ms ?? Number.MAX_SAFE_INTEGER);
     });
     const status = poolRanker.getStatus();
     if (pools.length === 0 && !status.running) {
       if (!status.configured) {
         logActivityThrottled(
-          'refresh-no-password',
-          'warn',
-          'Refresh: NINEROUTER_PASSWORD not set — cannot sync',
+          "refresh-no-password",
+          "warn",
+          "Refresh: NINEROUTER_PASSWORD not set — cannot sync",
         );
       } else if (!status.lastSyncAt) {
         logActivityThrottled(
-          'refresh-no-sync',
-          'warn',
-          'Refresh: no sync yet — click Sync now to pull proxies from 9Router',
+          "refresh-no-sync",
+          "warn",
+          "Refresh: no sync yet — click Sync now to pull proxies from 9Router",
         );
       } else if (status.stats.total === 0) {
         logActivityThrottled(
-          'refresh-empty-pool',
-          'warn',
-          'Refresh: 0 proxies in pool state — 9Router may have no pools',
+          "refresh-empty-pool",
+          "warn",
+          "Refresh: 0 proxies in pool state — 9Router may have no pools",
         );
       } else if (status.stats.active === 0 && status.stats.reserve === 0) {
         logActivityThrottled(
-          'refresh-all-dead',
-          'warn',
+          "refresh-all-dead",
+          "warn",
           `Refresh: 0 active/reserve (${status.stats.dead} dead) — all proxies failed checks`,
         );
-      } else if (tier === 'active') {
+      } else if (tier === "active") {
         logActivityThrottled(
-          'refresh-no-active',
-          'info',
+          "refresh-no-active",
+          "info",
           `Refresh: 0 active proxies shown (${status.stats.reserve} in reserve)`,
         );
       }
@@ -418,49 +440,39 @@ async function handleNineRouter(
     });
   }
 
-  if (request.method === 'POST' && pathname === '/api/ninerouter/sync') {
-    if (poolRanker.isSyncing())
-      return json(response, { started: false, running: true }, 202);
+  if (request.method === "POST" && pathname === "/api/ninerouter/sync") {
+    if (poolRanker.isSyncing()) return json(response, { started: false, running: true }, 202);
     poolRanker.syncPools({ force: true }).catch((error) => {
       const message = (error as Error).message;
-      logActivity('error', `Sync failed: ${message}`);
-      console.error('9Router sync failed:', message);
+      logActivity("error", `Sync failed: ${message}`);
+      console.error("9Router sync failed:", message);
     });
     return json(response, { started: true }, 202);
   }
-  if (request.method === 'POST' && pathname === '/api/ninerouter/activate') {
+  if (request.method === "POST" && pathname === "/api/ninerouter/activate") {
     const body = await readBody(request);
     const targetId = body.localId ?? body.id;
     if (!targetId || body.isActive === undefined) {
-      return json(response, { error: 'id and isActive are required' }, 400);
+      return json(response, { error: "id and isActive are required" }, 400);
     }
     try {
-      const pool = await poolRanker.activatePool(
-        String(targetId),
-        body.isActive === true,
-      );
+      const pool = await poolRanker.activatePool(String(targetId), body.isActive === true);
       return json(response, { pool });
     } catch (error) {
       const message = (error as Error).message;
-      return json(
-        response,
-        { error: message },
-        message.includes('limit') ? 409 : 400,
-      );
+      return json(response, { error: message }, message.includes("limit") ? 409 : 400);
     }
   }
 
-  const poolActionMatch = pathname.match(
-    /^\/api\/ninerouter\/pools\/([^/]+)(?:\/(restore))?$/,
-  );
+  const poolActionMatch = pathname.match(/^\/api\/ninerouter\/pools\/([^/]+)(?:\/(restore))?$/);
   if (poolActionMatch) {
     const localId = decodeURIComponent(poolActionMatch[1]);
     const action = poolActionMatch[2];
 
-    if (request.method === 'PATCH' && !action) {
+    if (request.method === "PATCH" && !action) {
       const body = await readBody(request);
-      if (typeof body.name !== 'string') {
-        return json(response, { error: 'name is required' }, 400);
+      if (typeof body.name !== "string") {
+        return json(response, { error: "name is required" }, 400);
       }
       try {
         const pool = await poolRanker.renamePool(localId, body.name);
@@ -470,33 +482,28 @@ async function handleNineRouter(
           return json(response, { error: error.message }, 409);
         }
         const err = error as Error & { status?: number };
-        const message = err.message || 'Failed to rename pool';
-        if (message.includes('not found'))
-          return json(response, { error: message }, 404);
-        if (
-          message.includes('cannot be empty') ||
-          message.includes('cannot exceed')
-        ) {
+        const message = err.message || "Failed to rename pool";
+        if (message.includes("not found")) return json(response, { error: message }, 404);
+        if (message.includes("cannot be empty") || message.includes("cannot exceed")) {
           return json(response, { error: message }, 400);
         }
         return json(response, { error: message }, 502);
       }
     }
 
-    if (request.method === 'DELETE' && !action) {
+    if (request.method === "DELETE" && !action) {
       try {
         const pool = await poolRanker.removePool(localId);
         return json(response, { pool });
       } catch (error) {
         const err = error as Error & { status?: number };
-        const message = err.message || 'Failed to delete pool';
-        if (message.includes('not found'))
-          return json(response, { error: message }, 404);
+        const message = err.message || "Failed to delete pool";
+        if (message.includes("not found")) return json(response, { error: message }, 404);
         return json(response, { error: message }, 502);
       }
     }
   }
-  if (request.method === 'POST' && pathname === '/api/ninerouter/sync-all') {
+  if (request.method === "POST" && pathname === "/api/ninerouter/sync-all") {
     try {
       const report = await unifiedSyncCoordinator.runUnifiedSyncCycle({
         force: true,
@@ -512,7 +519,7 @@ async function handleNineRouter(
     }
   }
 
-  return json(response, { error: 'not found' }, 404);
+  return json(response, { error: "not found" }, 404);
 }
 
 async function handleAntigravity(
@@ -520,25 +527,29 @@ async function handleAntigravity(
   response: http.ServerResponse,
   pathname: string,
 ) {
-  if (request.method === 'GET' && pathname === '/api/antigravity/status') {
+  if (request.method === "GET" && pathname === "/api/antigravity/status") {
     return json(response, antigravityRotator.getSnapshot());
   }
-  if (request.method === 'POST' && pathname === '/api/antigravity/refresh') {
+  if (request.method === "POST" && pathname === "/api/antigravity/refresh") {
     try {
-      const snapshot = await antigravityRotator.runRotation({ force: true });
+      const snapshot = await antigravityRotator.runRotation({
+        force: true,
+        reassignForbidden: true,
+      });
       return json(response, { started: true, snapshot });
     } catch (err) {
-      return json(
-        response,
-        { started: false, error: (err as Error).message },
-        500,
-      );
+      return json(response, { started: false, error: (err as Error).message }, 500);
     }
   }
-  if (
-    request.method === 'POST' &&
-    pathname === '/api/antigravity/optimize-by-speed'
-  ) {
+  if (request.method === "POST" && pathname === "/api/antigravity/reset-proxies") {
+    try {
+      const result = await antigravityRotator.resetProxies({ forceAll: true });
+      return json(response, result);
+    } catch (err) {
+      return json(response, { ok: false, error: (err as Error).message }, 500);
+    }
+  }
+  if (request.method === "POST" && pathname === "/api/antigravity/optimize-by-speed") {
     try {
       const result = await antigravityRotator.optimizeSpeed();
       return json(response, { ok: true, ...result });
@@ -546,7 +557,7 @@ async function handleAntigravity(
       return json(response, { ok: false, error: (err as Error).message }, 500);
     }
   }
-  return json(response, { error: 'not found' }, 404);
+  return json(response, { error: "not found" }, 404);
 }
 
 async function handleSettings(
@@ -555,60 +566,37 @@ async function handleSettings(
   pathname: string,
 ) {
   if (!requireDashboardAuth(request).authenticated) {
-    return json(response, { error: 'Unauthorized' }, 401);
+    return json(response, { error: "Unauthorized" }, 401);
   }
-  if (request.method === 'GET' && pathname === '/api/settings') {
+  if (request.method === "GET" && pathname === "/api/settings") {
     return json(response, getSettingsPublic());
   }
 
-  if (request.method === 'PUT' && pathname === '/api/settings') {
+  if (request.method === "PUT" && pathname === "/api/settings") {
     try {
       const body = await readBody(request);
       const result = updateSettings({
         controlPassword:
-          typeof body.controlPassword === 'string'
-            ? body.controlPassword
-            : undefined,
+          typeof body.controlPassword === "string" ? body.controlPassword : undefined,
         currentPassword:
-          typeof body.currentPassword === 'string'
-            ? body.currentPassword
-            : undefined,
+          typeof body.currentPassword === "string" ? body.currentPassword : undefined,
         nineRouterUrl:
-          typeof body.nineRouterUrl === 'string'
-            ? body.nineRouterUrl.trim()
-            : undefined,
+          typeof body.nineRouterUrl === "string" ? body.nineRouterUrl.trim() : undefined,
         nineRouterPassword:
-          typeof body.nineRouterPassword === 'string'
-            ? body.nineRouterPassword
-            : undefined,
+          typeof body.nineRouterPassword === "string" ? body.nineRouterPassword : undefined,
         nineRouterApiKey:
-          typeof body.nineRouterApiKey === 'string'
-            ? body.nineRouterApiKey
-            : undefined,
+          typeof body.nineRouterApiKey === "string" ? body.nineRouterApiKey : undefined,
         activePoolLimit:
-          body.activePoolLimit !== undefined
-            ? Number(body.activePoolLimit)
-            : undefined,
+          body.activePoolLimit !== undefined ? Number(body.activePoolLimit) : undefined,
         nineRouterAutoSync:
-          body.nineRouterAutoSync !== undefined
-            ? Boolean(body.nineRouterAutoSync)
-            : undefined,
+          body.nineRouterAutoSync !== undefined ? Boolean(body.nineRouterAutoSync) : undefined,
         nineRouterSyncMinutes:
-          body.nineRouterSyncMinutes !== undefined
-            ? Number(body.nineRouterSyncMinutes)
-            : undefined,
+          body.nineRouterSyncMinutes !== undefined ? Number(body.nineRouterSyncMinutes) : undefined,
         checkConcurrency:
-          body.checkConcurrency !== undefined
-            ? Number(body.checkConcurrency)
-            : undefined,
-        checkTimeoutMs:
-          body.checkTimeoutMs !== undefined
-            ? Number(body.checkTimeoutMs)
-            : undefined,
+          body.checkConcurrency !== undefined ? Number(body.checkConcurrency) : undefined,
+        checkTimeoutMs: body.checkTimeoutMs !== undefined ? Number(body.checkTimeoutMs) : undefined,
         proxyTtlMinutes:
-          body.proxyTtlMinutes !== undefined
-            ? Number(body.proxyTtlMinutes)
-            : undefined,
+          body.proxyTtlMinutes !== undefined ? Number(body.proxyTtlMinutes) : undefined,
         antigravityRotatorEnabled:
           body.antigravityRotatorEnabled !== undefined
             ? Boolean(body.antigravityRotatorEnabled)
@@ -638,53 +626,40 @@ async function handleSettings(
     }
   }
 
-  if (
-    request.method === 'POST' &&
-    pathname === '/api/settings/test-ninerouter'
-  ) {
+  if (request.method === "POST" && pathname === "/api/settings/test-ninerouter") {
     const body = await readBody(request);
     const overrides = {
-      url:
-        typeof body.nineRouterUrl === 'string'
-          ? body.nineRouterUrl.trim()
-          : undefined,
+      url: typeof body.nineRouterUrl === "string" ? body.nineRouterUrl.trim() : undefined,
       password:
-        typeof body.nineRouterPassword === 'string' &&
-        body.nineRouterPassword.trim()
+        typeof body.nineRouterPassword === "string" && body.nineRouterPassword.trim()
           ? body.nineRouterPassword
           : undefined,
       apiKey:
-        typeof body.nineRouterApiKey === 'string' &&
-        body.nineRouterApiKey.trim()
+        typeof body.nineRouterApiKey === "string" && body.nineRouterApiKey.trim()
           ? body.nineRouterApiKey
           : undefined,
     };
     const result = await testNineRouterConnection(overrides);
     return json(response, result, result.ok ? 200 : 502);
   }
-  if (request.method === 'GET' && pathname === '/api/settings/proxy-export') {
-    const parsedUrl = new URL(request.url ?? '/', 'http://localhost');
-    const format =
-      parsedUrl.searchParams.get('format') === 'csv' ? 'csv' : 'txt';
-    const confirm = parsedUrl.searchParams.get('confirmCredentials');
-    const requestedCreds =
-      parsedUrl.searchParams.get('includeCredentials') === 'true';
-    const includeCredentials =
-      requestedCreds && (confirm === 'yes' || confirm === 'true');
+  if (request.method === "GET" && pathname === "/api/settings/proxy-export") {
+    const parsedUrl = new URL(request.url ?? "/", "http://localhost");
+    const format = parsedUrl.searchParams.get("format") === "csv" ? "csv" : "txt";
+    const confirm = parsedUrl.searchParams.get("confirmCredentials");
+    const requestedCreds = parsedUrl.searchParams.get("includeCredentials") === "true";
+    const includeCredentials = requestedCreds && (confirm === "yes" || confirm === "true");
 
     if (requestedCreds && !includeCredentials) {
       return json(
         response,
         {
-          error:
-            'Exporting credentials requires explicit confirmation (confirmCredentials=yes)',
+          error: "Exporting credentials requires explicit confirmation (confirmCredentials=yes)",
         },
         403,
       );
     }
-    const scopeParam = parsedUrl.searchParams.get('scope');
-    const scope =
-      scopeParam === 'usable' || scopeParam === 'all' ? scopeParam : 'active';
+    const scopeParam = parsedUrl.searchParams.get("scope");
+    const scope = scopeParam === "usable" || scopeParam === "all" ? scopeParam : "active";
 
     let exportData = poolRanker.exportActiveProxies({
       format,
@@ -702,30 +677,29 @@ async function handleSettings(
           filename: fallback.filename,
           contentType: fallback.contentType,
           body: fallback.body,
-          count: fallback.body.split('\n').length,
+          count: fallback.body.split("\n").length,
         };
       }
     }
 
     response.writeHead(200, {
-      'Content-Type': exportData.contentType,
-      'Content-Disposition': `attachment; filename="${exportData.filename}"`,
-      'Cache-Control': 'no-store',
+      "Content-Type": exportData.contentType,
+      "Content-Disposition": `attachment; filename="${exportData.filename}"`,
+      "Cache-Control": "no-store",
     });
     response.end(exportData.body);
     return;
   }
 
-  return json(response, { error: 'not found' }, 404);
+  return json(response, { error: "not found" }, 404);
 }
 
-const dev =
-  process.env.NODE_ENV !== 'production' &&
-  process.env.npm_lifecycle_event !== 'start';
+const dev = process.env.NODE_ENV !== "production" && process.env.npm_lifecycle_event !== "start";
 const port = Number(process.env.PORT || 1300);
 
 let maintenanceIntervalId: NodeJS.Timeout | undefined;
 let lastScheduledRotationAt = 0;
+let lastScheduledBackupAt = 0;
 
 async function runScheduledMaintenance() {
   const settings = getSettingsSecrets();
@@ -739,42 +713,79 @@ async function runScheduledMaintenance() {
   const rotationDue =
     configured &&
     settings.antigravityRotatorEnabled !== false &&
-    now - lastScheduledRotationAt >=
-      Math.max(1, settings.antigravityRotateMinutes) * 60_000;
+    now - lastScheduledRotationAt >= Math.max(1, settings.antigravityRotateMinutes) * 60_000;
+
+  logScoped("Server", "runScheduledMaintenance", "info", "Maintenance tick", {
+    configured,
+    routerDue,
+    rotationDue,
+    lastSyncAgoMs: lastSyncAt > 0 ? now - lastSyncAt : null,
+  });
+
   if (rotationDue) lastScheduledRotationAt = now;
   if (configured && !routerDue) {
     void poolRanker.refreshRemoteTracking().catch((err) => {
-      logActivity(
-        'error',
+      logScoped(
+        "Server",
+        "refreshRemoteTracking",
+        "error",
         `Remote tracking refresh failed: ${(err as Error).message}`,
       );
     });
   }
-  const report = await unifiedSyncCoordinator.runUnifiedSyncCycle({
-    force: false,
-    router: routerDue,
-    rotation: rotationDue,
-  });
-  if (report.error || report.fleetResult?.error)
-    logActivity(
-      'error',
-      `Scheduled maintenance failed: ${report.error || report.fleetResult?.error}`,
+  try {
+    const report = await unifiedSyncCoordinator.runUnifiedSyncCycle({
+      force: false,
+      router: routerDue,
+      rotation: rotationDue,
+    });
+    if (report.error || report.fleetResult?.error) {
+      const maintError = report.error || report.fleetResult?.error;
+      logScoped(
+        "Server",
+        "runScheduledMaintenance",
+        "error",
+        `Scheduled maintenance failed: ${maintError}`,
+      );
+    }
+  } catch (cycleErr) {
+    logScoped(
+      "Server",
+      "runScheduledMaintenance",
+      "error",
+      `Scheduled maintenance cycle exception: ${(cycleErr as Error).message}`,
     );
+  }
+  if (now - lastScheduledBackupAt >= 30 * 60_000) {
+    lastScheduledBackupAt = now;
+    void triggerFullBackupAndSync().catch((err) => {
+      logScoped(
+        "Server",
+        "triggerFullBackupAndSync",
+        "warn",
+        `Scheduled backup sync failed: ${(err as Error).message}`,
+      );
+    });
+  }
 }
 
 function scheduleMaintenance() {
   clearInterval(maintenanceIntervalId);
   maintenanceIntervalId = setInterval(() => {
     void runScheduledMaintenance().catch((error) =>
-      logActivity(
-        'error',
-        `Scheduled maintenance failed: ${(error as Error).message}`,
+      logScoped(
+        "Server",
+        "runScheduledMaintenance",
+        "error",
+        `Scheduled maintenance interval failed: ${(error as Error).message}`,
       ),
     );
   }, 15_000);
   void runScheduledMaintenance().catch((error) =>
-    logActivity(
-      'error',
+    logScoped(
+      "Server",
+      "runScheduledMaintenance",
+      "error",
       `Startup maintenance failed: ${(error as Error).message}`,
     ),
   );
@@ -782,35 +793,37 @@ function scheduleMaintenance() {
 
 onSettingsChange((_settings, changed) => {
   if (
-    changed.some((key) =>
-      ['nineRouterUrl', 'nineRouterPassword', 'nineRouterApiKey'].includes(key),
-    )
+    changed.some((key) => ["nineRouterUrl", "nineRouterPassword", "nineRouterApiKey"].includes(key))
   ) {
     clearNineRouterSession();
+    import("./ninerouter-node-proxy.js").then((mod) => mod.clearNodeCookies()).catch(() => {});
   }
   if (
     changed.some((key) =>
       [
-        'nineRouterSyncMinutes',
-        'nineRouterAutoSync',
-        'antigravityRotateMinutes',
-        'antigravityRotatorEnabled',
+        "nineRouterSyncMinutes",
+        "nineRouterAutoSync",
+        "antigravityRotateMinutes",
+        "antigravityRotatorEnabled",
       ].includes(key),
     )
   ) {
     scheduleMaintenance();
   }
   if (
-    changed.includes('antigravityActiveLimit') ||
-    changed.includes('antigravitySessionThreshold')
+    changed.includes("antigravityActiveLimit") ||
+    changed.includes("antigravitySessionThreshold")
   ) {
     antigravityRotator.runRotation({ force: true }).catch((err) => {
       logActivity(
-        'error',
+        "error",
         `Antigravity rotation on settings change failed: ${(err as Error).message}`,
       );
     });
   }
+  void triggerFullBackupAndSync().catch((err) => {
+    logActivity("warn", `Settings change backup sync failed: ${(err as Error).message}`);
+  });
 });
 async function handleIntelligence(
   request: http.IncomingMessage,
@@ -818,71 +831,56 @@ async function handleIntelligence(
   pathname: string,
 ) {
   if (!requireDashboardAuth(request).authenticated) {
-    return json(response, { error: 'Unauthorized' }, 401);
+    return json(response, { error: "Unauthorized" }, 401);
   }
-  const parsedUrl = new URL(request.url ?? '/', 'http://localhost');
+  const parsedUrl = new URL(request.url ?? "/", "http://localhost");
 
-  if (request.method === 'GET' && pathname === '/api/intelligence/proxies') {
+  if (request.method === "GET" && pathname === "/api/intelligence/proxies") {
     const filter = {
-      search: parsedUrl.searchParams.get('search') || undefined,
-      source: parsedUrl.searchParams.get('source') || undefined,
-      protocol: parsedUrl.searchParams.get('protocol') || undefined,
-      lifecycle: (parsedUrl.searchParams.get('lifecycle') as any) || undefined,
-      verdict: parsedUrl.searchParams.get('verdict') || undefined,
-      page: Number(parsedUrl.searchParams.get('page') || '1'),
-      pageSize: Number(parsedUrl.searchParams.get('pageSize') || '20'),
+      search: parsedUrl.searchParams.get("search") || undefined,
+      source: parsedUrl.searchParams.get("source") || undefined,
+      protocol: parsedUrl.searchParams.get("protocol") || undefined,
+      lifecycle: (parsedUrl.searchParams.get("lifecycle") as any) || undefined,
+      verdict: parsedUrl.searchParams.get("verdict") || undefined,
+      page: Number(parsedUrl.searchParams.get("page") || "1"),
+      pageSize: Number(parsedUrl.searchParams.get("pageSize") || "20"),
     };
     const page = await proxyIntelligenceRepo.listProxies(filter);
     return json(response, page);
   }
 
-  if (
-    request.method === 'GET' &&
-    pathname.startsWith('/api/intelligence/proxies/')
-  ) {
-    const proxyKey = decodeURIComponent(
-      pathname.slice('/api/intelligence/proxies/'.length),
-    );
+  if (request.method === "GET" && pathname.startsWith("/api/intelligence/proxies/")) {
+    const proxyKey = decodeURIComponent(pathname.slice("/api/intelligence/proxies/".length));
     const detail = await proxyIntelligenceRepo.getProxy(proxyKey);
-    if (!detail) return json(response, { error: 'Proxy not found' }, 404);
+    if (!detail) return json(response, { error: "Proxy not found" }, 404);
     return json(response, { proxy: detail });
   }
 
-  if (request.method === 'POST' && pathname === '/api/intelligence/import') {
+  if (request.method === "POST" && pathname === "/api/intelligence/import") {
     const body = await readBody(request, 5_000_000);
-    const source =
-      typeof body.source === 'string' ? body.source.trim() : 'import.txt';
-    const content = typeof body.content === 'string' ? body.content : '';
-    if (!content.trim())
-      return json(response, { error: 'content cannot be empty' }, 400);
+    const source = typeof body.source === "string" ? body.source.trim() : "import.txt";
+    const content = typeof body.content === "string" ? body.content : "";
+    if (!content.trim()) return json(response, { error: "content cannot be empty" }, 400);
     const summary = await proxyIntelligenceRepo.importProxies({
       source,
       content,
     });
     return json(response, summary);
   }
-  if (
-    request.method === 'POST' &&
-    pathname === '/api/intelligence/import/preview'
-  ) {
+  if (request.method === "POST" && pathname === "/api/intelligence/import/preview") {
     const body = await readBody(request, 5_000_000);
-    const source =
-      typeof body.source === 'string' ? body.source.trim() : 'import.txt';
-    const content = typeof body.content === 'string' ? body.content : '';
-    if (!content.trim())
-      return json(response, { error: 'content cannot be empty' }, 400);
+    const source = typeof body.source === "string" ? body.source.trim() : "import.txt";
+    const content = typeof body.content === "string" ? body.content : "";
+    if (!content.trim()) return json(response, { error: "content cannot be empty" }, 400);
     const preview = await proxyIntelligenceRepo.previewImport({
       source,
       content,
     });
     return json(response, { preview });
   }
-  if (
-    request.method === 'POST' &&
-    pathname === '/api/intelligence/sync-working'
-  ) {
+  if (request.method === "POST" && pathname === "/api/intelligence/sync-working") {
     try {
-      const pools = poolRanker.listByTier('all');
+      const pools = poolRanker.listByTier("all");
       const summary = await proxyIntelligenceRepo.syncWorkingPools(pools);
       return json(response, summary);
     } catch (err) {
@@ -890,7 +888,7 @@ async function handleIntelligence(
     }
   }
 
-  return json(response, { error: 'not found' }, 404);
+  return json(response, { error: "not found" }, 404);
 }
 async function handleProxiesUnified(
   request: http.IncomingMessage,
@@ -898,14 +896,14 @@ async function handleProxiesUnified(
   pathname: string,
 ) {
   if (!requireDashboardAuth(request).authenticated) {
-    return json(response, { error: 'Unauthorized' }, 401);
+    return json(response, { error: "Unauthorized" }, 401);
   }
   if (await handleProxyCheck(request, response, pathname)) return;
-  const parsedUrl = new URL(request.url ?? '/', 'http://localhost');
+  const parsedUrl = new URL(request.url ?? "/", "http://localhost");
 
-  if (request.method === 'GET' && pathname === '/api/proxies/unified') {
-    const activePools = poolRanker.listByTier('active');
-    const reservePools = poolRanker.listByTier('reserve');
+  if (request.method === "GET" && pathname === "/api/proxies/unified") {
+    const activePools = poolRanker.listByTier("active");
+    const reservePools = poolRanker.listByTier("reserve");
     const activePoolEndpoints = new Set<string>();
     for (const p of activePools) {
       if (p.proxyUrl) {
@@ -915,10 +913,10 @@ async function handleProxiesUnified(
         } catch {
           const cleaned =
             p.proxyUrl
-              .replace(/^[a-zA-Z0-9]+:\/\//, '')
-              .split('/')[0]
-              .split('@')
-              .pop() || '';
+              .replace(/^[a-zA-Z0-9]+:\/\//, "")
+              .split("/")[0]
+              .split("@")
+              .pop() || "";
           if (cleaned) activePoolEndpoints.add(cleaned);
         }
       }
@@ -932,33 +930,24 @@ async function handleProxiesUnified(
         } catch {
           const cleaned =
             p.proxyUrl
-              .replace(/^[a-zA-Z0-9]+:\/\//, '')
-              .split('/')[0]
-              .split('@')
-              .pop() || '';
+              .replace(/^[a-zA-Z0-9]+:\/\//, "")
+              .split("/")[0]
+              .split("@")
+              .pop() || "";
           if (cleaned) reservePoolEndpoints.add(cleaned);
         }
       }
     }
 
     const filter = {
-      status:
-        parsedUrl.searchParams.get('health') ||
-        parsedUrl.searchParams.get('status') ||
-        'all',
-      search:
-        parsedUrl.searchParams.get('q') ||
-        parsedUrl.searchParams.get('search') ||
-        undefined,
-      protocol: parsedUrl.searchParams.get('protocol') || undefined,
-      source: parsedUrl.searchParams.get('source') || undefined,
-      sort: (parsedUrl.searchParams.get('sort') as any) || undefined,
-      direction: (parsedUrl.searchParams.get('direction') as any) || undefined,
-      page: Math.max(1, Number(parsedUrl.searchParams.get('page') || '1')),
-      pageSize: Math.max(
-        1,
-        Math.min(100, Number(parsedUrl.searchParams.get('pageSize') || '50')),
-      ),
+      status: parsedUrl.searchParams.get("health") || parsedUrl.searchParams.get("status") || "all",
+      search: parsedUrl.searchParams.get("q") || parsedUrl.searchParams.get("search") || undefined,
+      protocol: parsedUrl.searchParams.get("protocol") || undefined,
+      source: parsedUrl.searchParams.get("source") || undefined,
+      sort: (parsedUrl.searchParams.get("sort") as any) || undefined,
+      direction: (parsedUrl.searchParams.get("direction") as any) || undefined,
+      page: Math.max(1, Number(parsedUrl.searchParams.get("page") || "1")),
+      pageSize: Math.max(1, Math.min(100, Number(parsedUrl.searchParams.get("pageSize") || "50"))),
       activePoolEndpoints,
       reservePoolEndpoints,
     };
@@ -967,26 +956,19 @@ async function handleProxiesUnified(
     return json(response, res);
   }
 
-  if (request.method === 'GET' && pathname === '/api/proxies/detail') {
-    const key = parsedUrl.searchParams.get('key');
-    if (!key) return json(response, { error: 'key is required' }, 400);
-    const auditId = parsedUrl.searchParams.get('auditId') || undefined;
-    const auditDetail = await proxyIntelligenceRepo.getAuditDetail(
-      key,
-      auditId,
-    );
+  if (request.method === "GET" && pathname === "/api/proxies/detail") {
+    const key = parsedUrl.searchParams.get("key");
+    if (!key) return json(response, { error: "key is required" }, 400);
+    const auditId = parsedUrl.searchParams.get("auditId") || undefined;
+    const auditDetail = await proxyIntelligenceRepo.getAuditDetail(key, auditId);
     return json(response, { auditDetail });
   }
 
-  if (request.method === 'POST' && pathname === '/api/proxies/pin') {
-    const body = (await readBody(request, 100_000).catch(() => ({}))) as Record<
-      string,
-      unknown
-    >;
-    const proxyKey = typeof body.proxyKey === 'string' ? body.proxyKey : '';
+  if (request.method === "POST" && pathname === "/api/proxies/pin") {
+    const body = (await readBody(request, 100_000).catch(() => ({}))) as Record<string, unknown>;
+    const proxyKey = typeof body.proxyKey === "string" ? body.proxyKey : "";
     const isPinned = Boolean(body.isPinned);
-    if (!proxyKey)
-      return json(response, { error: 'proxyKey is required' }, 400);
+    if (!proxyKey) return json(response, { error: "proxyKey is required" }, 400);
     try {
       await proxyIntelligenceRepo.setPin(proxyKey, isPinned);
       return json(response, { proxyKey, isPinned });
@@ -995,15 +977,11 @@ async function handleProxiesUnified(
     }
   }
 
-  if (request.method === 'POST' && pathname === '/api/proxies/tags') {
-    const body = (await readBody(request, 100_000).catch(() => ({}))) as Record<
-      string,
-      unknown
-    >;
-    const proxyKey = typeof body.proxyKey === 'string' ? body.proxyKey : '';
+  if (request.method === "POST" && pathname === "/api/proxies/tags") {
+    const body = (await readBody(request, 100_000).catch(() => ({}))) as Record<string, unknown>;
+    const proxyKey = typeof body.proxyKey === "string" ? body.proxyKey : "";
     const tags = Array.isArray(body.tags) ? body.tags.map(String) : [];
-    if (!proxyKey)
-      return json(response, { error: 'proxyKey is required' }, 400);
+    if (!proxyKey) return json(response, { error: "proxyKey is required" }, 400);
     try {
       await proxyIntelligenceRepo.updateTags(proxyKey, tags);
       return json(response, { proxyKey, tags });
@@ -1012,50 +990,36 @@ async function handleProxiesUnified(
     }
   }
 
-  if (request.method === 'POST' && pathname === '/api/proxies/unlink-router') {
-    const body = (await readBody(request, 100_000).catch(() => ({}))) as Record<
-      string,
-      unknown
-    >;
-    const proxyKey = typeof body.proxyKey === 'string' ? body.proxyKey : '';
-    if (!proxyKey)
-      return json(response, { error: 'proxyKey is required' }, 400);
+  if (request.method === "POST" && pathname === "/api/proxies/unlink-router") {
+    const body = (await readBody(request, 100_000).catch(() => ({}))) as Record<string, unknown>;
+    const proxyKey = typeof body.proxyKey === "string" ? body.proxyKey : "";
+    if (!proxyKey) return json(response, { error: "proxyKey is required" }, 400);
     const row = proxyIntelligenceDb.get<{ remote_id: string | null }>(
-      'SELECT remote_id FROM proxies WHERE proxy_key = ?',
+      "SELECT remote_id FROM proxies WHERE proxy_key = ?",
       [proxyKey],
     );
-    if (!row) return json(response, { error: 'Proxy not found' }, 404);
+    if (!row) return json(response, { error: "Proxy not found" }, 404);
     try {
       if (row.remote_id) {
         await deletePool(row.remote_id).catch(() => {});
       }
-      await proxyIntelligenceRepo.softDeleteFromRouter(
-        proxyKey,
-        'Unlinked by user',
-      );
-      return json(response, { ok: true, proxyKey, routerState: 'removed' });
+      await proxyIntelligenceRepo.softDeleteFromRouter(proxyKey, "Unlinked by user");
+      return json(response, { ok: true, proxyKey, routerState: "removed" });
     } catch (err) {
       return json(response, { error: (err as Error).message }, 500);
     }
   }
 
-  if (request.method === 'POST' && pathname === '/api/proxies/push-router') {
-    const body = (await readBody(request, 100_000).catch(() => ({}))) as Record<
-      string,
-      unknown
-    >;
-    const proxyKey = typeof body.proxyKey === 'string' ? body.proxyKey : '';
-    if (!proxyKey)
-      return json(response, { error: 'proxyKey is required' }, 400);
+  if (request.method === "POST" && pathname === "/api/proxies/push-router") {
+    const body = (await readBody(request, 100_000).catch(() => ({}))) as Record<string, unknown>;
+    const proxyKey = typeof body.proxyKey === "string" ? body.proxyKey : "";
+    if (!proxyKey) return json(response, { error: "proxyKey is required" }, 400);
     const row = proxyIntelligenceDb.get<{
       endpoint: string;
       protocol: string;
       remote_id: string | null;
-    }>(
-      'SELECT endpoint, protocol, remote_id FROM proxies WHERE proxy_key = ?',
-      [proxyKey],
-    );
-    if (!row) return json(response, { error: 'Proxy not found' }, 404);
+    }>("SELECT endpoint, protocol, remote_id FROM proxies WHERE proxy_key = ?", [proxyKey]);
+    if (!row) return json(response, { error: "Proxy not found" }, 404);
     try {
       const created = await createPool({
         name: row.endpoint,
@@ -1071,7 +1035,7 @@ async function handleProxiesUnified(
         ok: true,
         proxyKey,
         remoteId: created.id,
-        routerState: 'reserve',
+        routerState: "reserve",
       });
     } catch (err) {
       return json(response, { error: (err as Error).message }, 500);
@@ -1079,12 +1043,12 @@ async function handleProxiesUnified(
   }
 
   if (
-    request.method === 'DELETE' &&
-    (pathname === '/api/proxies/hard-delete' || pathname === '/api/proxies')
+    request.method === "DELETE" &&
+    (pathname === "/api/proxies/hard-delete" || pathname === "/api/proxies")
   ) {
-    const key = parsedUrl.searchParams.get('key') || '';
-    const force = parsedUrl.searchParams.get('force') === 'true';
-    if (!key) return json(response, { error: 'key is required' }, 400);
+    const key = parsedUrl.searchParams.get("key") || "";
+    const force = parsedUrl.searchParams.get("force") === "true";
+    if (!key) return json(response, { error: "key is required" }, 400);
     try {
       const res = await proxyIntelligenceRepo.hardDeleteProxy(key, force);
       if (res.remoteId) {
@@ -1096,7 +1060,7 @@ async function handleProxiesUnified(
     }
   }
 
-  return json(response, { error: 'not found' }, 404);
+  return json(response, { error: "not found" }, 404);
 }
 
 async function main() {
@@ -1112,12 +1076,18 @@ async function main() {
     poolRanker,
     antigravityRotator,
     unifiedSyncCoordinator,
+    dualRouterCoordinator,
+    dualRouterScheduler,
+    dualRouterRepo,
+    dualRouterAdapters,
     fleetWireguard: getFleetWireguard,
     handleFleetRuntimeApi,
     handleFleetApi,
     handleProxyCheck,
     router: nineRouterClient,
     settings: appConfig,
+    antigravityOwnership,
+    antigravityRouters: routerUrls.map((url, index) => ({ routerId: `router-${index + 1}`, url })),
     legacyHandlers: {
       handleNineRouter,
       handleAntigravity,
@@ -1129,47 +1099,52 @@ async function main() {
   const apiRequestListener = getRequestListener(apiApp.fetch);
   const upgradeHandler = dev ? app.getUpgradeHandler() : null;
   const server = http.createServer(async (request, response) => {
-    const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
-    if (request.method === 'GET' && pathname === '/install-agent.sh') {
-      const scriptPath = path.join(root, 'scripts', 'install-agent.sh');
+    const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+    if (request.method === "GET" && pathname === "/install-agent.sh") {
+      const scriptPath = path.join(root, "scripts", "install-agent.sh");
       if (fs.existsSync(scriptPath)) {
         const content = fs.readFileSync(scriptPath);
         response.writeHead(200, {
-          'Content-Type': 'text/plain; charset=utf-8',
-          'Content-Length': content.length,
-          'Cache-Control': 'no-cache',
+          "Content-Type": "text/plain; charset=utf-8",
+          "Content-Length": content.length,
+          "Cache-Control": "no-cache",
         });
         response.end(content);
         return;
       }
     }
-    if (request.method === 'GET' && pathname.startsWith('/bin/')) {
+    if (request.method === "GET" && pathname.startsWith("/bin/")) {
       const binaryName = path.basename(pathname);
-      const binPath = path.join(root, 'bin', binaryName);
+      const binPath = path.join(root, "bin", binaryName);
       if (fs.existsSync(binPath) && fs.statSync(binPath).isFile()) {
         const content = fs.readFileSync(binPath);
         response.writeHead(200, {
-          'Content-Type': 'application/octet-stream',
-          'Content-Length': content.length,
-          'Cache-Control': 'no-cache',
+          "Content-Type": "application/octet-stream",
+          "Content-Length": content.length,
+          "Cache-Control": "no-cache",
         });
         response.end(content);
         return;
       }
     }
-    if (!pathname.startsWith('/api/')) return handle(request, response);
+    if (!pathname.startsWith("/api/")) return handle(request, response);
 
     return apiRequestListener(request, response);
   });
 
   if (upgradeHandler) {
-    server.on('upgrade', (request, socket, head) => {
-      const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
-      if (pathname === '/_next/webpack-hmr')
-        return upgradeHandler(request, socket, head);
+    server.on("upgrade", (request, socket, head) => {
+      const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+      if (pathname === "/_next/webpack-hmr") return upgradeHandler(request, socket, head);
       socket.destroy();
     });
   }
+  server.on("clientError", (err: NodeJS.ErrnoException, socket) => {
+    if (err.code === "ECONNRESET" || !socket.writable) {
+      return;
+    }
+    socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
+  });
 
   server.listen(port, () => {
     console.log(`minhmiceProxy listening on http://localhost:${port}`);
@@ -1177,14 +1152,14 @@ async function main() {
   });
 }
 
-process.on('unhandledRejection', (reason) => {
-  const detail =
-    reason instanceof Error
-      ? `${reason.message}\n${reason.stack}`
-      : String(reason);
+process.on("unhandledRejection", (reason) => {
+  const detail = reason instanceof Error ? `${reason.message}\n${reason.stack}` : String(reason);
   console.error(`[process] unhandledRejection\n${detail}`);
 });
-process.on('uncaughtException', (error) => {
+process.on("uncaughtException", (error: Error & { code?: string }) => {
+  if (error.code === "ECONNRESET" || error.message?.includes("ECONNRESET")) {
+    return;
+  }
   console.error(`[process] uncaughtException\n${error.stack ?? error}`);
 });
 function shutdown() {
@@ -1198,14 +1173,19 @@ function shutdown() {
   } catch {
     // ignore error on shutdown
   }
+  try {
+    dualRouterRepo.close();
+  } catch {
+    // ignore error on shutdown
+  }
   releaseDataLease();
 }
 
-process.on('SIGINT', () => {
+process.on("SIGINT", () => {
   shutdown();
   process.exit(0);
 });
-process.on('SIGTERM', () => {
+process.on("SIGTERM", () => {
   shutdown();
   process.exit(0);
 });

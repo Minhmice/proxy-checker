@@ -20,18 +20,10 @@ export function LatencyIndicator({
 
   const rounded = Math.round(latencyMs);
   const tone =
-    rounded < 300
-      ? "text-emerald-400"
-      : rounded < 1000
-      ? "text-foreground"
-      : "text-amber-400";
+    rounded < 300 ? "text-emerald-400" : rounded < 1000 ? "text-foreground" : "text-amber-400";
 
   const barColor =
-    rounded < 300
-      ? "bg-emerald-400"
-      : rounded < 1000
-      ? "bg-sky-400"
-      : "bg-amber-400";
+    rounded < 300 ? "bg-emerald-400" : rounded < 1000 ? "bg-[#FF8555]" : "bg-amber-400";
 
   // Clamp bar percentage between 10% and 100% for 0 - 2000ms
   const barPercent = Math.min(100, Math.max(10, Math.round((rounded / 2000) * 100)));

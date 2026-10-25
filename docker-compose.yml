@@ -1,0 +1,28 @@
+services:
+  proxyfleet:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: proxyfleet:latest
+    container_name: proxyfleet-control
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - proxyfleet-data:/var/lib/proxyfleet
+      - /etc/wireguard:/etc/wireguard
+    environment:
+      - NODE_ENV=production
+      - PORT=1300
+      - APP_DATA_DIR=/var/lib/proxyfleet
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:1300/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  proxyfleet-data:

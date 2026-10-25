@@ -41,7 +41,7 @@ test("proxy repository supports pin, tags, soft delete from router, and guarded 
     // 4. Guarded hard delete: cannot delete pinned proxy without force
     await assert.rejects(
       async () => await repo.hardDeleteProxy(proxy.proxyKey, false),
-      /is pinned/i
+      /is pinned/i,
     );
 
     // 5. Force hard delete removes record completely

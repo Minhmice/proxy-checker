@@ -8,9 +8,10 @@ const files = ["proxies.sqlite3", "fleet.sqlite3", "antigravity-rotation.sqlite3
 for (const file of files) {
   const before = inspectDatabase(path.join(beforeDir, file));
   const after = inspectDatabase(path.join(afterDir, file));
-  const same = JSON.stringify(before.tables) === JSON.stringify(after.tables)
-    && JSON.stringify(before.indexes) === JSON.stringify(after.indexes)
-    && JSON.stringify(before.rowDigests) === JSON.stringify(after.rowDigests);
+  const same =
+    JSON.stringify(before.tables) === JSON.stringify(after.tables) &&
+    JSON.stringify(before.indexes) === JSON.stringify(after.indexes) &&
+    JSON.stringify(before.rowDigests) === JSON.stringify(after.rowDigests);
   if (!same) throw new Error(`Database verification failed: ${file}`);
   console.log(`Verified ${file}: ${before.tables.length} tables`);
 }

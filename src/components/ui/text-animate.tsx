@@ -1,7 +1,7 @@
-"use client"
+"use client";
 
-import { FC, useEffect, useRef } from "react"
-import { HTMLMotionProps, motion, useAnimation, useInView } from "motion/react"
+import { FC, useEffect, useRef } from "react";
+import { HTMLMotionProps, motion, useAnimation, useInView } from "motion/react";
 
 type AnimationType =
   | "fadeIn"
@@ -11,13 +11,13 @@ type AnimationType =
   | "rollIn"
   | "whipIn"
   | "whipInUp"
-  | "calmInUp"
+  | "calmInUp";
 
 interface Props extends HTMLMotionProps<"div"> {
-  text: string
-  type?: AnimationType
-  delay?: number
-  duration?: number
+  text: string;
+  type?: AnimationType;
+  delay?: number;
+  duration?: number;
 }
 
 const animationVariants = {
@@ -195,25 +195,21 @@ const animationVariants = {
       },
     },
   },
-}
+};
 
-const TextAnimate: FC<Props> = ({
-  text,
-  type = "whipInUp",
-  ...props
-}: Props) => {
+const TextAnimate: FC<Props> = ({ text, type = "whipInUp", ...props }: Props) => {
   //   const { ref, inView } = useInView({
   //     threshold: 0.5,
   //     triggerOnce: true,
   //   });
 
-  const ref = useRef(null)
-  const isInView = useInView(ref, { once: true })
+  const ref = useRef(null);
+  const isInView = useInView(ref, { once: true });
 
-  const letters = Array.from(text)
-  const { container, child } = animationVariants[type]
+  const letters = Array.from(text);
+  const { container, child } = animationVariants[type];
 
-  const ctrls = useAnimation()
+  const ctrls = useAnimation();
 
   //   useEffect(() => {
   //     if (isInView) {
@@ -254,13 +250,13 @@ const TextAnimate: FC<Props> = ({
                   >
                     {character}
                   </motion.span>
-                )
+                );
               })}
             </motion.span>
-          )
+          );
         })}
       </h2>
-    )
+    );
   }
 
   return (
@@ -279,8 +275,8 @@ const TextAnimate: FC<Props> = ({
         </motion.span>
       ))}
     </motion.h2>
-  )
-}
+  );
+};
 
-export { TextAnimate }
-export default TextAnimate
+export { TextAnimate };
+export default TextAnimate;

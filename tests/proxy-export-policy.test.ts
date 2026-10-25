@@ -17,19 +17,45 @@ test("exportWorkingProxies strictly redacts credentials by default", async () =>
     db.run(
       `INSERT INTO proxies (proxy_key, endpoint, protocol, host, port, username, password, status, source)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [key, "198.51.100.10:1080", "socks5", "198.51.100.10", 1080, "operator", "mysecretpass", "usable", "test"]
+      [
+        key,
+        "198.51.100.10:1080",
+        "socks5",
+        "198.51.100.10",
+        1080,
+        "operator",
+        "mysecretpass",
+        "usable",
+        "test",
+      ],
     );
 
     const mockResult: ProxyAuditResult = {
       proxy: { protocol: "socks5", host: "198.51.100.10", port: 1080, username: "operator" },
       verdict: "PASS",
-      scores: { overallSafety: 95, transportSecurity: 95, privacy: 95, reputation: 95, reliability: 95 },
-      security: { inputValidation: { valid: true }, ssrfProtection: { passed: true, resolvedIps: ["198.51.100.10"] } },
+      scores: {
+        overallSafety: 95,
+        transportSecurity: 95,
+        privacy: 95,
+        reputation: 95,
+        reliability: 95,
+      },
+      security: {
+        inputValidation: { valid: true },
+        ssrfProtection: { passed: true, resolvedIps: ["198.51.100.10"] },
+      },
       connectivity: { reachable: true, latencyMs: 50 },
       exitIp: { ip: "198.51.100.10" },
       riskFactors: [],
       recommendations: [],
-      metadata: { startedAt: "", completedAt: "", durationMs: 50, version: "1.0", toolVersion: "1.0", schemaVersion: "1.0" },
+      metadata: {
+        startedAt: "",
+        completedAt: "",
+        durationMs: 50,
+        version: "1.0",
+        toolVersion: "1.0",
+        schemaVersion: "1.0",
+      },
     };
 
     await repo.persistAuditSnapshot({
@@ -46,8 +72,16 @@ test("exportWorkingProxies strictly redacts credentials by default", async () =>
     });
 
     assert.ok(defaultExport.body.includes("198.51.100.10:1080"));
-    assert.equal(defaultExport.body.includes("mysecretpass"), false, "Plaintext password must not be in default export");
-    assert.equal(defaultExport.body.includes("operator:"), false, "Username must not be in default export");
+    assert.equal(
+      defaultExport.body.includes("mysecretpass"),
+      false,
+      "Plaintext password must not be in default export",
+    );
+    assert.equal(
+      defaultExport.body.includes("operator:"),
+      false,
+      "Username must not be in default export",
+    );
 
     // 2. Explicit export with credentials
     const credExport = await repo.exportWorkingProxies({

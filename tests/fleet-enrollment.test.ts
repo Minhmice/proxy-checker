@@ -43,8 +43,16 @@ test("enrollment service creates expiring tokens, consumes once, and provisions 
     assert.equal(enrolled.serverWireguardPublicKey.length > 0, true);
     assert.equal(await repo.verifyNodeAgentToken(enrolled.nodeId, enrolled.agentToken), true);
     assert.equal(await repo.verifyNodeAgentToken(enrolled.nodeId, tokenResult.token), false);
-    assert.equal(JSON.stringify(await repo.getNode(enrolled.nodeId)).includes(enrolled.agentToken), false);
-    assert.equal(JSON.stringify(await repo.listEvents({ nodeId: enrolled.nodeId })).includes(enrolled.agentToken), false);
+    assert.equal(
+      JSON.stringify(await repo.getNode(enrolled.nodeId)).includes(enrolled.agentToken),
+      false,
+    );
+    assert.equal(
+      JSON.stringify(await repo.listEvents({ nodeId: enrolled.nodeId })).includes(
+        enrolled.agentToken,
+      ),
+      false,
+    );
 
     // 3. Re-using same token must fail
     await assert.rejects(
@@ -53,7 +61,7 @@ test("enrollment service creates expiring tokens, consumes once, and provisions 
         nodeName: "worker-001",
         wireguardPublicKey: "NTU1NTU1NTU2NjY2NjY2Njc3Nzc3Nzc3ODg4ODg4ODg=",
       }),
-      /token already consumed or expired/i
+      /token already consumed or expired/i,
     );
 
     // 4. Node should now be in DB
@@ -79,16 +87,13 @@ test("enrollNode rejects when wireguard server config is missing without consumi
     assert.ok(tokenResult.token);
 
     // enrollNode fails with actionable message
-    await assert.rejects(
-      async () => {
-        await service.enrollNode({
-          token: tokenResult.token,
-          nodeName: "worker-preflight",
-          wireguardPublicKey: "MTExMTExMTEyMjIyMjIyMjMzMzMzMzMzNDQ0NDQ0NDQ=",
-        });
-      },
-      /WireGuard server configuration missing/i
-    );
+    await assert.rejects(async () => {
+      await service.enrollNode({
+        token: tokenResult.token,
+        nodeName: "worker-preflight",
+        wireguardPublicKey: "MTExMTExMTEyMjIyMjIyMjMzMzMzMzMzNDQ0NDQ0NDQ=",
+      });
+    }, /WireGuard server configuration missing/i);
 
     // Token was NOT consumed because error was raised preflight
     const configuredService = createEnrollmentService(repo, {

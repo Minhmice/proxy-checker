@@ -5,8 +5,24 @@ import { createUnifiedSyncCoordinator } from "../src/server/unified-sync-coordin
 
 test("antigravity rotator only replaces dead proxy during normal cycle, and assigns by speed when optimized", () => {
   const accounts = [
-    { id: "acc-1", email: "a1@test.com", isActive: true, sessionPercentage: 80, weeklyPercentage: 100, resetAt: null, proxyPoolId: "px-alive" },
-    { id: "acc-2", email: "a2@test.com", isActive: true, sessionPercentage: 70, weeklyPercentage: 100, resetAt: null, proxyPoolId: "px-dead" },
+    {
+      id: "acc-1",
+      email: "a1@test.com",
+      isActive: true,
+      sessionPercentage: 80,
+      weeklyPercentage: 100,
+      resetAt: null,
+      proxyPoolId: "px-alive",
+    },
+    {
+      id: "acc-2",
+      email: "a2@test.com",
+      isActive: true,
+      sessionPercentage: 70,
+      weeklyPercentage: 100,
+      resetAt: null,
+      proxyPoolId: "px-dead",
+    },
   ];
   const usableProxies = [
     { remoteId: "px-alive", name: "1" },
@@ -14,7 +30,10 @@ test("antigravity rotator only replaces dead proxy during normal cycle, and assi
   ];
 
   // 1. Normal rotation: acc-1 keeps px-alive, acc-2 gets px-backup
-  const plan = computeRotationPlan(accounts, usableProxies, { activeLimit: 2, sessionThreshold: 20 });
+  const plan = computeRotationPlan(accounts, usableProxies, {
+    activeLimit: 2,
+    sessionThreshold: 20,
+  });
   assert.equal(plan.proxyReassignments["acc-1"], undefined); // acc-1 giữ nguyên proxy
   assert.equal(plan.proxyReassignments["acc-2"], "px-backup"); // acc-2 được đổi sang px-backup
 

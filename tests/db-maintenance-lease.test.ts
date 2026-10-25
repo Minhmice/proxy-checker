@@ -1,20 +1,20 @@
-import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import test from 'node:test';
-import { acquireDataLease } from '../src/db/common/maintenance-lease.js';
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { acquireDataLease } from "../src/db/common/maintenance-lease.js";
 
-test('maintenance refuses live application users and application refuses maintenance', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'db-maintenance-'));
+test("maintenance refuses live application users and application refuses maintenance", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "db-maintenance-"));
   try {
-    const releaseApp = acquireDataLease(dir, 'application');
-    assert.throws(() => acquireDataLease(dir, 'maintenance'), /in use/);
+    const releaseApp = acquireDataLease(dir, "application");
+    assert.throws(() => acquireDataLease(dir, "maintenance"), /in use/);
     releaseApp();
-    const releaseMaintenance = acquireDataLease(dir, 'maintenance');
-    assert.throws(() => acquireDataLease(dir, 'application'), /maintenance/);
+    const releaseMaintenance = acquireDataLease(dir, "maintenance");
+    assert.throws(() => acquireDataLease(dir, "application"), /maintenance/);
     releaseMaintenance();
-    const release = acquireDataLease(dir, 'application');
+    const release = acquireDataLease(dir, "application");
     release();
     release();
   } finally {

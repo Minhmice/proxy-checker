@@ -65,7 +65,12 @@ test("syncWorkingPools imports active/usable pool proxies into intelligence and 
     assert.equal(updatedActive?.latestVerdict, "PASS");
 
     // 3. Test recordTestResult khi test fail cập nhật đúng status = dead và verdict = FAIL
-    await repo.recordTestResult("socks5://user:pass@89.116.30.252:8888", false, undefined, "Connection timeout");
+    await repo.recordTestResult(
+      "socks5://user:pass@89.116.30.252:8888",
+      false,
+      undefined,
+      "Connection timeout",
+    );
     const updatedReserve = await repo.getProxy("socks5://user@89.116.30.252:8888");
     assert.equal(updatedReserve?.status, "dead");
     assert.equal(updatedReserve?.latestVerdict, "FAIL");

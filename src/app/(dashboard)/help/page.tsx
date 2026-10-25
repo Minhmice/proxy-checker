@@ -35,7 +35,8 @@ export default function HelpPage() {
           <div className="rounded-lg border border-border bg-card p-3 space-y-1">
             <dt className="font-mono text-xs font-semibold text-emerald-400 uppercase">working</dt>
             <dd className="text-xs text-muted-foreground">
-              Passed latest check or safety audit. Does not guarantee a verified exit node or active routable state.
+              Passed latest check or safety audit. Does not guarantee a verified exit node or active
+              routable state.
             </dd>
           </div>
           <div className="rounded-lg border border-border bg-card p-3 space-y-1">
@@ -47,15 +48,17 @@ export default function HelpPage() {
           <div className="rounded-lg border border-border bg-card p-3 space-y-1">
             <dt className="font-mono text-xs font-semibold text-rose-400 uppercase">dead</dt>
             <dd className="text-xs text-muted-foreground">
-              Unreachable or never verified. Persists in inventory; not guaranteed to be automatically culled.
+              Unreachable or never verified. Persists in inventory; not guaranteed to be
+              automatically culled.
             </dd>
           </div>
         </dl>
         <div className="rounded-md border border-border bg-card p-3 text-xs text-muted-foreground space-y-1">
           <strong className="text-foreground">UDP Measurements:</strong>
           <p>
-            HTTP proxies do not support raw UDP probing, returning <code className="font-mono">UNSUPPORTED</code>.
-            Recorded as <code className="font-mono">Unknown</code> (displayed as &quot;UDP not measured&quot;).
+            HTTP proxies do not support raw UDP probing, returning{" "}
+            <code className="font-mono">UNSUPPORTED</code>. Recorded as{" "}
+            <code className="font-mono">Unknown</code> (displayed as &quot;UDP not measured&quot;).
             Unsupported UDP probes do not penalize reliability or mark proxies as failed.
           </p>
         </div>
@@ -63,24 +66,28 @@ export default function HelpPage() {
 
       {/* 2. Manual Checks (409 & 502) */}
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold tracking-tight">Manual Checks: HTTP 409 & 502 Recovery</h2>
+        <h2 className="text-lg font-semibold tracking-tight">
+          Manual Checks: HTTP 409 & 502 Recovery
+        </h2>
         <div className="space-y-2 text-xs">
           <div className="rounded-md border border-border bg-card p-3 space-y-1">
             <div className="font-medium text-foreground">
               <span className="font-mono text-amber-400">409 Conflict:</span> Proxy not linked
             </div>
             <p className="text-muted-foreground">
-              Returned ONLY when the proxy has no linked 9Router pool (<code className="font-mono">remote_id</code> is missing).
-              To resolve, push the proxy to 9Router via sync before testing.
+              Returned ONLY when the proxy has no linked 9Router pool (
+              <code className="font-mono">remote_id</code> is missing). To resolve, push the proxy
+              to 9Router via sync before testing.
             </p>
           </div>
           <div className="rounded-md border border-border bg-card p-3 space-y-1">
             <div className="font-medium text-foreground">
-              <span className="font-mono text-rose-400">502 Bad Gateway:</span> Upstream transport failure
+              <span className="font-mono text-rose-400">502 Bad Gateway:</span> Upstream transport
+              failure
             </div>
             <p className="text-muted-foreground">
-              Returned when 9Router upstream throws an error or reports transport failure.
-              Check upstream daemon status and network reachability.
+              Returned when 9Router upstream throws an error or reports transport failure. Check
+              upstream daemon status and network reachability.
             </p>
           </div>
           <p className="text-muted-foreground">
@@ -94,14 +101,17 @@ export default function HelpPage() {
         <h2 className="text-lg font-semibold tracking-tight">Pool Synchronization</h2>
         <ul className="list-disc list-inside space-y-1.5 text-xs text-muted-foreground">
           <li>
-            <strong className="text-foreground">Automatic sync:</strong> Runs on a background interval (toggleable in Settings).
-            Replaces dead proxies with live reserves without reassigning healthy proxies based solely on latency.
+            <strong className="text-foreground">Automatic sync:</strong> Runs on a background
+            interval (toggleable in Settings). Replaces dead proxies with live reserves without
+            reassigning healthy proxies based solely on latency.
           </li>
           <li>
-            <strong className="text-foreground">Manual sync:</strong> Triggers immediate pool reconciliation independently of the auto toggle.
+            <strong className="text-foreground">Manual sync:</strong> Triggers immediate pool
+            reconciliation independently of the auto toggle.
           </li>
           <li>
-            <strong className="text-foreground">Concurrency:</strong> 9Router sync and Antigravity account rotation run concurrently without a shared blocking mutex.
+            <strong className="text-foreground">Concurrency:</strong> 9Router sync and Antigravity
+            account rotation run concurrently without a shared blocking mutex.
           </li>
         </ul>
       </section>
@@ -111,21 +121,27 @@ export default function HelpPage() {
         <h2 className="text-lg font-semibold tracking-tight">Antigravity Account Rotation</h2>
         <div className="space-y-2 text-xs text-muted-foreground">
           <p>
-            Rotation evaluates <strong className="text-foreground">Gemini session quota only</strong>.
-            Claude, GPT, and weekly quotas are informational.
+            Rotation evaluates{" "}
+            <strong className="text-foreground">Gemini session quota only</strong>. Claude, GPT, and
+            weekly quotas are informational.
           </p>
           <ul className="list-disc list-inside space-y-1">
             <li>
-              <strong className="text-foreground">Deactivation:</strong> Quota &le; configured threshold (default 20%) or active error.
+              <strong className="text-foreground">Deactivation:</strong> Quota &le; configured
+              threshold (default 20%) or active error.
             </li>
             <li>
-              <strong className="text-foreground">Activation:</strong> Reserves qualify when quota &gt; configured threshold.
+              <strong className="text-foreground">Activation:</strong> Reserves qualify when quota
+              &gt; configured threshold.
             </li>
             <li>
-              <strong className="text-foreground">Priority:</strong> Earliest valid reset duration (<code className="font-mono">resetAt</code>). Missing timestamps sort last; account ID is tie-breaker.
+              <strong className="text-foreground">Priority:</strong> Earliest valid reset duration (
+              <code className="font-mono">resetAt</code>). Missing timestamps sort last; account ID
+              is tie-breaker.
             </li>
             <li>
-              <strong className="text-foreground">Concurrency limit:</strong> Configured in Settings (default 3 active accounts).
+              <strong className="text-foreground">Concurrency limit:</strong> Configured in Settings
+              (default 3 active accounts).
             </li>
           </ul>
         </div>
@@ -135,8 +151,9 @@ export default function HelpPage() {
       <section className="space-y-3">
         <h2 className="text-lg font-semibold tracking-tight">Authentication & Sessions</h2>
         <p className="text-xs text-muted-foreground">
-          Dashboard sessions use an <code className="font-mono">HttpOnly</code> session cookie with a static 24-hour TTL (86,400s) from login.
-          Sessions expire strictly 24 hours after issuance without sliding extensions or midnight resets.
+          Dashboard sessions use an <code className="font-mono">HttpOnly</code> session cookie with
+          a static 24-hour TTL (86,400s) from login. Sessions expire strictly 24 hours after
+          issuance without sliding extensions or midnight resets.
         </p>
       </section>
 
@@ -145,9 +162,15 @@ export default function HelpPage() {
         <h2 className="text-lg font-semibold tracking-tight">Worker Nodes & Host Diagnostics</h2>
         <div className="space-y-2 text-xs text-muted-foreground">
           <p>
-            Nodes report heartbeats; status becomes <code className="font-mono text-rose-400">Offline</code> after 60 seconds without a heartbeat.
-            The controller host is registered as an inventory node in <Link href="/nodes" className="text-primary underline">/nodes</Link>.
-            Configuration changes advance <code className="font-mono">desired_revision</code>; if deployment fails, agent rolls back to <code className="font-mono">/etc/3proxy/3proxy.cfg.bak</code>.
+            Nodes report heartbeats; status becomes{" "}
+            <code className="font-mono text-rose-400">Offline</code> after 60 seconds without a
+            heartbeat. The controller host is registered as an inventory node in{" "}
+            <Link href="/nodes" className="text-primary underline">
+              /nodes
+            </Link>
+            . Configuration changes advance <code className="font-mono">desired_revision</code>; if
+            deployment fails, agent rolls back to{" "}
+            <code className="font-mono">/etc/3proxy/3proxy.cfg.bak</code>.
           </p>
           <CodeBlock
             title="systemd service runbook"

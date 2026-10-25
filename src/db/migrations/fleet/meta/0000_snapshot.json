@@ -67,10 +67,7 @@
       "indexes": {
         "idx_fleet_deployments_node": {
           "name": "idx_fleet_deployments_node",
-          "columns": [
-            "node_id",
-            "\"revision\" desc"
-          ],
+          "columns": ["node_id", "\"revision\" desc"],
           "isUnique": false
         }
       },
@@ -79,12 +76,8 @@
           "name": "fleet_deployments_node_id_fleet_nodes_id_fk",
           "tableFrom": "fleet_deployments",
           "tableTo": "fleet_nodes",
-          "columnsFrom": [
-            "node_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["node_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -166,12 +159,8 @@
           "name": "fleet_egresses_node_id_fleet_nodes_id_fk",
           "tableFrom": "fleet_egresses",
           "tableTo": "fleet_nodes",
-          "columnsFrom": [
-            "node_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["node_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -179,12 +168,8 @@
           "name": "fleet_egresses_interface_id_fleet_node_interfaces_id_fk",
           "tableFrom": "fleet_egresses",
           "tableTo": "fleet_node_interfaces",
-          "columnsFrom": [
-            "interface_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["interface_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -301,9 +286,7 @@
       "indexes": {
         "idx_fleet_events_created": {
           "name": "idx_fleet_events_created",
-          "columns": [
-            "\"created_at\" desc"
-          ],
+          "columns": ["\"created_at\" desc"],
           "isUnique": false
         }
       },
@@ -375,10 +358,7 @@
       "indexes": {
         "idx_fleet_health_endpoint": {
           "name": "idx_fleet_health_endpoint",
-          "columns": [
-            "endpoint_id",
-            "\"checked_at\" desc"
-          ],
+          "columns": ["endpoint_id", "\"checked_at\" desc"],
           "isUnique": false
         }
       },
@@ -387,12 +367,8 @@
           "name": "fleet_health_checks_endpoint_id_fleet_proxy_endpoints_id_fk",
           "tableFrom": "fleet_health_checks",
           "tableTo": "fleet_proxy_endpoints",
-          "columnsFrom": [
-            "endpoint_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["endpoint_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -400,12 +376,8 @@
           "name": "fleet_health_checks_node_id_fleet_nodes_id_fk",
           "tableFrom": "fleet_health_checks",
           "tableTo": "fleet_nodes",
-          "columnsFrom": [
-            "node_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["node_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -488,12 +460,8 @@
           "name": "fleet_node_interfaces_node_id_fleet_nodes_id_fk",
           "tableFrom": "fleet_node_interfaces",
           "tableTo": "fleet_nodes",
-          "columnsFrom": [
-            "node_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["node_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -572,9 +540,7 @@
       "indexes": {
         "idx_fleet_removals_status": {
           "name": "idx_fleet_removals_status",
-          "columns": [
-            "status"
-          ],
+          "columns": ["status"],
           "isUnique": false
         }
       },
@@ -657,12 +623,8 @@
           "name": "fleet_node_ssh_node_id_fleet_nodes_id_fk",
           "tableFrom": "fleet_node_ssh",
           "tableTo": "fleet_nodes",
-          "columnsFrom": [
-            "node_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["node_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -932,9 +894,7 @@
       "indexes": {
         "fleet_nodes_wireguard_ip_unique": {
           "name": "fleet_nodes_wireguard_ip_unique",
-          "columns": [
-            "wireguard_ip"
-          ],
+          "columns": ["wireguard_ip"],
           "isUnique": true
         }
       },
@@ -1009,12 +969,8 @@
           "name": "fleet_proxy_credentials_endpoint_id_fleet_proxy_endpoints_id_fk",
           "tableFrom": "fleet_proxy_credentials",
           "tableTo": "fleet_proxy_endpoints",
-          "columnsFrom": [
-            "endpoint_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["endpoint_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1116,18 +1072,12 @@
       "indexes": {
         "idx_fleet_endpoints_node": {
           "name": "idx_fleet_endpoints_node",
-          "columns": [
-            "node_id"
-          ],
+          "columns": ["node_id"],
           "isUnique": false
         },
         "fleet_proxy_endpoints_node_id_listen_ip_listen_port_unique": {
           "name": "fleet_proxy_endpoints_node_id_listen_ip_listen_port_unique",
-          "columns": [
-            "node_id",
-            "listen_ip",
-            "listen_port"
-          ],
+          "columns": ["node_id", "listen_ip", "listen_port"],
           "isUnique": true
         }
       },
@@ -1136,12 +1086,8 @@
           "name": "fleet_proxy_endpoints_node_id_fleet_nodes_id_fk",
           "tableFrom": "fleet_proxy_endpoints",
           "tableTo": "fleet_nodes",
-          "columnsFrom": [
-            "node_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["node_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -1149,12 +1095,8 @@
           "name": "fleet_proxy_endpoints_egress_id_fleet_egresses_id_fk",
           "tableFrom": "fleet_proxy_endpoints",
           "tableTo": "fleet_egresses",
-          "columnsFrom": [
-            "egress_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["egress_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -1194,22 +1136,15 @@
           "name": "fleet_runtime_sessions_node_id_fleet_nodes_id_fk",
           "tableFrom": "fleet_runtime_sessions",
           "tableTo": "fleet_nodes",
-          "columnsFrom": [
-            "node_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["node_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
         "fleet_runtime_sessions_node_id_session_id_pk": {
-          "columns": [
-            "node_id",
-            "session_id"
-          ],
+          "columns": ["node_id", "session_id"],
           "name": "fleet_runtime_sessions_node_id_session_id_pk"
         }
       },

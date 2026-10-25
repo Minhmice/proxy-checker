@@ -13,9 +13,27 @@ test("syncPools evicts dead pool from 9router, soft-deletes in repo, and renames
 
   const mockDeps = {
     listPools: async () => [
-      { id: "p-fast", name: "Old 1", proxyUrl: "http://1.1.1.1:8080", protocol: "http", isActive: true },
-      { id: "p-slow", name: "Old 2", proxyUrl: "http://2.2.2.2:8080", protocol: "http", isActive: true },
-      { id: "p-dead", name: "Old 3", proxyUrl: "http://3.3.3.3:8080", protocol: "http", isActive: true },
+      {
+        id: "p-fast",
+        name: "Old 1",
+        proxyUrl: "http://1.1.1.1:8080",
+        protocol: "http",
+        isActive: true,
+      },
+      {
+        id: "p-slow",
+        name: "Old 2",
+        proxyUrl: "http://2.2.2.2:8080",
+        protocol: "http",
+        isActive: true,
+      },
+      {
+        id: "p-dead",
+        name: "Old 3",
+        proxyUrl: "http://3.3.3.3:8080",
+        protocol: "http",
+        isActive: true,
+      },
     ],
     testPool: async (remoteId: string) => {
       if (remoteId === "p-dead") return { ok: false, elapsedMs: 5000, error: "Gateway timeout" };

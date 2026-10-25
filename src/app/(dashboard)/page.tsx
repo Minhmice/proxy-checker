@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { motion } from "motion/react";
 import {
   Activity,
   AlertCircle,
@@ -13,9 +14,7 @@ import {
   Clock,
   Copy,
   Gauge,
-  Globe2,
   Layers,
-  Loader2,
   RefreshCw,
   RotateCw,
   Server,
@@ -23,6 +22,8 @@ import {
   Zap,
 } from "lucide-react";
 import { MetricCard } from "@/components/metric-card";
+import { TokenUsageCard } from "@/components/token-usage-card";
+import { Sparkline } from "@/components/sparkline";
 import { ProxyHealthBadge } from "@/components/proxy-health-badge";
 import { useAuth } from "@/components/auth-provider";
 import { fetchMetrics, fetchPools, fetchStatus, formatTime, syncPools } from "@/lib/api";
@@ -46,7 +47,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-
 const TrafficChart = dynamic(
   () => import("@/components/traffic-chart").then((module) => module.TrafficChart),
   {
@@ -60,15 +60,27 @@ const TrafficChart = dynamic(
   },
 );
 
-const CobeGlobe = dynamic(() => import("@/components/ui/cobe-globe").then((m) => m.CobeGlobe), {
-  ssr: false,
-  loading: () => (
-    <div className="h-[200px] w-full flex items-center justify-center text-xs text-muted-foreground font-mono">
-      <Loader2 className="size-4 animate-spin mr-2" />
-      Initializing WebGL Telemetry...
-    </div>
-  ),
-});
+const containerVariants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.08,
+    },
+  },
+};
+
+const itemVariants = {
+  hidden: { opacity: 0, y: 12 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: {
+      duration: 0.35,
+      ease: [0.22, 1, 0.36, 1] as const,
+    },
+  },
+};
 
 export default function OverviewPage() {
   const { password, authenticated } = useAuth();
@@ -173,16 +185,12 @@ export default function OverviewPage() {
 
   return (
     <div className="space-y-6 w-full max-w-none 4xl:max-w-[3600px] mx-auto pb-12">
-      {/* Executive Command Hero with Tokyo Midnight Glow */}
-      <div className="relative overflow-hidden rounded-2xl border border-border/80 bg-card/75 p-6 sm:p-7 backdrop-blur-xl shadow-lg">
-        <Spotlight className="-top-32 left-10 md:left-48" fill="oklch(0.78 0.17 205 / 0.18)" />
+      {/* Executive Command Hero with Obsidian Flame Glow */}
+      <div className="relative overflow-hidden rounded-2xl border border-[#23232C] bg-[#131318]/90 p-6 sm:p-7 backdrop-blur-xl shadow-lg">
+        <Spotlight className="-top-32 left-10 md:left-48" fill="rgba(255, 91, 34, 0.18)" />
         <div className="relative z-10 flex flex-col md:flex-row md:items-center md:justify-between gap-5">
           <div className="space-y-1.5">
             <div className="flex flex-wrap items-center gap-2 mb-1">
-              <span className="font-mono text-xs uppercase tracking-wider text-muted-foreground font-semibold">
-                NOC Console
-              </span>
-              <span className="text-muted-foreground/40">•</span>
               <Status
                 variant={
                   loading
@@ -200,31 +208,30 @@ export default function OverviewPage() {
                 />
                 <StatusLabel className="text-[11px] font-semibold uppercase tracking-wider">
                   {loading
-                    ? "Checking 9Router"
+                    ? "Checking sync status"
                     : !status
-                      ? "9Router Unknown"
+                      ? "Status unavailable"
                       : !status.configured
-                        ? "9Router Unconfigured"
+                        ? "9Router not configured"
                         : status.lastError
-                          ? "9Router Degraded"
+                          ? "Sync degraded"
                           : status.running
-                            ? "9Router Syncing"
-                            : "9Router Core Live"}
+                            ? "Syncing"
+                            : "Sync healthy"}
                 </StatusLabel>
               </Status>
               <Badge
                 variant="outline"
-                className="font-mono text-[10px] text-primary border-primary/30 bg-primary/5 hidden sm:inline-flex"
+                className="font-mono text-[10px] text-[#FF5B22] border-[#FF5B22]/30 bg-[#FF5B22]/10 hidden sm:inline-flex"
               >
-                Active Top {status?.activeLimit ?? 50}
+                Active limit: {status?.activeLimit ?? 50}
               </Badge>
             </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-ink">
-              Fleet Operations Command
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
+              Overview
             </h1>
-            <p className="text-xs sm:text-sm text-muted-foreground max-w-2xl leading-relaxed">
-              Real-time latency telemetry, autonomous account rotation, and active proxy cluster
-              orchestration.
+            <p className="text-xs sm:text-sm text-zinc-400 max-w-2xl leading-relaxed">
+              Proxy health, router sync and token usage across configured nodes.
             </p>
           </div>
 
@@ -235,7 +242,7 @@ export default function OverviewPage() {
               size="sm"
               disabled={!canRead || refreshing}
               onClick={handleRefresh}
-              className="h-9 px-3 gap-1.5 font-medium border-border/80 bg-surface/60 hover:bg-surface-raised"
+              className="h-9 px-3 gap-1.5 font-medium border-[#23232C] bg-[#181820] hover:bg-[#23232C] text-white"
             >
               <RotateCw className={cn("size-3.5", refreshing && "animate-spin")} />
               <span>Refresh</span>
@@ -244,10 +251,9 @@ export default function OverviewPage() {
             <Button
               type="button"
               size="sm"
-              variant="halo"
               disabled={!canRead || status?.running}
               onClick={handleSync}
-              className="h-9 px-4 gap-1.5 font-semibold text-xs text-primary-foreground shadow-[0_0_16px_oklch(0.78_0.17_205/0.4)]"
+              className="h-9 px-4 gap-1.5 font-semibold text-xs text-white bg-gradient-to-r from-[#FF5B22] to-[#FF3D00] hover:from-[#FF6B35] hover:to-[#FF4D14] shadow-[0_0_20px_rgba(255,91,34,0.35)] border-0 transition-all duration-200"
             >
               {status?.running ? (
                 <>
@@ -301,51 +307,124 @@ export default function OverviewPage() {
       {loading ? (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {[1, 2, 3].map((i) => (
-            <Card key={i} className="p-4 space-y-3">
-              <Skeleton className="h-4 w-28" />
-              <Skeleton className="h-8 w-20" />
-              <Skeleton className="h-3 w-36" />
-            </Card>
+            <div key={i} className="rounded-2xl border border-[#23232C] bg-[#131318] p-5 space-y-3">
+              <Skeleton className="h-4 w-28 bg-[#23232C]" />
+              <Skeleton className="h-10 w-24 bg-[#23232C]" />
+              <Skeleton className="h-3 w-36 bg-[#23232C]" />
+            </div>
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <MetricCard
-            label="Active Proxies"
-            value={status?.stats.active ?? (loading ? "—" : 0)}
-            sub={
-              status ? `Prioritized top ${status.activeLimit} on 9Router` : "Active routing target"
-            }
-            delta={
-              sparkActive.length >= 2
-                ? `${sparkActive.at(-1)! - sparkActive.at(-2)! >= 0 ? "+" : ""}${sparkActive.at(-1)! - sparkActive.at(-2)!}`
-                : undefined
-            }
-            sparkData={sparkActive}
-            sparkColor="oklch(0.78 0.17 205)"
-            icon={<Server className="size-4 text-primary" />}
-            badgeVariant="outline"
-          />
-          <MetricCard
-            label="Reserve Proxies"
-            value={status?.stats.reserve ?? (loading ? "—" : 0)}
-            sub="Healthy fallback, slower latency"
-            sparkData={sparkReserve}
-            sparkColor="oklch(0.68 0.25 315)"
-            icon={<Activity className="size-4 text-accent-violet" />}
-            badgeVariant="outline"
-          />
-          <MetricCard
-            label="Dead Proxies"
-            value={status?.stats.dead ?? (loading ? "—" : 0)}
-            sub="Excluded from active cluster routing"
-            sparkData={sparkDead}
-            sparkColor="oklch(0.68 0.24 25)"
-            icon={<AlertCircle className="size-4 text-destructive" />}
-            badgeVariant="destructive"
-          />
-        </div>
+        <motion.div
+          variants={containerVariants}
+          initial="hidden"
+          animate="visible"
+          className="grid grid-cols-1 sm:grid-cols-3 gap-4"
+        >
+          {/* Card 1: Radiant Flame Orange Hero Card */}
+          <motion.div
+            variants={itemVariants}
+            whileHover={{ y: -2 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+            className="h-full"
+          >
+            <div className="bg-gradient-to-br from-[#FF5B22] via-[#FF3D00] to-[#D82600] text-white rounded-2xl shadow-[0_8px_32px_-6px_rgba(255,91,34,0.4)] p-6 relative overflow-hidden flex flex-col justify-between h-full min-h-[175px]">
+              <div
+                className="absolute -right-8 -top-8 size-40 rounded-full bg-white/10 blur-2xl pointer-events-none"
+                aria-hidden="true"
+              />
+              <div
+                className="absolute -right-4 -bottom-10 size-32 rounded-full bg-black/10 blur-xl pointer-events-none"
+                aria-hidden="true"
+              />
+
+              <div className="relative z-10 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="flex size-7 items-center justify-center rounded-lg bg-white/15 border border-white/20 backdrop-blur-xs text-white">
+                    <Server className="size-4" />
+                  </div>
+                  <span className="text-xs font-semibold uppercase tracking-wider text-white/90">
+                    Active Proxies
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border border-white/30 bg-white/10 text-white text-[11px] font-mono font-medium backdrop-blur-xs shadow-2xs">
+                  <span className="size-1.5 rounded-full bg-white animate-pulse" />
+                  <span>Top {status?.activeLimit ?? 50}</span>
+                </div>
+              </div>
+
+              <div className="relative z-10 my-3 flex items-baseline justify-between gap-3">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-4xl sm:text-5xl font-extrabold tracking-tight font-mono text-white drop-shadow-sm">
+                    {status?.stats.active ?? (loading ? "—" : 0)}
+                  </span>
+                  {sparkActive.length >= 2 && (
+                    <span className="text-xs font-mono font-semibold px-2 py-0.5 rounded-md bg-white/20 border border-white/30 text-white">
+                      {sparkActive.at(-1)! - sparkActive.at(-2)! >= 0 ? "+" : ""}
+                      {sparkActive.at(-1)! - sparkActive.at(-2)!}
+                    </span>
+                  )}
+                </div>
+                {sparkActive.length >= 2 && (
+                  <div className="shrink-0 opacity-90">
+                    <Sparkline
+                      data={sparkActive}
+                      color="#FFFFFF"
+                      width={96}
+                      height={40}
+                      label="Active proxies trend"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="relative z-10 flex items-center justify-between pt-2 border-t border-white/20 text-xs text-white/85">
+                <span className="truncate max-w-[180px] sm:max-w-none">
+                  {status ? `Prioritized on 9Router core` : "Active routing target"}
+                </span>
+                <Link
+                  href="/proxies"
+                  className="inline-flex items-center gap-1 font-semibold text-white hover:text-white/80 transition-colors group shrink-0"
+                >
+                  <span>View all proxies</span>
+                  <ArrowUpRight className="size-3.5 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+                </Link>
+              </div>
+            </div>
+          </motion.div>
+
+          {/* Card 2: Reserve Proxies */}
+          <motion.div variants={itemVariants} className="h-full">
+            <MetricCard
+              label="Reserve Proxies"
+              value={status?.stats.reserve ?? (loading ? "—" : 0)}
+              sub="Healthy fallback, slower latency"
+              sparkData={sparkReserve}
+              sparkColor="#FF8A50"
+              icon={<Activity className="size-4 text-[#FF8A50]" />}
+              badgeVariant="outline"
+              className="h-full"
+            />
+          </motion.div>
+
+          {/* Card 3: Dead Proxies */}
+          <motion.div variants={itemVariants} className="h-full">
+            <MetricCard
+              label="Dead Proxies"
+              value={status?.stats.dead ?? (loading ? "—" : 0)}
+              sub="Excluded from active cluster routing"
+              sparkData={sparkDead}
+              sparkColor="#EF4444"
+              icon={<AlertCircle className="size-4 text-red-500" />}
+              badgeVariant="destructive"
+              className="h-full"
+            />
+          </motion.div>
+        </motion.div>
       )}
+
+      {/* Token Usage & Telemetry Section */}
+      <TokenUsageCard />
 
       {/* 4K / Ultra-wide Control Room Layout: Traffic Analytics on Left, Fleet Operations on Right */}
       <div className="grid grid-cols-1 3xl:grid-cols-12 gap-6 items-start">
@@ -354,82 +433,43 @@ export default function OverviewPage() {
           <TrafficChart snapshots={metrics} hours={hours} onHoursChange={setHours} />
 
           {/* Operational Policy & Sync Engine Cards (Placed on telemetry column on 4K) */}
-          <div className="grid grid-cols-1 md:grid-cols-2 3xl:grid-cols-1 5xl:grid-cols-2 gap-4">
-            {/* Global Egress Telemetry with CobeGlobe */}
-            <Card className="cyber-card relative overflow-hidden border-border/80 bg-card/90 shadow-sm backdrop-blur-md md:col-span-2 3xl:col-span-1 5xl:col-span-2 flex flex-col justify-between">
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="flex size-7 items-center justify-center rounded-md border border-primary/40 bg-primary/10 text-primary">
-                      <Globe2 className="size-4" />
-                    </div>
-                    <div>
-                      <CardTitle className="text-base font-semibold text-ink">
-                        Global Egress Telemetry
-                      </CardTitle>
-                      <CardDescription className="text-xs text-muted-foreground">
-                        Live WebGL egress visualization & coordinate mesh
-                      </CardDescription>
-                    </div>
-                  </div>
-                  <Badge
-                    variant="outline"
-                    className="font-mono text-[10px] text-primary border-primary/30 bg-primary/5"
-                  >
-                    WebGL Live
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent className="pt-1 pb-3 flex flex-col items-center">
-                <CobeGlobe size={210} markers={[]} />
-                <div className="w-full flex items-center justify-between pt-2 border-t border-border-subtle/70 text-[11px] font-mono text-muted-foreground">
-                  <span>
-                    Active pool egress nodes
-                    {status?.stats ? `: ${status.stats.active}` : ""}
-                  </span>
-                  <span className="text-emerald-400 font-semibold flex items-center gap-1">
-                    <span className="size-1.5 rounded-full bg-emerald-400 animate-pulse" /> Egress
-                    Active
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
-
+          {/* Operational Policy & Sync Engine Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Pool Routing Policy */}
-            <Card className="cyber-card border-border/80 bg-card/90 shadow-sm backdrop-blur-md flex flex-col justify-between">
+            <Card className="rounded-2xl border-[#23232C] bg-[#131318] text-white shadow-sm backdrop-blur-md flex flex-col justify-between">
               <CardHeader className="pb-3">
                 <div className="flex items-center gap-2">
-                  <div className="flex size-7 items-center justify-center rounded-md border border-border-subtle bg-surface-raised/70 text-primary">
+                  <div className="flex size-7 items-center justify-center rounded-md border border-[#23232C] bg-[#1C1C24] text-[#FF5B22]">
                     <Gauge className="size-4" />
                   </div>
-                  <CardTitle className="text-base font-semibold text-ink">
+                  <CardTitle className="text-base font-semibold text-white">
                     Fleet Routing Policy
                   </CardTitle>
                 </div>
-                <CardDescription className="text-xs text-muted-foreground">
+                <CardDescription className="text-xs text-zinc-400">
                   Automated multi-tier traffic distribution and failover rules.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="space-y-2 text-xs text-slate-300">
+                <div className="space-y-2 text-xs text-zinc-300">
                   <div className="flex items-start gap-2.5">
-                    <span className="size-1.5 rounded-full bg-emerald-400 mt-1.5 shrink-0" />
+                    <span className="size-1.5 rounded-full bg-[#FF5B22] mt-1.5 shrink-0" />
                     <span>
-                      <strong className="text-ink">Active Tier:</strong> Handles production traffic,
-                      dynamically prioritized by low latency.
+                      <strong className="text-white">Active Tier:</strong> Handles production
+                      traffic, dynamically prioritized by low latency.
                     </span>
                   </div>
                   <div className="flex items-start gap-2.5">
-                    <span className="size-1.5 rounded-full bg-accent-violet mt-1.5 shrink-0" />
+                    <span className="size-1.5 rounded-full bg-[#FF8A50] mt-1.5 shrink-0" />
                     <span>
-                      <strong className="text-ink">Reserve Tier:</strong> Verified online endpoints
-                      held for instant failover when active routes degrade.
+                      <strong className="text-white">Reserve Tier:</strong> Verified online
+                      endpoints held for the next sync when active routes degrade.
                     </span>
                   </div>
                   <div className="flex items-start gap-2.5">
-                    <span className="size-1.5 rounded-full bg-destructive mt-1.5 shrink-0" />
+                    <span className="size-1.5 rounded-full bg-red-500 mt-1.5 shrink-0" />
                     <span>
-                      <strong className="text-ink">Dead Isolation:</strong> Unresponsive or
+                      <strong className="text-white">Dead Isolation:</strong> Unresponsive or
                       high-error proxies quarantined from router rotation.
                     </span>
                   </div>
@@ -439,10 +479,10 @@ export default function OverviewPage() {
                     variant="outline"
                     size="sm"
                     asChild
-                    className="text-xs h-8 border-border-subtle hover:bg-surface-raised"
+                    className="text-xs h-8 border-[#23232C] bg-[#181820] hover:bg-[#23232C] text-zinc-300 hover:text-white"
                   >
                     <Link href="/proxies">
-                      <span>Review Fleet Allocation</span>
+                      <span>View all proxies</span>
                     </Link>
                   </Button>
                 </div>
@@ -450,33 +490,29 @@ export default function OverviewPage() {
             </Card>
 
             {/* Sync Engine Status */}
-            <Card className="cyber-card relative overflow-hidden border-border/80 bg-card/90 shadow-sm backdrop-blur-md flex flex-col justify-between">
+            <Card className="rounded-2xl border-[#23232C] bg-[#131318] text-white shadow-sm backdrop-blur-md flex flex-col justify-between overflow-hidden relative">
               {status?.running && (
-                <BorderBeam
-                  size={80}
-                  duration={3}
-                  colorFrom="oklch(0.78 0.17 205)"
-                  colorTo="oklch(0.68 0.25 315)"
-                />
+                <BorderBeam size={80} duration={3} colorFrom="#FF5B22" colorTo="#FF8A50" />
               )}
               <CardHeader className="pb-3">
                 <div className="flex items-center gap-2">
-                  <div className="flex size-7 items-center justify-center rounded-md border border-border-subtle bg-surface-raised/70 text-primary">
+                  <div className="flex size-7 items-center justify-center rounded-md border border-[#23232C] bg-[#1C1C24] text-[#FF5B22]">
                     <Clock className="size-4" />
                   </div>
-                  <CardTitle className="text-base font-semibold text-ink">
+                  <CardTitle className="text-base font-semibold text-white">
                     Synchronization Engine
                   </CardTitle>
                 </div>
-                <CardDescription className="text-xs text-muted-foreground">
+                <CardDescription className="text-xs text-zinc-400">
                   Interval ranker and 9Router daemon state synchronization.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="p-3 rounded-lg bg-surface-raised/50 border border-border-subtle flex items-center justify-between font-mono text-xs">
-                  <span className="text-muted-foreground">Last Successful Sync</span>
-                  <span className="text-ink font-semibold">
-                    {status?.running ? "In progress..." : formatTime(status?.lastSyncAt ?? null)}
+                <div className="p-3 rounded-lg bg-[#181820] border border-[#23232C] flex items-center justify-between font-mono text-xs">
+                  <span className="text-zinc-400">Last sync</span>
+                  <span className="text-white font-semibold">
+                    {formatTime(status?.lastSyncAt ?? null)}
+                    {status?.running && " (Syncing…)"}
                   </span>
                 </div>
 
@@ -487,7 +523,7 @@ export default function OverviewPage() {
                 )}
 
                 <div className="flex items-center justify-between pt-1">
-                  <span className="text-xs text-muted-foreground font-mono">
+                  <span className="text-xs text-zinc-400 font-mono">
                     Interval:{" "}
                     {status?.autoSync === false
                       ? "paused"
@@ -498,7 +534,7 @@ export default function OverviewPage() {
                     size="sm"
                     disabled={!canRead || status?.running}
                     onClick={handleSync}
-                    className="text-xs h-8 px-3 gap-1.5 font-medium bg-primary hover:bg-primary-hover text-primary-foreground"
+                    className="text-xs h-8 px-3 gap-1.5 font-semibold bg-[#FF5B22] hover:bg-[#FF3D00] text-zinc-950 border-0"
                   >
                     <RefreshCw className={cn("size-3", status?.running && "animate-spin")} />
                     <span>Run Sync Now</span>
@@ -511,24 +547,24 @@ export default function OverviewPage() {
 
         <div className="3xl:col-span-7 5xl:col-span-7 flex flex-col gap-6">
           {/* Active Proxies Inspector Section */}
-          <Card className="border-border bg-card/90 shadow-sm backdrop-blur-xs overflow-hidden">
-            <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-b border-border-subtle/60 pb-4">
+          <Card className="rounded-2xl border-[#23232C] bg-[#131318] text-white shadow-sm backdrop-blur-xs overflow-hidden">
+            <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-b border-[#23232C] pb-4">
               <div>
                 <div className="flex items-center gap-2">
-                  <div className="flex size-7 items-center justify-center rounded-md border border-border-subtle bg-surface-raised/70 text-primary">
+                  <div className="flex size-7 items-center justify-center rounded-md border border-[#23232C] bg-[#1C1C24] text-[#FF5B22]">
                     <ShieldCheck className="size-4" />
                   </div>
-                  <CardTitle className="text-base font-semibold text-ink">
+                  <CardTitle className="text-base font-semibold text-white">
                     Active Proxy Fleet
                   </CardTitle>
                   <Badge
                     variant="outline"
-                    className="font-mono text-xs border-border-subtle text-muted-foreground"
+                    className="font-mono text-xs border-[#23232C] text-zinc-400"
                   >
-                    Top {pools.length} Routes
+                    Showing {Math.min(pools.length, 8)} of {pools.length} active proxies
                   </Badge>
                 </div>
-                <CardDescription className="text-xs text-muted-foreground mt-1">
+                <CardDescription className="text-xs text-zinc-400 mt-1">
                   Select any route to inspect endpoint verification, measured latency, and egress
                   IP.
                 </CardDescription>
@@ -537,10 +573,10 @@ export default function OverviewPage() {
                 variant="outline"
                 size="sm"
                 asChild
-                className="h-8 gap-1 text-xs self-start sm:self-auto border-border-subtle hover:bg-surface-raised"
+                className="h-8 gap-1 text-xs self-start sm:self-auto border-[#23232C] bg-[#181820] hover:bg-[#23232C] text-zinc-300 hover:text-white"
               >
                 <Link href="/proxies">
-                  <span>Full Proxy Inventory</span>
+                  <span>View all proxies</span>
                   <ArrowUpRight className="size-3.5" />
                 </Link>
               </Button>
@@ -561,14 +597,14 @@ export default function OverviewPage() {
                   </p>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 lg:grid-cols-3 divide-y lg:divide-y-0 lg:divide-x divide-border-subtle/70">
+                <div className="grid grid-cols-1 lg:grid-cols-3 divide-y lg:divide-y-0 lg:divide-x divide-[#23232C]">
                   {/* Table list */}
                   <div className="lg:col-span-2 overflow-x-auto">
                     <Table>
-                      <TableHeader className="bg-surface-raised/40">
-                        <TableRow className="border-border-subtle hover:bg-transparent">
-                          <TableHead className="w-12 text-xs font-mono">Rank</TableHead>
-                          <TableHead className="text-xs">Endpoint Name</TableHead>
+                      <TableHeader className="bg-[#181820]/80">
+                        <TableRow className="border-[#23232C] hover:bg-transparent">
+                          <TableHead className="text-xs font-mono w-12">#</TableHead>
+                          <TableHead className="text-xs">Proxy</TableHead>
                           <TableHead className="text-xs">Latency</TableHead>
                           <TableHead className="text-xs font-mono">Exit IP</TableHead>
                           <TableHead className="text-xs text-right">Health</TableHead>
@@ -582,10 +618,10 @@ export default function OverviewPage() {
                               key={pool.localId}
                               onClick={() => setSelectedPoolId(pool.localId)}
                               className={cn(
-                                "cursor-pointer border-border-subtle/60 transition-colors",
+                                "cursor-pointer border-[#23232C]/60 transition-colors",
                                 isSelected
-                                  ? "bg-primary/10 hover:bg-primary/15 font-medium"
-                                  : "hover:bg-surface-raised/50",
+                                  ? "bg-[#FF5B22]/15 hover:bg-[#FF5B22]/20 font-medium"
+                                  : "hover:bg-[#181820]",
                               )}
                             >
                               <TableCell className="font-mono text-xs text-muted-foreground font-semibold">
@@ -616,13 +652,12 @@ export default function OverviewPage() {
                       </TableBody>
                     </Table>
                   </div>
-
                   {/* Selected Route Inspector Drawer */}
-                  <div className="p-5 lg:col-span-1 bg-surface/30 flex flex-col justify-between space-y-4">
+                  <div className="p-5 lg:col-span-1 bg-[#181820]/30 flex flex-col justify-between space-y-4">
                     {selectedPool ? (
                       <div className="space-y-4">
-                        <div className="flex items-center justify-between pb-2 border-b border-border-subtle/70">
-                          <span className="text-[11px] font-mono uppercase tracking-wider text-primary font-semibold">
+                        <div className="flex items-center justify-between pb-2 border-b border-[#23232C]">
+                          <span className="text-[11px] font-mono uppercase tracking-wider text-[#FF5B22] font-semibold">
                             Route Inspector
                           </span>
                           <ProxyHealthBadge pool={selectedPool} />
@@ -661,19 +696,19 @@ export default function OverviewPage() {
                                 : `${selectedPool.latency_ms} ms`}
                             </span>
                           </div>
-                          <div className="p-2.5 rounded-lg bg-surface-raised/40 border border-border-subtle/50">
-                            <span className="text-[10px] text-muted-foreground block uppercase">
+                          <div className="p-2.5 rounded-lg bg-[#181820] border border-[#23232C]">
+                            <span className="text-[10px] text-zinc-400 block uppercase">
                               Exit IP
                             </span>
-                            <span className="text-xs font-semibold text-slate-200 mt-0.5 block truncate">
+                            <span className="text-xs font-semibold text-zinc-200 mt-0.5 block truncate">
                               {selectedPool.exit_ip || "Unavailable"}
                             </span>
                           </div>
-                          <div className="p-2.5 rounded-lg bg-surface-raised/40 border border-border-subtle/50 col-span-2">
-                            <span className="text-[10px] text-muted-foreground block uppercase">
-                              Check Ratio
+                          <div className="p-2.5 rounded-lg bg-[#181820] border border-[#23232C] col-span-2">
+                            <span className="text-[10px] text-zinc-400 block uppercase">
+                              Check Results
                             </span>
-                            <span className="text-xs font-semibold text-ink mt-0.5 block">
+                            <span className="text-xs font-semibold text-white mt-0.5 block">
                               {selectedPool.successes} passed · {selectedPool.failures} failed
                             </span>
                           </div>
@@ -681,7 +716,9 @@ export default function OverviewPage() {
 
                         {selectedPool.last_error && (
                           <div className="p-2.5 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive-foreground text-xs font-mono">
-                            <span className="font-semibold block mb-0.5">Last Check Error:</span>
+                            <span className="font-semibold block mb-0.5">
+                              Most Recent Recorded Error:
+                            </span>
                             <span className="break-words opacity-90">
                               {selectedPool.last_error}
                             </span>
@@ -695,15 +732,15 @@ export default function OverviewPage() {
                       </div>
                     )}
 
-                    <div className="pt-3 border-t border-border-subtle/70">
+                    <div className="pt-3 border-t border-[#23232C]">
                       <Button
                         variant="outline"
                         size="sm"
                         asChild
-                        className="w-full text-xs h-8 border-border-subtle"
+                        className="w-full text-xs h-8 border-[#23232C] bg-[#181820] hover:bg-[#23232C] text-zinc-300 hover:text-white"
                       >
                         <Link href="/proxies">
-                          <span>Manage All Proxy Routes</span>
+                          <span>View all proxies</span>
                         </Link>
                       </Button>
                     </div>

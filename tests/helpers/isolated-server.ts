@@ -1,11 +1,11 @@
-import { spawn, type ChildProcess } from 'node:child_process';
-import fs from 'node:fs';
-import net from 'node:net';
-import os from 'node:os';
-import path from 'node:path';
+import { spawn, type ChildProcess } from "node:child_process";
+import fs from "node:fs";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
 
 export interface IsolatedServerOptions {
-  mode: 'development' | 'production';
+  mode: "development" | "production";
   mockApi: boolean;
 }
 
@@ -19,16 +19,16 @@ export interface IsolatedServerInstance {
 function getAvailablePort(): Promise<number> {
   const { promise, resolve, reject } = Promise.withResolvers<number>();
   const srv = net.createServer();
-  srv.listen(0, '127.0.0.1', () => {
+  srv.listen(0, "127.0.0.1", () => {
     const address = srv.address();
-    if (!address || typeof address === 'string') {
-      srv.close(() => reject(new Error('Unable to obtain port')));
+    if (!address || typeof address === "string") {
+      srv.close(() => reject(new Error("Unable to obtain port")));
       return;
     }
     const port = address.port;
     srv.close(() => resolve(port));
   });
-  srv.on('error', reject);
+  srv.on("error", reject);
   return promise;
 }
 
@@ -43,17 +43,17 @@ export async function startIsolatedServer(
 ): Promise<IsolatedServerInstance> {
   const port = await getAvailablePort();
   const password = `test-pass-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'proxy-isolated-srv-'));
-  const configPath = path.join(tmpDir, 'settings.json');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "proxy-isolated-srv-"));
+  const configPath = path.join(tmpDir, "settings.json");
 
   // Create isolated settings without live credentials
   fs.writeFileSync(
     configPath,
     JSON.stringify({
       controlPassword: password,
-      nineRouterUrl: 'http://127.0.0.1:9',
-      nineRouterPassword: '',
-      nineRouterApiKey: '',
+      nineRouterUrl: "http://127.0.0.1:9",
+      nineRouterPassword: "",
+      nineRouterApiKey: "",
       nineRouterAutoSync: false,
       antigravityRotatorEnabled: false,
       activePoolLimit: 10,
@@ -65,7 +65,7 @@ export async function startIsolatedServer(
       antigravityRotateMinutes: 60,
       antigravitySessionThreshold: 20,
     }),
-    'utf8',
+    "utf8",
   );
 
   const env: NodeJS.ProcessEnv = {
@@ -75,20 +75,19 @@ export async function startIsolatedServer(
     APP_CONFIG_PATH: configPath,
     CONTROL_PASSWORD: password,
     NODE_ENV: options.mode,
-    NEXT_PUBLIC_ENABLE_API_MOCKS: options.mockApi ? 'true' : 'false',
+    NEXT_PUBLIC_ENABLE_API_MOCKS: options.mockApi ? "true" : "false",
   };
 
-  const child: ChildProcess = spawn(
-    process.execPath,
-    ['--import', 'tsx', 'src/server/server.ts'],
-    { env, stdio: 'pipe' },
-  );
+  const child: ChildProcess = spawn(process.execPath, ["--import", "tsx", "src/server/server.ts"], {
+    env,
+    stdio: "pipe",
+  });
 
-  let logs = '';
-  child.stdout?.on('data', (chunk: Buffer) => {
+  let logs = "";
+  child.stdout?.on("data", (chunk: Buffer) => {
     logs += chunk.toString();
   });
-  child.stderr?.on('data', (chunk: Buffer) => {
+  child.stderr?.on("data", (chunk: Buffer) => {
     logs += chunk.toString();
   });
 
@@ -99,7 +98,7 @@ export async function startIsolatedServer(
   let ready = false;
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(`${baseUrl}/api/health`, { cache: 'no-store' });
+      const res = await fetch(`${baseUrl}/api/health`, { cache: "no-store" });
       if (res.ok) {
         ready = true;
         break;
@@ -111,7 +110,7 @@ export async function startIsolatedServer(
   }
 
   if (!ready) {
-    child.kill('SIGKILL');
+    child.kill("SIGKILL");
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     } catch {}
@@ -124,13 +123,13 @@ export async function startIsolatedServer(
   const stop = async () => {
     if (stopped) return;
     stopped = true;
-    child.kill('SIGTERM');
+    child.kill("SIGTERM");
     const { promise, resolve } = Promise.withResolvers<void>();
     const timer = setTimeout(() => {
-      child.kill('SIGKILL');
+      child.kill("SIGKILL");
       resolve();
     }, 5000);
-    child.on('exit', () => {
+    child.on("exit", () => {
       clearTimeout(timer);
       resolve();
     });

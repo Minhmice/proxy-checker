@@ -205,72 +205,100 @@ export interface UnifiedProxyFilter {
   reservePoolEndpoints?: Set<string>;
 }
 
-
 export interface ProxyIntelligenceRepository {
   importProxies(input: ProxyImportInput): Promise<ProxyImportSummary>;
   listProxies(filter?: ProxyInventoryFilter): Promise<ProxyInventoryPage>;
   getProxy(proxyKey: string): Promise<ProxyInventoryDetail | null>;
   resolveProxyKeys(filter: ProxyInventoryFilter): Promise<string[]>;
   exportWorkingProxies(filter?: WorkingExportFilter): Promise<ExportResult>;
-  syncWorkingPools(pools: Array<{
-    endpoint?: string;
-    proxyUrl: string;
-    remoteId?: string | null;
-    tier?: string;
-    status?: string;
-    isActiveOnRouter?: boolean;
-    latency_ms?: number | null;
-    exit_ip?: string | null;
-  }>): Promise<{ imported: number; proxyKeys: string[] }>;
+  syncWorkingPools(
+    pools: Array<{
+      endpoint?: string;
+      proxyUrl: string;
+      remoteId?: string | null;
+      tier?: string;
+      status?: string;
+      isActiveOnRouter?: boolean;
+      latency_ms?: number | null;
+      exit_ip?: string | null;
+    }>,
+  ): Promise<{ imported: number; proxyKeys: string[] }>;
   getUnifiedProxies(filter?: UnifiedProxyFilter): Promise<UnifiedProxyResponse>;
   persistAuditSnapshot(input: PersistAuditSnapshotInput): Promise<void>;
   previewImport(input: ProxyImportInput): Promise<ProxyImportPreview>;
   getAuditDetail(proxyKey: string, auditId?: string): Promise<ProxyAuditDetail | null>;
   setPin(proxyKey: string, isPinned: boolean): Promise<boolean>;
   updateTags(proxyKey: string, tags: string[]): Promise<void>;
-  recordTestResult(proxyKey: string, ok: boolean, latencyMs?: number, errorMessage?: string): Promise<void>;
+  recordTestResult(
+    proxyKey: string,
+    ok: boolean,
+    latencyMs?: number,
+    errorMessage?: string,
+  ): Promise<void>;
   softDeleteFromRouter(proxyKey: string, errorMessage?: string): Promise<void>;
-  hardDeleteProxy(proxyKey: string, force?: boolean): Promise<{ deleted: boolean; remoteId: string | null }>;
-  syncManagedFleetEndpoints(rows: Array<{
-    nodeId: string;
-    endpointId: string;
-    proxyUrl: string;
-  }>): Promise<number>;
-  unlinkManagedFleetNode(nodeId: string, options?: {
-    cleanupRemoteRef?: (remoteId: string, proxyKey: string) => Promise<void>;
-    force?: boolean;
-  }): Promise<void>;
-  listManagedFleetAuditTargets(): Promise<Array<{
-    nodeId: string;
-    endpointId: string;
-    proxyKey: string;
-    proxyUrl: string;
-    remoteId: string | null;
-  }>>;
+  hardDeleteProxy(
+    proxyKey: string,
+    force?: boolean,
+  ): Promise<{ deleted: boolean; remoteId: string | null }>;
+  syncManagedFleetEndpoints(
+    rows: Array<{
+      nodeId: string;
+      endpointId: string;
+      proxyUrl: string;
+    }>,
+  ): Promise<number>;
+  unlinkManagedFleetNode(
+    nodeId: string,
+    options?: {
+      cleanupRemoteRef?: (remoteId: string, proxyKey: string) => Promise<void>;
+      force?: boolean;
+    },
+  ): Promise<void>;
+  listManagedFleetAuditTargets(): Promise<
+    Array<{
+      nodeId: string;
+      endpointId: string;
+      proxyKey: string;
+      proxyUrl: string;
+      remoteId: string | null;
+    }>
+  >;
   cleanupPendingManagedFleetEndpoints(options?: {
     cleanupRemoteRef?: (remoteId: string, proxyKey: string) => Promise<void>;
     force?: boolean;
   }): Promise<{ cleaned: number; pendingRemaining: number }>;
-  getManagedFleetNodeRemoteRefs?(nodeId: string): Promise<Array<{
-    endpointId: string;
-    proxyKey: string;
-    remoteId: string | null;
-    isPinned: boolean;
-  }>>;
+  getManagedFleetNodeRemoteRefs?(nodeId: string): Promise<
+    Array<{
+      endpointId: string;
+      proxyKey: string;
+      remoteId: string | null;
+      isPinned: boolean;
+    }>
+  >;
 }
 
-function computeProxyKey(protocol: string, host: string, port: number, username?: string | null): string {
+function computeProxyKey(
+  protocol: string,
+  host: string,
+  port: number,
+  username?: string | null,
+): string {
   const normProto = protocol.toLowerCase();
   const normHost = host.toLowerCase();
   return `${normProto}://${username ? `${encodeURIComponent(username)}@` : ""}${normHost}:${port}`;
 }
 
-export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceDb }): ProxyIntelligenceRepository {
+export function createProxyIntelligenceRepository(deps: {
+  db: ProxyIntelligenceDb;
+}): ProxyIntelligenceRepository {
   const db = deps.db;
 
   return {
     async importProxies(input: ProxyImportInput): Promise<ProxyImportSummary> {
-      const lines = input.content.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
+      const lines = input.content
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0);
       const now = Date.now();
       let inserted = 0;
       let updated = 0;
@@ -304,7 +332,10 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
           }
           seenKeys.add(key);
 
-          const existing = db.get<{ proxy_key: string }>("SELECT proxy_key FROM proxies WHERE proxy_key = ?", [key]);
+          const existing = db.get<{ proxy_key: string }>(
+            "SELECT proxy_key FROM proxies WHERE proxy_key = ?",
+            [key],
+          );
 
           if (existing) {
             db.run(
@@ -313,7 +344,7 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
                 password = COALESCE(?, password),
                 updated_at = ?
               WHERE proxy_key = ?`,
-              [input.source, p.password ?? null, now, key]
+              [input.source, p.password ?? null, now, key],
             );
             updated++;
           } else {
@@ -342,7 +373,7 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
                 p.password ?? null,
                 now,
                 now,
-              ]
+              ],
             );
             inserted++;
           }
@@ -369,7 +400,9 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
 
       if (filter.search?.trim()) {
         const term = `%${filter.search.trim().toLowerCase()}%`;
-        whereClauses.push("(LOWER(p.proxy_key) LIKE ? OR LOWER(p.endpoint) LIKE ? OR LOWER(COALESCE(p.exit_ip, '')) LIKE ?)");
+        whereClauses.push(
+          "(LOWER(p.proxy_key) LIKE ? OR LOWER(p.endpoint) LIKE ? OR LOWER(COALESCE(p.exit_ip, '')) LIKE ?)",
+        );
         params.push(term, term, term);
       }
 
@@ -399,7 +432,7 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
         `SELECT COUNT(*) AS total
          FROM proxies p
          WHERE ${whereSql}`,
-        params
+        params,
       );
 
       const total = countRow?.total ?? 0;
@@ -443,12 +476,14 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
            COALESCE(p.updated_at, p.created_at, 0) DESC,
            p.proxy_key ASC
          LIMIT ? OFFSET ?`,
-        [...params, pageSize, offset]
+        [...params, pageSize, offset],
       );
 
       const items: ProxyInventoryItem[] = rows.map((r) => {
         const endpoint = String(r.endpoint ?? "");
-        let host = String(r.host ?? "").trim().replace(/^\[|\]$/g, "");
+        let host = String(r.host ?? "")
+          .trim()
+          .replace(/^\[|\]$/g, "");
         let port = Number(r.port ?? 0);
         if (!host || !port) {
           try {
@@ -491,11 +526,20 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
           latestScore: r.latest_score !== null ? Number(r.latest_score) : null,
           latestAuditAt: r.latest_audit_at ? Number(r.latest_audit_at) : null,
           isPinned: Boolean(r.is_pinned),
-          tags: typeof r.tags === "string" && r.tags ? r.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
+          tags:
+            typeof r.tags === "string" && r.tags
+              ? r.tags
+                  .split(",")
+                  .map((t) => t.trim())
+                  .filter(Boolean)
+              : [],
           remoteId: r.remote_id ? String(r.remote_id) : null,
           routerState: typeof r.router_state === "string" ? r.router_state : "unmanaged",
           removedAt: r.removed_at ? Number(r.removed_at) : null,
-          lastLatencyMs: r.last_latency_ms !== null && r.last_latency_ms !== undefined ? Number(r.last_latency_ms) : null,
+          lastLatencyMs:
+            r.last_latency_ms !== null && r.last_latency_ms !== undefined
+              ? Number(r.last_latency_ms)
+              : null,
         };
       });
 
@@ -540,13 +584,15 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
            p.last_latency_ms
          FROM proxies p
          WHERE p.proxy_key = ?`,
-        [proxyKey]
+        [proxyKey],
       );
 
       if (!row) return null;
 
       const endpoint = String(row.endpoint ?? "");
-      let host = String(row.host ?? "").trim().replace(/^\[|\]$/g, "");
+      let host = String(row.host ?? "")
+        .trim()
+        .replace(/^\[|\]$/g, "");
       let port = Number(row.port ?? 0);
       if (!host || !port) {
         try {
@@ -599,15 +645,33 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
         checkedAt: row.checked_at ? Number(row.checked_at) : null,
         createdAt: row.created_at ? Number(row.created_at) : null,
         updatedAt: row.updated_at ? Number(row.updated_at) : null,
-        latestVerdict: (row.latest_verdict ?? row.last_verdict) ? String(row.latest_verdict ?? row.last_verdict) : null,
-        latestScore: row.latest_score !== null && row.latest_score !== undefined ? Number(row.latest_score) : null,
-        latestAuditAt: row.latest_audit_at !== null && row.latest_audit_at !== undefined ? Number(row.latest_audit_at) : null,
+        latestVerdict:
+          (row.latest_verdict ?? row.last_verdict)
+            ? String(row.latest_verdict ?? row.last_verdict)
+            : null,
+        latestScore:
+          row.latest_score !== null && row.latest_score !== undefined
+            ? Number(row.latest_score)
+            : null,
+        latestAuditAt:
+          row.latest_audit_at !== null && row.latest_audit_at !== undefined
+            ? Number(row.latest_audit_at)
+            : null,
         isPinned: Boolean(row.is_pinned),
-        tags: typeof row.tags === "string" && row.tags ? row.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
+        tags:
+          typeof row.tags === "string" && row.tags
+            ? row.tags
+                .split(",")
+                .map((t) => t.trim())
+                .filter(Boolean)
+            : [],
         remoteId: row.remote_id ? String(row.remote_id) : null,
         routerState: typeof row.router_state === "string" ? row.router_state : "unmanaged",
         removedAt: row.removed_at ? Number(row.removed_at) : null,
-        lastLatencyMs: row.last_latency_ms !== null && row.last_latency_ms !== undefined ? Number(row.last_latency_ms) : null,
+        lastLatencyMs:
+          row.last_latency_ms !== null && row.last_latency_ms !== undefined
+            ? Number(row.last_latency_ms)
+            : null,
         latestAudit,
         auditHistory,
         diagnosticHistory,
@@ -625,7 +689,9 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
 
       if (filter.search?.trim()) {
         const term = `%${filter.search.trim().toLowerCase()}%`;
-        whereClauses.push("(LOWER(p.proxy_key) LIKE ? OR LOWER(p.endpoint) LIKE ? OR LOWER(COALESCE(p.exit_ip, '')) LIKE ? OR LOWER(COALESCE(p.host, '')) LIKE ?)");
+        whereClauses.push(
+          "(LOWER(p.proxy_key) LIKE ? OR LOWER(p.endpoint) LIKE ? OR LOWER(COALESCE(p.exit_ip, '')) LIKE ? OR LOWER(COALESCE(p.host, '')) LIKE ?)",
+        );
         params.push(term, term, term, term);
       }
 
@@ -648,9 +714,13 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
       if (healthFilter === "working") {
         whereClauses.push("(p.status = 'usable' OR p.last_verdict = 'PASS')");
       } else if (healthFilter === "regressed") {
-        whereClauses.push("NOT (p.status = 'usable' OR p.last_verdict = 'PASS') AND (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1)");
+        whereClauses.push(
+          "NOT (p.status = 'usable' OR p.last_verdict = 'PASS') AND (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1)",
+        );
       } else if (healthFilter === "dead") {
-        whereClauses.push("NOT (p.status = 'usable' OR p.last_verdict = 'PASS') AND NOT (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1)");
+        whereClauses.push(
+          "NOT (p.status = 'usable' OR p.last_verdict = 'PASS') AND NOT (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1)",
+        );
       }
 
       const rows = db.all<{ proxy_key: string }>(
@@ -670,7 +740,7 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
            CASE WHEN NOT (p.status = 'usable' OR p.last_verdict = 'PASS') THEN p.checked_at ELSE NULL END ASC NULLS LAST,
            CASE WHEN (p.status = 'usable' OR p.last_verdict = 'PASS') THEN p.checked_at ELSE NULL END DESC NULLS LAST,
            p.proxy_key ASC`,
-        params
+        params,
       );
 
       return rows.map((r) => r.proxy_key);
@@ -693,19 +763,23 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
          FROM proxies p
          WHERE p.status = 'usable' OR p.last_verdict = 'PASS'
          ORDER BY p.latency_ms ASC NULLS LAST`,
-        []
+        [],
       );
 
       const dateStr = new Date().toISOString().slice(0, 10);
       if (format === "csv") {
         const header = "protocol,host,port,username,password\n";
         const lines = rows.map((r) => {
-          let host = String(r.host ?? "").trim().replace(/^\[|\]$/g, "");
+          let host = String(r.host ?? "")
+            .trim()
+            .replace(/^\[|\]$/g, "");
           let port = String(r.port ?? "");
           if (!host || !port) {
             const lastColon = String(r.endpoint ?? "").lastIndexOf(":");
             if (lastColon > 0) {
-              host = String(r.endpoint ?? "").slice(0, lastColon).replace(/^\[|\]$/g, "");
+              host = String(r.endpoint ?? "")
+                .slice(0, lastColon)
+                .replace(/^\[|\]$/g, "");
               port = String(r.endpoint ?? "").slice(lastColon + 1);
             } else {
               host = String(r.endpoint ?? "");
@@ -739,7 +813,9 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
       };
     },
     async syncWorkingPools(pools) {
-      const validPools = pools.filter((p) => p.status === "usable" || p.tier === "active" || Boolean(p.isActiveOnRouter));
+      const validPools = pools.filter(
+        (p) => p.status === "usable" || p.tier === "active" || Boolean(p.isActiveOnRouter),
+      );
       const now = Date.now();
       const proxyKeys: string[] = [];
       let imported = 0;
@@ -757,8 +833,12 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
           const key = computeProxyKey(p.protocol, p.host, p.port, p.username);
           proxyKeys.push(key);
 
-          const routerState = item.tier === "active" ? "active" : item.tier === "reserve" ? "reserve" : "unmanaged";
-          const existing = db.get<{ proxy_key: string }>("SELECT proxy_key FROM proxies WHERE proxy_key = ?", [key]);
+          const routerState =
+            item.tier === "active" ? "active" : item.tier === "reserve" ? "reserve" : "unmanaged";
+          const existing = db.get<{ proxy_key: string }>(
+            "SELECT proxy_key FROM proxies WHERE proxy_key = ?",
+            [key],
+          );
           if (existing) {
             db.run(
               `UPDATE proxies SET
@@ -774,7 +854,15 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
                 router_state = ?,
                 updated_at = ?
               WHERE proxy_key = ?`,
-              [item.latency_ms ?? null, item.exit_ip ?? null, p.password ?? null, item.remoteId ?? null, routerState, now, key]
+              [
+                item.latency_ms ?? null,
+                item.exit_ip ?? null,
+                p.password ?? null,
+                item.remoteId ?? null,
+                routerState,
+                now,
+                key,
+              ],
             );
           } else {
             db.run(
@@ -806,7 +894,7 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
                 routerState,
                 now,
                 now,
-              ]
+              ],
             );
           }
           imported++;
@@ -835,7 +923,9 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
 
       if (filter.search?.trim()) {
         const term = `%${filter.search.trim().toLowerCase()}%`;
-        baseWhere.push("(LOWER(p.proxy_key) LIKE ? OR LOWER(p.endpoint) LIKE ? OR LOWER(COALESCE(p.exit_ip, '')) LIKE ? OR LOWER(COALESCE(p.host, '')) LIKE ?)");
+        baseWhere.push(
+          "(LOWER(p.proxy_key) LIKE ? OR LOWER(p.endpoint) LIKE ? OR LOWER(COALESCE(p.exit_ip, '')) LIKE ? OR LOWER(COALESCE(p.host, '')) LIKE ?)",
+        );
         baseParams.push(term, term, term, term);
       }
 
@@ -860,7 +950,7 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
            SUM(CASE WHEN NOT (p.status = 'usable' OR COALESCE(p.last_verdict, '') = 'PASS') AND NOT (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1) THEN 1 ELSE 0 END) AS total_dead
          FROM proxies p
          WHERE ${baseWhereSql}`,
-        baseParams
+        baseParams,
       );
 
       const counts: UnifiedProxyCounts = {
@@ -878,9 +968,13 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
       if (statusFilter === "working") {
         statusWhere.push("(p.status = 'usable' OR COALESCE(p.last_verdict, '') = 'PASS')");
       } else if (statusFilter === "regressed") {
-        statusWhere.push("NOT (p.status = 'usable' OR COALESCE(p.last_verdict, '') = 'PASS') AND (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1)");
+        statusWhere.push(
+          "NOT (p.status = 'usable' OR COALESCE(p.last_verdict, '') = 'PASS') AND (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1)",
+        );
       } else if (statusFilter === "dead") {
-        statusWhere.push("NOT (p.status = 'usable' OR COALESCE(p.last_verdict, '') = 'PASS') AND NOT (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1)");
+        statusWhere.push(
+          "NOT (p.status = 'usable' OR COALESCE(p.last_verdict, '') = 'PASS') AND NOT (COALESCE(p.successes, 0) > 0 OR p.ever_passed = 1)",
+        );
       }
 
       const statusWhereSql = statusWhere.join(" AND ");
@@ -889,7 +983,7 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
         `SELECT COUNT(*) AS total
          FROM proxies p
          WHERE ${statusWhereSql}`,
-        statusParams
+        statusParams,
       );
 
       const total = Number(countFilteredRow?.total ?? 0);
@@ -968,11 +1062,11 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
          WHERE ${statusWhereSql}
          ORDER BY ${orderBySql}
          LIMIT ? OFFSET ?`,
-        [...statusParams, pageSize, offset]
+        [...statusParams, pageSize, offset],
       );
 
       const protoRows = db.all<{ proto: string; count: number }>(
-        "SELECT LOWER(protocol) AS proto, COUNT(*) AS count FROM proxies GROUP BY LOWER(protocol)"
+        "SELECT LOWER(protocol) AS proto, COUNT(*) AS count FROM proxies GROUP BY LOWER(protocol)",
       );
       const protocols: Record<string, number> = {};
       for (const pr of protoRows) {
@@ -983,7 +1077,8 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
         let geo: { city?: string; country?: string } | undefined;
         let isp: string | undefined;
         let timezone: string | undefined;
-        let udpVal: "Yes" | "No" | "Unknown" = String(r.protocol).toLowerCase() === "socks5" ? "Yes" : "No";
+        let udpVal: "Yes" | "No" | "Unknown" =
+          String(r.protocol).toLowerCase() === "socks5" ? "Yes" : "No";
         let parsedAuditResult: Record<string, unknown> | null = null;
 
         if (typeof r.result_json === "string") {
@@ -991,24 +1086,29 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
             const parsed = JSON.parse(r.result_json);
             if (parsed && typeof parsed === "object") {
               parsedAuditResult = parsed as Record<string, unknown>;
-              const evidenceObj = parsedAuditResult.evidence && typeof parsedAuditResult.evidence === "object"
-                ? (parsedAuditResult.evidence as Record<string, unknown>)
-                : null;
-              const exitIpObj = (parsedAuditResult.exitIp && typeof parsedAuditResult.exitIp === "object"
-                ? parsedAuditResult.exitIp
-                : evidenceObj?.exitIp && typeof evidenceObj.exitIp === "object"
-                  ? evidenceObj.exitIp
-                  : null) as Record<string, unknown> | null;
+              const evidenceObj =
+                parsedAuditResult.evidence && typeof parsedAuditResult.evidence === "object"
+                  ? (parsedAuditResult.evidence as Record<string, unknown>)
+                  : null;
+              const exitIpObj = (
+                parsedAuditResult.exitIp && typeof parsedAuditResult.exitIp === "object"
+                  ? parsedAuditResult.exitIp
+                  : evidenceObj?.exitIp && typeof evidenceObj.exitIp === "object"
+                    ? evidenceObj.exitIp
+                    : null
+              ) as Record<string, unknown> | null;
               if (exitIpObj) {
                 geo = exitIpObj.geo as { city?: string; country?: string } | undefined;
                 isp = typeof exitIpObj.isp === "string" ? exitIpObj.isp : undefined;
                 timezone = typeof exitIpObj.timezone === "string" ? exitIpObj.timezone : undefined;
               }
-              const netObj = (parsedAuditResult.network && typeof parsedAuditResult.network === "object"
-                ? parsedAuditResult.network
-                : evidenceObj?.network && typeof evidenceObj.network === "object"
-                  ? evidenceObj.network
-                  : null) as Record<string, unknown> | null;
+              const netObj = (
+                parsedAuditResult.network && typeof parsedAuditResult.network === "object"
+                  ? parsedAuditResult.network
+                  : evidenceObj?.network && typeof evidenceObj.network === "object"
+                    ? evidenceObj.network
+                    : null
+              ) as Record<string, unknown> | null;
               if (netObj && netObj.udp !== undefined) {
                 udpVal = netObj.udp ? "Yes" : "No";
               }
@@ -1017,7 +1117,9 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
         }
 
         const endpoint = String(r.endpoint ?? "");
-        let itemHost = String(r.host ?? "").trim().replace(/^\[|\]$/g, "");
+        let itemHost = String(r.host ?? "")
+          .trim()
+          .replace(/^\[|\]$/g, "");
         let itemPort = Number(r.port ?? 0);
         if (!itemHost || !itemPort) {
           try {
@@ -1046,15 +1148,23 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
 
         const computedStatus = r.computed_status as "working" | "dead" | "regressed";
         const isWorking = computedStatus === "working";
-        const currentLatency = isWorking && r.latency_ms !== null && r.latency_ms !== undefined ? Number(r.latency_ms) : null;
+        const currentLatency =
+          isWorking && r.latency_ms !== null && r.latency_ms !== undefined
+            ? Number(r.latency_ms)
+            : null;
 
-        const effectiveVerdict = (r.last_verdict || r.latest_verdict) as "PASS" | "WARN" | "FAIL" | undefined;
+        const effectiveVerdict = (r.last_verdict || r.latest_verdict) as
+          | "PASS"
+          | "WARN"
+          | "FAIL"
+          | undefined;
         let lastAudit = null;
         if (effectiveVerdict) {
           let auditLatency: number | undefined;
-          const connObj = parsedAuditResult?.connectivity && typeof parsedAuditResult.connectivity === "object"
-            ? (parsedAuditResult.connectivity as Record<string, unknown>)
-            : null;
+          const connObj =
+            parsedAuditResult?.connectivity && typeof parsedAuditResult.connectivity === "object"
+              ? (parsedAuditResult.connectivity as Record<string, unknown>)
+              : null;
           if (connObj && connObj.latencyMs !== undefined && connObj.latencyMs !== null) {
             auditLatency = Number(connObj.latencyMs);
           } else if (isWorking && r.latency_ms !== null && r.latency_ms !== undefined) {
@@ -1063,12 +1173,17 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
           lastAudit = {
             id: String(r.latest_audit_id || "audit-latest"),
             verdict: effectiveVerdict,
-            checkedAt: r.latest_finished_at ? new Date(Number(r.latest_finished_at)).toISOString() : new Date().toISOString(),
+            checkedAt: r.latest_finished_at
+              ? new Date(Number(r.latest_finished_at)).toISOString()
+              : new Date().toISOString(),
             exitIp: r.exit_ip ? String(r.exit_ip) : undefined,
             country: geo?.country,
             isp,
             latencyMs: auditLatency,
-            overallSafety: r.overall_score !== null && r.overall_score !== undefined ? Number(r.overall_score) : undefined,
+            overallSafety:
+              r.overall_score !== null && r.overall_score !== undefined
+                ? Number(r.overall_score)
+                : undefined,
             primaryReasonCode: r.last_failure_code ? String(r.last_failure_code) : undefined,
           };
         }
@@ -1077,7 +1192,9 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
         const poolTier = syncStatus === "unsynced" ? null : (syncStatus as "active" | "reserve");
         const protoStr = String(r.protocol).toLowerCase();
         const protocol: "http" | "https" | "socks4" | "socks5" =
-          protoStr === "socks4" || protoStr === "socks5" || protoStr === "https" ? protoStr : "http";
+          protoStr === "socks4" || protoStr === "socks5" || protoStr === "https"
+            ? protoStr
+            : "http";
 
         return {
           proxyKey: key,
@@ -1102,11 +1219,21 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
           timezone,
           lastCheckedAt: r.checked_at ? Number(r.checked_at) : null,
           isPinned: Boolean(r.is_pinned),
-          tags: typeof r.tags === "string" && r.tags ? r.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
+          tags:
+            typeof r.tags === "string" && r.tags
+              ? r.tags
+                  .split(",")
+                  .map((t) => t.trim())
+                  .filter(Boolean)
+              : [],
           remoteId: r.remote_id ? String(r.remote_id) : null,
-          routerState: (r.router_state as "active" | "reserve" | "removed" | "unmanaged") || "unmanaged",
+          routerState:
+            (r.router_state as "active" | "reserve" | "removed" | "unmanaged") || "unmanaged",
           removedAt: r.removed_at ? Number(r.removed_at) : null,
-          lastLatencyMs: r.last_latency_ms !== null && r.last_latency_ms !== undefined ? Number(r.last_latency_ms) : null,
+          lastLatencyMs:
+            r.last_latency_ms !== null && r.last_latency_ms !== undefined
+              ? Number(r.last_latency_ms)
+              : null,
         };
       });
 
@@ -1126,7 +1253,6 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
         },
         items,
       };
-
     },
     async persistAuditSnapshot(input: PersistAuditSnapshotInput): Promise<void> {
       const auditId = input.auditId || crypto.randomUUID();
@@ -1135,14 +1261,19 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
       const verdict = input.result.verdict;
       const latency = input.result.connectivity?.latencyMs ?? null;
       const exitIp = input.result.exitIp?.ip ?? null;
-      const failureCode = input.result.riskFactors?.find((r) => r.severity === "critical")?.code ?? null;
+      const failureCode =
+        input.result.riskFactors?.find((r) => r.severity === "critical")?.code ?? null;
       const criticalRisk = input.result.riskFactors?.some((r) => r.severity === "critical");
       let lifecycle: ProxyLifecycleState = "unknown";
       if (criticalRisk) {
         lifecycle = "dangerous";
       } else if (verdict === "FAIL") {
         lifecycle = "dead";
-      } else if (input.result.scores?.reliability !== null && input.result.scores?.reliability !== undefined && input.result.scores.reliability < 80) {
+      } else if (
+        input.result.scores?.reliability !== null &&
+        input.result.scores?.reliability !== undefined &&
+        input.result.scores.reliability < 80
+      ) {
         lifecycle = "unstable";
       } else if (verdict === "PASS" || verdict === "WARN") {
         lifecycle = "working";
@@ -1180,12 +1311,15 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
             finishedTime,
             finishedTime,
             input.proxyKey,
-          ]
+          ],
         );
       });
     },
     async previewImport(input: ProxyImportInput): Promise<ProxyImportPreview> {
-      const lines = input.content.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
+      const lines = input.content
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0);
       const protocols: Record<string, number> = {};
       const invalidLines: Array<{ line: number; text: string; error: string }> = [];
       const sampleValid: Array<{ endpoint: string; protocol: string }> = [];
@@ -1236,14 +1370,22 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
       };
     },
     async getAuditDetail(proxyKey: string): Promise<ProxyAuditDetail | null> {
-      const row = db.get<{ proxy_key: string; status: string; last_verdict?: string; last_latency_ms?: number }>(
+      const row = db.get<{
+        proxy_key: string;
+        status: string;
+        last_verdict?: string;
+        last_latency_ms?: number;
+      }>(
         "SELECT proxy_key, status, last_verdict, last_latency_ms FROM proxies WHERE proxy_key = ?",
-        [proxyKey]
+        [proxyKey],
       );
       if (!row) return null;
-      const verdict = (row.last_verdict === "PASS" || row.last_verdict === "WARN" || row.last_verdict === "FAIL")
-        ? row.last_verdict
-        : (row.status === "usable" ? "PASS" : "FAIL");
+      const verdict =
+        row.last_verdict === "PASS" || row.last_verdict === "WARN" || row.last_verdict === "FAIL"
+          ? row.last_verdict
+          : row.status === "usable"
+            ? "PASS"
+            : "FAIL";
       return {
         proxyKey: row.proxy_key,
         verdict,
@@ -1251,36 +1393,65 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
     },
     async setPin(proxyKey: string, isPinned: boolean): Promise<boolean> {
       const pinVal = isPinned ? 1 : 0;
-      db.run("UPDATE proxies SET is_pinned = ?, updated_at = ? WHERE proxy_key = ?", [pinVal, Date.now(), proxyKey]);
+      db.run("UPDATE proxies SET is_pinned = ?, updated_at = ? WHERE proxy_key = ?", [
+        pinVal,
+        Date.now(),
+        proxyKey,
+      ]);
       return isPinned;
     },
     async updateTags(proxyKey: string, tags: string[]): Promise<void> {
-      const serialized = tags.map((t) => t.trim()).filter(Boolean).join(",");
-      db.run("UPDATE proxies SET tags = ?, updated_at = ? WHERE proxy_key = ?", [serialized, Date.now(), proxyKey]);
+      const serialized = tags
+        .map((t) => t.trim())
+        .filter(Boolean)
+        .join(",");
+      db.run("UPDATE proxies SET tags = ?, updated_at = ? WHERE proxy_key = ?", [
+        serialized,
+        Date.now(),
+        proxyKey,
+      ]);
     },
-    async recordTestResult(proxyKeyOrUrl: string, ok: boolean, latencyMs?: number, errorMessage?: string): Promise<void> {
+    async recordTestResult(
+      proxyKeyOrUrl: string,
+      ok: boolean,
+      latencyMs?: number,
+      errorMessage?: string,
+    ): Promise<void> {
       const testedAt = Date.now();
       let resolvedKey = proxyKeyOrUrl;
       try {
         const parsed = parseProxyInput(proxyKeyOrUrl);
         if (parsed?.parsed) {
-          resolvedKey = computeProxyKey(parsed.parsed.protocol, parsed.parsed.host, parsed.parsed.port, parsed.parsed.username);
+          resolvedKey = computeProxyKey(
+            parsed.parsed.protocol,
+            parsed.parsed.host,
+            parsed.parsed.port,
+            parsed.parsed.username,
+          );
         }
       } catch {}
 
       let matchedKey = resolvedKey;
-      const existing = db.get<{ proxy_key: string }>("SELECT proxy_key FROM proxies WHERE proxy_key = ?", [resolvedKey]);
+      const existing = db.get<{ proxy_key: string }>(
+        "SELECT proxy_key FROM proxies WHERE proxy_key = ?",
+        [resolvedKey],
+      );
       if (!existing) {
-        const fallbackRow = db.get<{ proxy_key: string }>("SELECT proxy_key FROM proxies WHERE proxy_key = ?", [proxyKeyOrUrl]);
+        const fallbackRow = db.get<{ proxy_key: string }>(
+          "SELECT proxy_key FROM proxies WHERE proxy_key = ?",
+          [proxyKeyOrUrl],
+        );
         if (fallbackRow) {
           matchedKey = fallbackRow.proxy_key;
         } else {
           try {
-            const u = new URL(proxyKeyOrUrl.includes("://") ? proxyKeyOrUrl : `http://${proxyKeyOrUrl}`);
+            const u = new URL(
+              proxyKeyOrUrl.includes("://") ? proxyKeyOrUrl : `http://${proxyKeyOrUrl}`,
+            );
             const hostPort = u.host;
             const epRow = db.get<{ proxy_key: string }>(
               "SELECT proxy_key FROM proxies WHERE endpoint = ? ORDER BY CASE WHEN source = '9router-working' THEN 0 ELSE 1 END LIMIT 1",
-              [hostPort]
+              [hostPort],
             );
             if (epRow) matchedKey = epRow.proxy_key;
           } catch {}
@@ -1291,7 +1462,7 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
         db.run(
           `INSERT INTO proxy_test_history (proxy_key, tested_at, ok, latency_ms, error_message)
            VALUES (?, ?, ?, ?, ?)`,
-          [matchedKey, testedAt, ok ? 1 : 0, latencyMs ?? null, errorMessage ?? null]
+          [matchedKey, testedAt, ok ? 1 : 0, latencyMs ?? null, errorMessage ?? null],
         );
         if (ok) {
           db.run(
@@ -1309,7 +1480,7 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
               checked_at = ?,
               updated_at = ?
              WHERE proxy_key = ?`,
-            [testedAt, latencyMs ?? null, latencyMs ?? null, testedAt, testedAt, matchedKey]
+            [testedAt, latencyMs ?? null, latencyMs ?? null, testedAt, testedAt, matchedKey],
           );
         } else {
           db.run(
@@ -1325,7 +1496,7 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
               checked_at = ?,
               updated_at = ?
              WHERE proxy_key = ?`,
-            [testedAt, errorMessage ?? null, testedAt, testedAt, matchedKey]
+            [testedAt, errorMessage ?? null, testedAt, testedAt, matchedKey],
           );
         }
       });
@@ -1341,13 +1512,16 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
           last_error = COALESCE(?, last_error),
           updated_at = ?
          WHERE proxy_key = ?`,
-        [now, errorMessage ?? null, now, proxyKey]
+        [now, errorMessage ?? null, now, proxyKey],
       );
     },
-    async hardDeleteProxy(proxyKey: string, force?: boolean): Promise<{ deleted: boolean; remoteId: string | null }> {
+    async hardDeleteProxy(
+      proxyKey: string,
+      force?: boolean,
+    ): Promise<{ deleted: boolean; remoteId: string | null }> {
       const row = db.get<{ is_pinned: number; remote_id: string | null }>(
         "SELECT is_pinned, remote_id FROM proxies WHERE proxy_key = ?",
-        [proxyKey]
+        [proxyKey],
       );
       if (!row) {
         return { deleted: false, remoteId: null };
@@ -1361,11 +1535,13 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
       });
       return { deleted: true, remoteId: row.remote_id ? String(row.remote_id) : null };
     },
-    async syncManagedFleetEndpoints(rows: Array<{
-      nodeId: string;
-      endpointId: string;
-      proxyUrl: string;
-    }>): Promise<number> {
+    async syncManagedFleetEndpoints(
+      rows: Array<{
+        nodeId: string;
+        endpointId: string;
+        proxyUrl: string;
+      }>,
+    ): Promise<number> {
       if (!rows || rows.length === 0) return 0;
       const now = Date.now();
       let count = 0;
@@ -1395,13 +1571,11 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
             password: string | null;
           }>(
             "SELECT proxy_key, source, is_pinned, remote_id, router_state, tags, password FROM proxies WHERE proxy_key = ?",
-            [key]
+            [key],
           );
 
           const isPreExistingShared = Boolean(
-            existing &&
-            existing.source !== "proxyfleet" &&
-            existing.source !== "9router-working"
+            existing && existing.source !== "proxyfleet" && existing.source !== "9router-working",
           );
           const ownedExclusive = isPreExistingShared ? 0 : 1;
 
@@ -1414,13 +1588,10 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
                   password = ?,
                   updated_at = ?
                  WHERE proxy_key = ?`,
-                [endpointDisplay, updatedPassword, now, key]
+                [endpointDisplay, updatedPassword, now, key],
               );
             } else {
-              db.run(
-                `UPDATE proxies SET updated_at = ? WHERE proxy_key = ?`,
-                [now, key]
-              );
+              db.run(`UPDATE proxies SET updated_at = ? WHERE proxy_key = ?`, [now, key]);
             }
           } else {
             db.run(
@@ -1445,13 +1616,13 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
                 p.password ?? null,
                 now,
                 now,
-              ]
+              ],
             );
           }
 
           const existingMappings = db.all<{ proxy_key: string; pending_cleanup: number }>(
             "SELECT proxy_key, pending_cleanup FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ?",
-            [row.nodeId, row.endpointId]
+            [row.nodeId, row.endpointId],
           );
 
           const activeMapping = existingMappings.find((m) => m.pending_cleanup === 0);
@@ -1459,25 +1630,34 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
           if (activeMapping) {
             if (activeMapping.proxy_key !== key) {
               const oldProxyKey = activeMapping.proxy_key;
-              const oldProxy = db.get<{ source: string; remote_id: string | null; is_pinned: number; router_state: string }>(
+              const oldProxy = db.get<{
+                source: string;
+                remote_id: string | null;
+                is_pinned: number;
+                router_state: string;
+              }>(
                 "SELECT source, remote_id, is_pinned, router_state FROM proxies WHERE proxy_key = ?",
-                [oldProxyKey]
+                [oldProxyKey],
               );
-              const hasExternalRefs = oldProxy && (oldProxy.remote_id || oldProxy.is_pinned === 1 || oldProxy.router_state === "active");
+              const hasExternalRefs =
+                oldProxy &&
+                (oldProxy.remote_id ||
+                  oldProxy.is_pinned === 1 ||
+                  oldProxy.router_state === "active");
 
               if (hasExternalRefs) {
                 db.run(
                   "UPDATE fleet_managed_endpoints SET pending_cleanup = 1, updated_at = ? WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ?",
-                  [now, row.nodeId, row.endpointId, oldProxyKey]
+                  [now, row.nodeId, row.endpointId, oldProxyKey],
                 );
               } else {
                 db.run(
                   "DELETE FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ?",
-                  [row.nodeId, row.endpointId, oldProxyKey]
+                  [row.nodeId, row.endpointId, oldProxyKey],
                 );
                 const otherMappings = db.get<{ count: number }>(
                   "SELECT COUNT(*) as count FROM fleet_managed_endpoints WHERE proxy_key = ?",
-                  [oldProxyKey]
+                  [oldProxyKey],
                 );
                 if (!otherMappings || otherMappings.count === 0) {
                   if (oldProxy && oldProxy.source === "proxyfleet") {
@@ -1491,12 +1671,12 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
                 `INSERT INTO fleet_managed_endpoints (node_id, endpoint_id, proxy_key, created_at, updated_at, pending_cleanup, owned_exclusive)
                  VALUES (?, ?, ?, ?, ?, 0, ?)
                  ON CONFLICT (node_id, endpoint_id, proxy_key) DO UPDATE SET updated_at = ?, pending_cleanup = 0`,
-                [row.nodeId, row.endpointId, key, now, now, ownedExclusive, now]
+                [row.nodeId, row.endpointId, key, now, now, ownedExclusive, now],
               );
             } else {
               db.run(
                 "UPDATE fleet_managed_endpoints SET updated_at = ?, pending_cleanup = 0 WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ?",
-                [now, row.nodeId, row.endpointId, key]
+                [now, row.nodeId, row.endpointId, key],
               );
             }
           } else {
@@ -1504,7 +1684,7 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
               `INSERT INTO fleet_managed_endpoints (node_id, endpoint_id, proxy_key, created_at, updated_at, pending_cleanup, owned_exclusive)
                VALUES (?, ?, ?, ?, ?, 0, ?)
                ON CONFLICT (node_id, endpoint_id, proxy_key) DO UPDATE SET updated_at = ?, pending_cleanup = 0`,
-              [row.nodeId, row.endpointId, key, now, now, ownedExclusive, now]
+              [row.nodeId, row.endpointId, key, now, now, ownedExclusive, now],
             );
           }
 
@@ -1514,10 +1694,13 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
 
       return count;
     },
-    async unlinkManagedFleetNode(nodeId: string, options?: {
-      cleanupRemoteRef?: (remoteId: string, proxyKey: string) => Promise<void>;
-      force?: boolean;
-    }): Promise<void> {
+    async unlinkManagedFleetNode(
+      nodeId: string,
+      options?: {
+        cleanupRemoteRef?: (remoteId: string, proxyKey: string) => Promise<void>;
+        force?: boolean;
+      },
+    ): Promise<void> {
       const mappings = db.all<{
         node_id: string;
         endpoint_id: string;
@@ -1526,7 +1709,7 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
         owned_exclusive: number;
       }>(
         "SELECT node_id, endpoint_id, proxy_key, pending_cleanup, owned_exclusive FROM fleet_managed_endpoints WHERE node_id = ?",
-        [nodeId]
+        [nodeId],
       );
 
       if (!mappings || mappings.length === 0) {
@@ -1542,27 +1725,27 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
           router_state: string;
         }>(
           "SELECT proxy_key, source, is_pinned, remote_id, router_state FROM proxies WHERE proxy_key = ?",
-          [m.proxy_key]
+          [m.proxy_key],
         );
 
         if (!proxy) {
           db.run(
             "DELETE FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ?",
-            [m.node_id, m.endpoint_id, m.proxy_key]
+            [m.node_id, m.endpoint_id, m.proxy_key],
           );
           continue;
         }
 
         const otherFleetRefsBefore = db.get<{ count: number }>(
           "SELECT COUNT(*) as count FROM fleet_managed_endpoints WHERE proxy_key = ? AND NOT (node_id = ? AND endpoint_id = ?)",
-          [m.proxy_key, m.node_id, m.endpoint_id]
+          [m.proxy_key, m.node_id, m.endpoint_id],
         );
         const isSharedAcrossFleet = Boolean(otherFleetRefsBefore && otherFleetRefsBefore.count > 0);
 
         if (isSharedAcrossFleet) {
           db.run(
             "DELETE FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ?",
-            [m.node_id, m.endpoint_id, m.proxy_key]
+            [m.node_id, m.endpoint_id, m.proxy_key],
           );
           continue;
         }
@@ -1574,7 +1757,7 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
           if (!isFleetExclusive) {
             db.run(
               "DELETE FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ?",
-              [m.node_id, m.endpoint_id, m.proxy_key]
+              [m.node_id, m.endpoint_id, m.proxy_key],
             );
             continue;
           }
@@ -1585,7 +1768,7 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
             } catch (cleanupErr) {
               const reason = cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr);
               throw new Error(
-                `Cannot unlink fleet node ${nodeId}: endpoint ${m.endpoint_id} (proxy ${m.proxy_key}) remote cleanup failed: ${reason}`
+                `Cannot unlink fleet node ${nodeId}: endpoint ${m.endpoint_id} (proxy ${m.proxy_key}) remote cleanup failed: ${reason}`,
               );
             }
 
@@ -1593,22 +1776,22 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
             db.transaction(() => {
               const current = db.get<{ remote_id: string | null }>(
                 "SELECT remote_id FROM proxies WHERE proxy_key = ?",
-                [m.proxy_key]
+                [m.proxy_key],
               );
               const otherRefs = db.get<{ count: number }>(
                 "SELECT COUNT(*) as count FROM fleet_managed_endpoints WHERE proxy_key = ? AND NOT (node_id = ? AND endpoint_id = ?)",
-                [m.proxy_key, m.node_id, m.endpoint_id]
+                [m.proxy_key, m.node_id, m.endpoint_id],
               );
               if (current?.remote_id !== proxy.remote_id || (otherRefs?.count ?? 0) > 0) return;
               const deleteRes = db.run(
                 "DELETE FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ? AND pending_cleanup = ? AND owned_exclusive = 1",
-                [m.node_id, m.endpoint_id, m.proxy_key, m.pending_cleanup]
+                [m.node_id, m.endpoint_id, m.proxy_key, m.pending_cleanup],
               );
               if (deleteRes.changes > 0) {
                 deleteSucceeded = true;
                 db.run(
                   "UPDATE proxies SET remote_id = NULL, router_state = 'unmanaged' WHERE proxy_key = ? AND remote_id = ?",
-                  [m.proxy_key, proxy.remote_id]
+                  [m.proxy_key, proxy.remote_id],
                 );
               }
             });
@@ -1618,31 +1801,37 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
             }
           } else if (!options?.force) {
             throw new Error(
-              `Cannot unlink fleet node ${nodeId}: endpoint ${m.endpoint_id} (proxy ${m.proxy_key}) has active remote reference '${proxy.remote_id ?? proxy.router_state}' pending cleanup`
+              `Cannot unlink fleet node ${nodeId}: endpoint ${m.endpoint_id} (proxy ${m.proxy_key}) has active remote reference '${proxy.remote_id ?? proxy.router_state}' pending cleanup`,
             );
           } else {
             db.run(
               "DELETE FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ?",
-              [m.node_id, m.endpoint_id, m.proxy_key]
+              [m.node_id, m.endpoint_id, m.proxy_key],
             );
           }
         } else {
           db.run(
             "DELETE FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ?",
-            [m.node_id, m.endpoint_id, m.proxy_key]
+            [m.node_id, m.endpoint_id, m.proxy_key],
           );
         }
 
         const otherRefs = db.get<{ count: number }>(
           "SELECT COUNT(*) as count FROM fleet_managed_endpoints WHERE proxy_key = ?",
-          [m.proxy_key]
+          [m.proxy_key],
         );
         if (!otherRefs || otherRefs.count === 0) {
-          const freshProxy = db.get<{ source: string; is_pinned: number; remote_id: string | null }>(
-            "SELECT source, is_pinned, remote_id FROM proxies WHERE proxy_key = ?",
-            [m.proxy_key]
-          );
-          if (freshProxy && freshProxy.source === "proxyfleet" && !freshProxy.is_pinned && !freshProxy.remote_id) {
+          const freshProxy = db.get<{
+            source: string;
+            is_pinned: number;
+            remote_id: string | null;
+          }>("SELECT source, is_pinned, remote_id FROM proxies WHERE proxy_key = ?", [m.proxy_key]);
+          if (
+            freshProxy &&
+            freshProxy.source === "proxyfleet" &&
+            !freshProxy.is_pinned &&
+            !freshProxy.remote_id
+          ) {
             db.run("DELETE FROM proxy_test_history WHERE proxy_key = ?", [m.proxy_key]);
             db.run("DELETE FROM proxies WHERE proxy_key = ?", [m.proxy_key]);
           }
@@ -1659,7 +1848,7 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
         proxy_key: string;
         owned_exclusive: number;
       }>(
-        "SELECT node_id, endpoint_id, proxy_key, owned_exclusive FROM fleet_managed_endpoints WHERE pending_cleanup = 1"
+        "SELECT node_id, endpoint_id, proxy_key, owned_exclusive FROM fleet_managed_endpoints WHERE pending_cleanup = 1",
       );
 
       let cleaned = 0;
@@ -1668,13 +1857,13 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
       for (const m of pending) {
         const otherActive = db.get<{ count: number }>(
           "SELECT COUNT(*) as count FROM fleet_managed_endpoints WHERE proxy_key = ? AND pending_cleanup = 0",
-          [m.proxy_key]
+          [m.proxy_key],
         );
 
         if (otherActive && otherActive.count > 0) {
           db.run(
             "DELETE FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ? AND pending_cleanup = 1",
-            [m.node_id, m.endpoint_id, m.proxy_key]
+            [m.node_id, m.endpoint_id, m.proxy_key],
           );
           cleaned++;
           continue;
@@ -1688,13 +1877,13 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
           router_state: string;
         }>(
           "SELECT proxy_key, source, is_pinned, remote_id, router_state FROM proxies WHERE proxy_key = ?",
-          [m.proxy_key]
+          [m.proxy_key],
         );
 
         if (!proxy) {
           db.run(
             "DELETE FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ? AND pending_cleanup = 1",
-            [m.node_id, m.endpoint_id, m.proxy_key]
+            [m.node_id, m.endpoint_id, m.proxy_key],
           );
           cleaned++;
           continue;
@@ -1706,7 +1895,7 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
         if (!isFleetExclusive) {
           db.run(
             "DELETE FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ? AND pending_cleanup = 1",
-            [m.node_id, m.endpoint_id, m.proxy_key]
+            [m.node_id, m.endpoint_id, m.proxy_key],
           );
           cleaned++;
           continue;
@@ -1719,22 +1908,22 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
               db.transaction(() => {
                 const current = db.get<{ remote_id: string | null }>(
                   "SELECT remote_id FROM proxies WHERE proxy_key = ?",
-                  [m.proxy_key]
+                  [m.proxy_key],
                 );
                 const otherActive = db.get<{ count: number }>(
                   "SELECT COUNT(*) as count FROM fleet_managed_endpoints WHERE proxy_key = ? AND pending_cleanup = 0",
-                  [m.proxy_key]
+                  [m.proxy_key],
                 );
                 if (current?.remote_id !== proxy.remote_id || (otherActive?.count ?? 0) > 0) return;
                 const res = db.run(
                   "DELETE FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ? AND pending_cleanup = 1 AND owned_exclusive = 1",
-                  [m.node_id, m.endpoint_id, m.proxy_key]
+                  [m.node_id, m.endpoint_id, m.proxy_key],
                 );
                 if (res.changes > 0) {
                   deleteSucceeded = true;
                   db.run(
                     "UPDATE proxies SET remote_id = NULL, router_state = 'unmanaged' WHERE proxy_key = ? AND remote_id = ?",
-                    [m.proxy_key, proxy.remote_id]
+                    [m.proxy_key, proxy.remote_id],
                   );
                 }
               });
@@ -1742,7 +1931,7 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
                 cleaned++;
                 const otherRefs = db.get<{ count: number }>(
                   "SELECT COUNT(*) as count FROM fleet_managed_endpoints WHERE proxy_key = ?",
-                  [m.proxy_key]
+                  [m.proxy_key],
                 );
                 if (!otherRefs || otherRefs.count === 0) {
                   if (proxy.is_pinned === 0) {
@@ -1759,7 +1948,7 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
           } else if (options?.force) {
             db.run(
               "DELETE FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ? AND pending_cleanup = 1",
-              [m.node_id, m.endpoint_id, m.proxy_key]
+              [m.node_id, m.endpoint_id, m.proxy_key],
             );
             cleaned++;
           } else {
@@ -1768,12 +1957,12 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
         } else {
           db.run(
             "DELETE FROM fleet_managed_endpoints WHERE node_id = ? AND endpoint_id = ? AND proxy_key = ? AND pending_cleanup = 1",
-            [m.node_id, m.endpoint_id, m.proxy_key]
+            [m.node_id, m.endpoint_id, m.proxy_key],
           );
           cleaned++;
           const otherRefs = db.get<{ count: number }>(
             "SELECT COUNT(*) as count FROM fleet_managed_endpoints WHERE proxy_key = ?",
-            [m.proxy_key]
+            [m.proxy_key],
           );
           if (!otherRefs || otherRefs.count === 0) {
             if (proxy.is_pinned === 0) {
@@ -1786,13 +1975,15 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
 
       return { cleaned, pendingRemaining };
     },
-    async listManagedFleetAuditTargets(): Promise<Array<{
-      nodeId: string;
-      endpointId: string;
-      proxyKey: string;
-      proxyUrl: string;
-      remoteId: string | null;
-    }>> {
+    async listManagedFleetAuditTargets(): Promise<
+      Array<{
+        nodeId: string;
+        endpointId: string;
+        proxyKey: string;
+        proxyUrl: string;
+        remoteId: string | null;
+      }>
+    > {
       const rows = db.all<{
         node_id: string;
         endpoint_id: string;
@@ -1819,18 +2010,21 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
         remoteId: r.remote_id ? String(r.remote_id) : null,
       }));
     },
-    async getManagedFleetNodeRemoteRefs(nodeId: string): Promise<Array<{
-      endpointId: string;
-      proxyKey: string;
-      remoteId: string | null;
-      isPinned: boolean;
-    }>> {
+    async getManagedFleetNodeRemoteRefs(nodeId: string): Promise<
+      Array<{
+        endpointId: string;
+        proxyKey: string;
+        remoteId: string | null;
+        isPinned: boolean;
+      }>
+    > {
       const rows = db.all<{
         endpoint_id: string;
         proxy_key: string;
         remote_id: string | null;
         is_pinned: number;
-      }>(`
+      }>(
+        `
         SELECT
           f.endpoint_id,
           f.proxy_key,
@@ -1840,7 +2034,9 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
         JOIN proxies p ON f.proxy_key = p.proxy_key
         WHERE f.node_id = ?
         ORDER BY f.endpoint_id
-      `, [nodeId]);
+      `,
+        [nodeId],
+      );
       return rows.map((r) => ({
         endpointId: r.endpoint_id,
         proxyKey: r.proxy_key,
@@ -1849,5 +2045,4 @@ export function createProxyIntelligenceRepository(deps: { db: ProxyIntelligenceD
       }));
     },
   };
-
 }

@@ -1,21 +1,15 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import Database from 'better-sqlite3';
-import { openProxyDb } from '../db/proxies/client.js';
-import { migrateDomain } from '../db/common/migrate.js';
+import fs from "node:fs";
+import path from "node:path";
+import Database from "better-sqlite3";
+import { openProxyDb } from "../db/proxies/client.js";
+import { migrateDomain } from "../db/common/migrate.js";
 
 export type SqlParam = string | number | bigint | Buffer | null | undefined;
 
 export interface ProxyIntelligenceDb {
   exec(sql: string): void;
-  all<T = Record<string, unknown>>(
-    sql: string,
-    params?: readonly unknown[],
-  ): T[];
-  get<T = Record<string, unknown>>(
-    sql: string,
-    params?: readonly unknown[],
-  ): T | undefined;
+  all<T = Record<string, unknown>>(sql: string, params?: readonly unknown[]): T[];
+  get<T = Record<string, unknown>>(sql: string, params?: readonly unknown[]): T | undefined;
   run(
     sql: string,
     params?: readonly unknown[],
@@ -27,7 +21,7 @@ export interface ProxyIntelligenceDb {
 
 export function migrateProxyIntelligence(db: ProxyIntelligenceDb): void {
   if (db.raw) {
-    migrateDomain(db.raw, 'proxies');
+    migrateDomain(db.raw, "proxies");
     return;
   }
   db.transaction(() => {
@@ -48,32 +42,29 @@ export function migrateProxyIntelligence(db: ProxyIntelligenceDb): void {
       );
     `);
 
-    const columns = db
-      .all<{ name: string }>('PRAGMA table_info(proxies)')
-      .map((c) => c.name);
+    const columns = db.all<{ name: string }>("PRAGMA table_info(proxies)").map((c) => c.name);
     for (const [col, def] of [
-      ['host', 'TEXT'],
-      ['port', 'INTEGER'],
-      ['source', "TEXT NOT NULL DEFAULT 'legacy'"],
-      ['lifecycle_state', "TEXT NOT NULL DEFAULT 'unknown'"],
-      ['username', 'TEXT'],
-      ['password', 'TEXT'],
-      ['created_at', 'INTEGER'],
-      ['updated_at', 'INTEGER'],
-      ['last_verdict', 'TEXT'],
-      ['last_checked_at', 'INTEGER'],
-      ['last_latency_ms', 'INTEGER'],
-      ['last_exit_ip', 'TEXT'],
-      ['last_failure_code', 'TEXT'],
-      ['ever_passed', 'INTEGER NOT NULL DEFAULT 0'],
-      ['is_pinned', 'INTEGER NOT NULL DEFAULT 0'],
-      ['tags', "TEXT NOT NULL DEFAULT ''"],
-      ['remote_id', 'TEXT'],
-      ['router_state', "TEXT NOT NULL DEFAULT 'unmanaged'"],
-      ['removed_at', 'INTEGER'],
+      ["host", "TEXT"],
+      ["port", "INTEGER"],
+      ["source", "TEXT NOT NULL DEFAULT 'legacy'"],
+      ["lifecycle_state", "TEXT NOT NULL DEFAULT 'unknown'"],
+      ["username", "TEXT"],
+      ["password", "TEXT"],
+      ["created_at", "INTEGER"],
+      ["updated_at", "INTEGER"],
+      ["last_verdict", "TEXT"],
+      ["last_checked_at", "INTEGER"],
+      ["last_latency_ms", "INTEGER"],
+      ["last_exit_ip", "TEXT"],
+      ["last_failure_code", "TEXT"],
+      ["ever_passed", "INTEGER NOT NULL DEFAULT 0"],
+      ["is_pinned", "INTEGER NOT NULL DEFAULT 0"],
+      ["tags", "TEXT NOT NULL DEFAULT ''"],
+      ["remote_id", "TEXT"],
+      ["router_state", "TEXT NOT NULL DEFAULT 'unmanaged'"],
+      ["removed_at", "INTEGER"],
     ]) {
-      if (!columns.includes(col))
-        db.exec(`ALTER TABLE proxies ADD COLUMN ${col} ${def};`);
+      if (!columns.includes(col)) db.exec(`ALTER TABLE proxies ADD COLUMN ${col} ${def};`);
     }
 
     db.exec(`
@@ -99,17 +90,17 @@ export function migrateProxyIntelligence(db: ProxyIntelligenceDb): void {
     `);
 
     const fleetCols = db
-      .all<{ name: string }>('PRAGMA table_info(fleet_managed_endpoints)')
+      .all<{ name: string }>("PRAGMA table_info(fleet_managed_endpoints)")
       .map((c) => c.name);
     if (fleetCols.length > 0) {
-      if (!fleetCols.includes('pending_cleanup')) {
+      if (!fleetCols.includes("pending_cleanup")) {
         db.exec(
-          'ALTER TABLE fleet_managed_endpoints ADD COLUMN pending_cleanup INTEGER NOT NULL DEFAULT 0;',
+          "ALTER TABLE fleet_managed_endpoints ADD COLUMN pending_cleanup INTEGER NOT NULL DEFAULT 0;",
         );
       }
-      if (!fleetCols.includes('owned_exclusive')) {
+      if (!fleetCols.includes("owned_exclusive")) {
         db.exec(
-          'ALTER TABLE fleet_managed_endpoints ADD COLUMN owned_exclusive INTEGER NOT NULL DEFAULT 1;',
+          "ALTER TABLE fleet_managed_endpoints ADD COLUMN owned_exclusive INTEGER NOT NULL DEFAULT 1;",
         );
       }
     } else {
@@ -144,23 +135,22 @@ export function configureProxyIntelligenceDb(
 ): void {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      raw.exec('PRAGMA journal_mode = WAL;');
+      raw.exec("PRAGMA journal_mode = WAL;");
       break;
     } catch (error) {
       const sqliteError = error as { code?: string; errcode?: number };
       const retryable =
-        sqliteError.code === 'ERR_SQLITE_ERROR' &&
-        [5, 6, 1546].includes(sqliteError.errcode ?? 0);
+        sqliteError.code === "ERR_SQLITE_ERROR" && [5, 6, 1546].includes(sqliteError.errcode ?? 0);
       if (!retryable || attempt >= 2) throw error;
       sleep(25 * 2 ** attempt);
     }
   }
-  raw.exec('PRAGMA foreign_keys = ON;');
+  raw.exec("PRAGMA foreign_keys = ON;");
 }
 
 export function openProxyIntelligenceDb(dataDir: string): ProxyIntelligenceDb {
   fs.mkdirSync(dataDir, { recursive: true });
-  const dbFile = path.join(dataDir, 'proxies.sqlite3');
+  const dbFile = path.join(dataDir, "proxies.sqlite3");
   const client = openProxyDb(dbFile);
   const raw = client.raw;
 
@@ -168,25 +158,15 @@ export function openProxyIntelligenceDb(dataDir: string): ProxyIntelligenceDb {
     exec(sql: string): void {
       raw.exec(sql);
     },
-    all<T = Record<string, unknown>>(
-      sql: string,
-      params: readonly unknown[] = [],
-    ): T[] {
+    all<T = Record<string, unknown>>(sql: string, params: readonly unknown[] = []): T[] {
       const stmt = raw.prepare(sql);
       const rows = stmt.all(...params);
-      return rows.map((r) =>
-        r && typeof r === 'object' ? { ...r } : r,
-      ) as T[];
+      return rows.map((r) => (r && typeof r === "object" ? { ...r } : r)) as T[];
     },
-    get<T = Record<string, unknown>>(
-      sql: string,
-      params: readonly unknown[] = [],
-    ): T | undefined {
+    get<T = Record<string, unknown>>(sql: string, params: readonly unknown[] = []): T | undefined {
       const stmt = raw.prepare(sql);
       const row = stmt.get(...params);
-      return (row && typeof row === 'object' ? { ...row } : row) as
-        | T
-        | undefined;
+      return (row && typeof row === "object" ? { ...row } : row) as T | undefined;
     },
     run(
       sql: string,

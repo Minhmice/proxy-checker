@@ -24,7 +24,7 @@ export function ProxySummary({ facets, activeHealth, onHealthChange }: ProxySumm
       icon: Globe,
       count: facets.all,
       activeClass:
-        "bg-primary text-primary-foreground border-primary shadow-[0_0_15px_oklch(0.78_0.17_205/0.35)] font-semibold",
+        "bg-primary text-primary-foreground border-primary shadow-[0_0_16px_rgba(255,91,34,0.35)] font-semibold",
       inactiveClass:
         "bg-surface hover:bg-surface-raised text-muted-foreground border-border/70 hover:border-primary/40",
     },

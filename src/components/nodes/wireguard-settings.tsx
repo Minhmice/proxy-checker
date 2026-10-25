@@ -1,7 +1,18 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { Copy, Key, Loader2, Network, RefreshCw, Server, Shield, ShieldAlert, ShieldCheck, Users } from "lucide-react";
+import {
+  Copy,
+  Key,
+  Loader2,
+  Network,
+  RefreshCw,
+  Server,
+  Shield,
+  ShieldAlert,
+  ShieldCheck,
+  Users,
+} from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/components/auth-provider";
 import { authHeaders, updateSettings } from "@/lib/api";
@@ -47,11 +58,21 @@ export function WireGuardSettingsCard({
   const [statusError, setStatusError] = useState<string | null>(null);
 
   // Form state
-  const [managementEnabled, setManagementEnabled] = useState<boolean>(initialSettings !== null && initialSettings !== undefined);
-  const [interfaceName, setInterfaceName] = useState<string>(initialSettings?.interfaceName || "proxyfleet");
-  const [controllerCidr, setControllerCidr] = useState<string>(initialSettings?.controllerAddressCidr || "10.77.0.1/24");
-  const [publicEndpoint, setPublicEndpoint] = useState<string>(initialSettings?.publicEndpoint || "");
-  const [listenPort, setListenPort] = useState<string>(initialSettings?.listenPort ? String(initialSettings.listenPort) : "51820");
+  const [managementEnabled, setManagementEnabled] = useState<boolean>(
+    initialSettings !== null && initialSettings !== undefined,
+  );
+  const [interfaceName, setInterfaceName] = useState<string>(
+    initialSettings?.interfaceName || "proxyfleet",
+  );
+  const [controllerCidr, setControllerCidr] = useState<string>(
+    initialSettings?.controllerAddressCidr || "10.77.0.1/24",
+  );
+  const [publicEndpoint, setPublicEndpoint] = useState<string>(
+    initialSettings?.publicEndpoint || "",
+  );
+  const [listenPort, setListenPort] = useState<string>(
+    initialSettings?.listenPort ? String(initialSettings.listenPort) : "51820",
+  );
   const [mtu, setMtu] = useState<string>(initialSettings?.mtu ? String(initialSettings.mtu) : "");
 
   const [saving, setSaving] = useState(false);
@@ -64,58 +85,61 @@ export function WireGuardSettingsCard({
 
   const abortRef = useRef<AbortController | null>(null);
 
-  const fetchStatus = useCallback(async (signal?: AbortSignal) => {
-    try {
-      setStatusLoading(true);
-      setStatusError(null);
-      const res = await fetch("/api/fleet/wireguard", {
-        headers: authHeaders(password),
-        credentials: "same-origin",
-        signal,
-      });
-
-      if (!res.ok) {
-        throw new Error(`Failed to query WireGuard controller (HTTP ${res.status})`);
-      }
-
-      const data: WireGuardStatusResponse = await res.json();
-      if (signal?.aborted) return;
-      setStatus(data);
-      if (data.settings && !hasHydratedRef.current) {
-        hasHydratedRef.current = true;
-        setManagementEnabled(true);
-        setInterfaceName("proxyfleet");
-        setControllerCidr("10.77.0.1/24");
-        setPublicEndpoint(data.settings.publicEndpoint || "");
-        setListenPort(String(data.settings.listenPort));
-        setMtu(data.settings.mtu ? String(data.settings.mtu) : "");
-      }
-
-      // Load candidate worker nodes for migration
+  const fetchStatus = useCallback(
+    async (signal?: AbortSignal) => {
       try {
-        const nodesRes = await fetch("/api/fleet/nodes", {
+        setStatusLoading(true);
+        setStatusError(null);
+        const res = await fetch("/api/fleet/wireguard", {
           headers: authHeaders(password),
           credentials: "same-origin",
           signal,
         });
-        if (nodesRes.ok) {
-          const nodesData = await nodesRes.json();
-          const allNodes = (nodesData.nodes || []) as FleetNodeRecord[];
-          const workers = allNodes.filter(
-            (n) => n.role !== "controller-worker" && n.id !== "controller-node-master"
-          );
-          setWorkerNodes(workers);
+
+        if (!res.ok) {
+          throw new Error(`Failed to query WireGuard controller (HTTP ${res.status})`);
         }
-      } catch {
-        // ignore node fetch errors for settings view
+
+        const data: WireGuardStatusResponse = await res.json();
+        if (signal?.aborted) return;
+        setStatus(data);
+        if (data.settings && !hasHydratedRef.current) {
+          hasHydratedRef.current = true;
+          setManagementEnabled(true);
+          setInterfaceName("proxyfleet");
+          setControllerCidr("10.77.0.1/24");
+          setPublicEndpoint(data.settings.publicEndpoint || "");
+          setListenPort(String(data.settings.listenPort));
+          setMtu(data.settings.mtu ? String(data.settings.mtu) : "");
+        }
+
+        // Load candidate worker nodes for migration
+        try {
+          const nodesRes = await fetch("/api/fleet/nodes", {
+            headers: authHeaders(password),
+            credentials: "same-origin",
+            signal,
+          });
+          if (nodesRes.ok) {
+            const nodesData = await nodesRes.json();
+            const allNodes = (nodesData.nodes || []) as FleetNodeRecord[];
+            const workers = allNodes.filter(
+              (n) => n.role !== "controller-worker" && n.id !== "controller-node-master",
+            );
+            setWorkerNodes(workers);
+          }
+        } catch {
+          // ignore node fetch errors for settings view
+        }
+      } catch (err: unknown) {
+        if (isAbortError(err)) return;
+        setStatusError(err instanceof Error ? err.message : "Failed to load WireGuard status");
+      } finally {
+        setStatusLoading(false);
       }
-    } catch (err: unknown) {
-      if (isAbortError(err)) return;
-      setStatusError(err instanceof Error ? err.message : "Failed to load WireGuard status");
-    } finally {
-      setStatusLoading(false);
-    }
-  }, [password]);
+    },
+    [password],
+  );
 
   useEffect(() => {
     const ac = new AbortController();
@@ -165,7 +189,7 @@ export function WireGuardSettingsCard({
       toast.success(
         payloadSettings
           ? "WireGuard configuration saved"
-          : "WireGuard management disabled (external tunnels untouched)"
+          : "WireGuard management disabled (external tunnels untouched)",
       );
       onSettingsSaved?.(payloadSettings);
       void fetchStatus();
@@ -239,7 +263,7 @@ export function WireGuardSettingsCard({
 
   function toggleMigrateNode(nodeId: string) {
     setSelectedMigrateNodeIds((prev) =>
-      prev.includes(nodeId) ? prev.filter((id) => id !== nodeId) : [...prev, nodeId]
+      prev.includes(nodeId) ? prev.filter((id) => id !== nodeId) : [...prev, nodeId],
     );
   }
 
@@ -259,11 +283,17 @@ export function WireGuardSettingsCard({
               <Network className="size-4 text-primary" />
               Fleet WireGuard Overlay
               {status?.configured ? (
-                <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-300 gap-1 text-[11px] font-normal">
+                <Badge
+                  variant="outline"
+                  className="border-emerald-500/40 bg-emerald-500/10 text-emerald-300 gap-1 text-[11px] font-normal"
+                >
                   <ShieldCheck className="size-3" /> Configured
                 </Badge>
               ) : (
-                <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-300 gap-1 text-[11px] font-normal">
+                <Badge
+                  variant="outline"
+                  className="border-amber-500/40 bg-amber-500/10 text-amber-300 gap-1 text-[11px] font-normal"
+                >
                   <ShieldAlert className="size-3" /> Unconfigured
                 </Badge>
               )}
@@ -311,7 +341,7 @@ export function WireGuardSettingsCard({
             <div className="font-mono text-xs text-muted-foreground break-all select-all">
               {status.publicKey}
             </div>
-            <div className="text-[10px] text-muted-foreground/75">
+            <div className="text-[10px] text-muted-foreground">
               Private keys are strictly guarded and never exposed to the client browser.
             </div>
           </div>
@@ -363,7 +393,8 @@ export function WireGuardSettingsCard({
                   className="h-9 text-xs font-mono bg-muted/40 cursor-not-allowed text-muted-foreground"
                 />
                 <p className="text-[10px] text-muted-foreground">
-                  Fixed subnet: <code>10.77.0.0/24</code>. Controller occupies <code>10.77.0.1</code>.
+                  Fixed subnet: <code>10.77.0.0/24</code>. Controller occupies{" "}
+                  <code>10.77.0.1</code>.
                 </p>
               </div>
 
@@ -423,7 +454,8 @@ export function WireGuardSettingsCard({
                   <Users className="size-3.5 text-primary" /> Explicit Worker Peer Migration
                 </div>
                 <div className="text-[11px] text-muted-foreground mt-0.5">
-                  Select existing worker nodes to reconcile and approve into WireGuard overlay routes.
+                  Select existing worker nodes to reconcile and approve into WireGuard overlay
+                  routes.
                 </div>
               </div>
               <Button
@@ -432,7 +464,9 @@ export function WireGuardSettingsCard({
                 className="h-6 text-[11px] px-2 text-muted-foreground"
                 onClick={toggleSelectAllMigrate}
               >
-                {selectedMigrateNodeIds.length === workerNodes.length ? "Deselect All" : "Select All"}
+                {selectedMigrateNodeIds.length === workerNodes.length
+                  ? "Deselect All"
+                  : "Select All"}
               </Button>
             </div>
 
@@ -448,7 +482,9 @@ export function WireGuardSettingsCard({
                       onCheckedChange={() => toggleMigrateNode(w.id)}
                     />
                     <span className="font-medium text-foreground">{w.name}</span>
-                    <span className="font-mono text-[11px] text-muted-foreground">({w.wireguard_ip})</span>
+                    <span className="font-mono text-[11px] text-muted-foreground">
+                      ({w.wireguard_ip})
+                    </span>
                   </div>
                   <Badge variant="outline" className="text-[10px] font-mono">
                     {w.status}
@@ -466,7 +502,8 @@ export function WireGuardSettingsCard({
                 className="h-7 text-xs gap-1.5"
               >
                 {migrating && <Loader2 className="size-3 animate-spin" />}
-                Migrate {selectedMigrateNodeIds.length} Selected Worker{selectedMigrateNodeIds.length === 1 ? "" : "s"}
+                Migrate {selectedMigrateNodeIds.length} Selected Worker
+                {selectedMigrateNodeIds.length === 1 ? "" : "s"}
               </Button>
             </div>
           </div>
@@ -477,7 +514,7 @@ export function WireGuardSettingsCard({
           <div className="text-[11px] text-muted-foreground">
             {managementEnabled
               ? "Saving updates settings in app config."
-              : "Disabling will set fleetWireguard to null upon save."}
+              : "Disabling removes the WireGuard overlay configuration on save."}
           </div>
           <div className="flex items-center gap-2">
             {managementEnabled && (

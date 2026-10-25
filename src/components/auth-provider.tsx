@@ -1,6 +1,14 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { checkSession, clearStoredPassword, getStoredPassword, storePassword } from "@/lib/api";
 import { isAbortError } from "@/lib/request-lifecycle";
 
@@ -54,7 +62,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-
   const setPassword = useCallback((val: string) => {
     setPasswordState(val);
     if (val) {
@@ -78,7 +85,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setPassword,
       clearPassword: clearSession,
     }),
-    [authenticated, password, setPassword, clearSession]
+    [authenticated, password, setPassword, clearSession],
   );
 
   if (!hydrated) {
