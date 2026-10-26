@@ -1,12 +1,12 @@
 {
   "version": 1,
-  "timestamp": "2026-10-26T17:18:12.353Z",
+  "timestamp": "2026-10-26T17:18:44.849Z",
   "sourceDataDir": "C:\\Users\\minhmice\\Documents\\projects\\proxy-checker\\data",
   "files": [
     {
       "name": "settings.json",
       "size": 473,
-      "sha256": "dbfffaee58e2cb45eb67d247faca852e3f091722c6fa3400cb9ace8a54e24002"
+      "sha256": "eda31394e7aa56fdf6b52f37bb55ef5695b663042c9a071cf688729e8eb0406e"
     },
     {
       "name": "databases/proxies.sqlite3",
@@ -30,8 +30,8 @@
     },
     {
       "name": "pool-state.json",
-      "size": 100033,
-      "sha256": "0b5bd0447026517958e87de75b7f9a695e1f776a45b642ef5363b2bab5b2afc0"
+      "size": 100177,
+      "sha256": "d874ba699063a9fd387778ffc2a08f4bfc1c7595d50453e7a414a31dfcb2386d"
     }
   ]
 }
