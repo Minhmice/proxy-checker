@@ -1,5 +1,26 @@
 {
   "pools": {
+    "eb4d9e2f-c9db-4dc9-a23b-df3fc9c2abc6": {
+      "localId": "eb4d9e2f-c9db-4dc9-a23b-df3fc9c2abc6",
+      "remoteId": "eb4d9e2f-c9db-4dc9-a23b-df3fc9c2abc6",
+      "remoteState": "linked",
+      "testState": "idle",
+      "name": "probe",
+      "proxyUrl": "http://89.167.124.218:8888",
+      "type": "http",
+      "status": "usable",
+      "tier": "active",
+      "healthStatus": "done",
+      "latency_ms": null,
+      "exit_ip": null,
+      "checked_at": 0,
+      "isActiveOnRouter": true,
+      "remoteTestStatus": "unknown",
+      "remoteLastError": null,
+      "remoteLastTestedAt": null,
+      "successes": 0,
+      "failures": 0
+    },
     "104af4ee-7d07-4511-af69-fd0094f50785": {
       "localId": "104af4ee-7d07-4511-af69-fd0094f50785",
       "remoteId": "40fadad0-7bd9-42d3-ac1e-3e2cca743dec",
@@ -2904,8 +2925,8 @@
   },
   "lastSyncAt": 1793106511877,
   "stats": {
-    "total": 133,
-    "active": 5,
+    "total": 134,
+    "active": 6,
     "reserve": 3,
     "dead": 0,
     "pending": 0,
