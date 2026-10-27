@@ -6,7 +6,7 @@
   "nineRouterAutoSync": true,
   "activePoolLimit": 30,
   "nineRouterSyncMinutes": 720,
-  "checkConcurrency": 5,
+  "checkConcurrency": 6,
   "checkTimeoutMs": 6000,
   "proxyTtlMinutes": 15,
   "antigravityRotatorEnabled": true,
