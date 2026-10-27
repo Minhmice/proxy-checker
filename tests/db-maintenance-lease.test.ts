@@ -21,3 +21,20 @@ test("maintenance refuses live application users and application refuses mainten
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("stale lease with dead pid is reclaimed automatically", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "db-maintenance-stale-"));
+  try {
+    const leaseDir = path.join(dir, ".proxy-checker.lease");
+    fs.mkdirSync(leaseDir, { recursive: true });
+    fs.writeFileSync(path.join(leaseDir, "owner"), "application\n999999\n", "utf8");
+
+    // Should reclaim stale lease without error
+    const release = acquireDataLease(dir, "application");
+    assert.ok(fs.existsSync(path.join(leaseDir, "owner")));
+    release();
+    assert.ok(!fs.existsSync(leaseDir));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

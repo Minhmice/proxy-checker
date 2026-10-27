@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Loader2, RefreshCw, Zap } from "lucide-react";
+import { Loader2, RefreshCw, RotateCcw, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/components/auth-provider";
 import {
@@ -15,6 +15,7 @@ import {
   hardDeleteProxy,
   triggerUnifiedSync,
   triggerOptimizeAccountsBySpeed,
+  resetAntigravityProxies,
 } from "@/lib/api";
 import { importIntelligenceProxies } from "@/lib/proxy-intelligence-api";
 import { isAbortError } from "@/lib/request-lifecycle";
@@ -97,6 +98,7 @@ export default function ProxiesPage() {
   // In-flight actions
   const [syncing, setSyncing] = useState(false);
   const [optimizingSpeed, setOptimizingSpeed] = useState(false);
+  const [resettingProxies, setResettingProxies] = useState(false);
   const [confirmDeleteProxy, setConfirmDeleteProxy] = useState<UnifiedProxyItem | null>(null);
   const [checkingKey, setCheckingKey] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -226,6 +228,29 @@ export default function ProxiesPage() {
       toast.error((err as Error).message);
     } finally {
       setOptimizingSpeed(false);
+    }
+  };
+  // Reset proxies for Antigravity accounts (re-assign forbidden/broken proxies)
+  const handleResetProxies = async () => {
+    if (resettingProxies) return;
+    setResettingProxies(true);
+    try {
+      toast.info("Checking accounts for 403 Forbidden / invalid proxies and resetting...");
+      const res = await resetAntigravityProxies();
+      if (res.ok) {
+        toast.success(
+          res.reassignedCount && res.reassignedCount > 0
+            ? `Re-assigned ${res.reassignedCount} account(s) (${res.forbiddenAccounts || 0} forbidden) to clean proxies`
+            : "All accounts verified: no forbidden proxies found",
+        );
+        await loadProxies();
+      } else {
+        toast.error(res.error || "Failed to reset proxies");
+      }
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setResettingProxies(false);
     }
   };
 
@@ -442,6 +467,20 @@ export default function ProxiesPage() {
           </p>
         </div>
         <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap shrink-0">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleResetProxies}
+            disabled={resettingProxies}
+            className="h-9 text-xs font-mono gap-1.5 border-border/80 bg-surface/70 hover:bg-surface-raised cursor-pointer shadow-2xs"
+          >
+            {resettingProxies ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RotateCcw className="h-3.5 w-3.5 text-[#FF5B22]" />
+            )}
+            <span>Reset proxies</span>
+          </Button>
           <Button
             variant="outline"
             size="sm"

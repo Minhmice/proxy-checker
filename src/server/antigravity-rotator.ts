@@ -175,11 +175,13 @@ export function isAccountForbidden(account: {
   if (!account.lastError) return false;
   const msg = account.lastError.toLowerCase();
   return (
-    msg.includes("403") ||
+    /\b403\b/.test(msg) ||
     msg.includes("forbidden") ||
     msg.includes("self_signed_cert_in_chain") ||
     msg.includes("permission_denied") ||
     msg.includes("service_disabled") ||
+    msg.includes("account_suspended") ||
+    msg.includes("account_disabled") ||
     msg.includes("model_locked") ||
     msg.includes("modellock")
   );

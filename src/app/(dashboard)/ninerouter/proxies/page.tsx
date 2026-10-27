@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { Shuffle, RefreshCw, Server, CheckCheck, Search, Filter, X } from "lucide-react";
+import { Shuffle, RefreshCw, RotateCcw, Server, CheckCheck, Search, Filter, X } from "lucide-react";
 import {
   AccountBindingsTable,
   type AntigravityConnection,
@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { motion } from "motion/react";
 import { toast } from "sonner";
+import { resetAntigravityProxies } from "@/lib/api";
 
 const NODES = [
   { id: "server-lan", name: "Master Node (192.168.1.54)" },
@@ -32,14 +33,15 @@ export default function NineRouterProxiesPage() {
   >({});
   const [testingMap, setTestingMap] = useState<Record<string, boolean>>({});
 
+  const [resettingProxies, setResettingProxies] = useState(false);
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
       const [resConns, resPools] = await Promise.all([
         fetch(`/api/ninerouter/nodes/${encodeURIComponent(selectedNode)}/connections`),
         fetch(`/api/ninerouter/nodes/${encodeURIComponent(selectedNode)}/proxy-pools`),
+        fetch("/api/antigravity/refresh", { method: "POST" }).catch(() => null),
       ]);
-
       if (resConns.ok) {
         const dataConns = await resConns.json();
         setConnections(dataConns.connections || []);
@@ -299,6 +301,28 @@ export default function NineRouterProxiesPage() {
     await loadData();
     toast.success("Proxy pools distributed evenly!");
   };
+  const handleResetProxies = async () => {
+    if (resettingProxies) return;
+    setResettingProxies(true);
+    try {
+      toast.info("Checking accounts for 403 Forbidden / invalid proxies and resetting...");
+      const res = await resetAntigravityProxies();
+      if (res.ok) {
+        toast.success(
+          res.reassignedCount && res.reassignedCount > 0
+            ? `Re-assigned ${res.reassignedCount} account(s) (${res.forbiddenAccounts || 0} forbidden) to clean proxies`
+            : "All accounts verified: no forbidden or broken proxies found",
+        );
+      } else {
+        toast.error(res.error || "Failed to reset proxies");
+      }
+      await loadData();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setResettingProxies(false);
+    }
+  };
 
   return (
     <motion.div
@@ -351,6 +375,17 @@ export default function NineRouterProxiesPage() {
           >
             <CheckCheck className="size-3.5 stroke-[2.5]" />
             Auto Bind
+          </Button>
+          {/* Reset Proxies Button */}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleResetProxies}
+            disabled={resettingProxies || loading}
+            className="h-9 border-[#FF5B22]/40 bg-[#131318] text-[#FF5B22] hover:bg-[#FF5B22]/10 hover:border-[#FF5B22] gap-1.5 text-xs font-semibold transition-all"
+          >
+            <RotateCcw className={`size-3.5 ${resettingProxies ? "animate-spin" : ""}`} />
+            Reset Proxies
           </Button>
 
           {/* Refresh Button */}

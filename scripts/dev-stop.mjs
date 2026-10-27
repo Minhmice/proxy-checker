@@ -109,6 +109,34 @@ function removeLock(quiet) {
     return false;
   }
 }
+function removeStaleLease(seenPids, quiet) {
+  const leaseDir = path.join(root, "data", ".proxy-checker.lease");
+  const ownerPath = path.join(leaseDir, "owner");
+  if (!fs.existsSync(leaseDir)) return false;
+  try {
+    const owner = fs.existsSync(ownerPath)
+      ? fs.readFileSync(ownerPath, "utf8").trim().split(/\s+/)
+      : [];
+    const ownerPid = Number(owner[1]);
+    let alive = false;
+    if (Number.isInteger(ownerPid) && ownerPid > 0) {
+      try {
+        process.kill(ownerPid, 0);
+        alive = true;
+      } catch {
+        alive = false;
+      }
+    }
+    if (!alive || seenPids.has(String(ownerPid))) {
+      fs.rmSync(leaseDir, { recursive: true, force: true });
+      if (!quiet) console.log("Removed stale data/.proxy-checker.lease");
+      return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
 
 export function prepareDev({ quiet = false } = {}) {
   const seen = new Set();
@@ -128,6 +156,7 @@ export function prepareDev({ quiet = false } = {}) {
   }
 
   removeLock(quiet);
+  removeStaleLease(seen, quiet);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {

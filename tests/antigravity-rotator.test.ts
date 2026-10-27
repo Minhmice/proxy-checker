@@ -228,6 +228,19 @@ test("isAccountForbidden detects 403, forbidden, self_signed_cert, and model loc
     isAccountForbidden({ lastError: "Account locked modelLock_gemini-3.8-flash-high for 120s" }),
     true,
   );
+  assert.equal(
+    isAccountForbidden({ lastError: "Account suspended: ToS violation (account_suspended)" }),
+    true,
+  );
+  assert.equal(isAccountForbidden({ lastError: "User account_disabled by administrator" }), true);
+  assert.equal(isAccountForbidden({ lastError: "API Error: 403 Forbidden" }), true);
+  assert.equal(isAccountForbidden({ lastError: "Cloud Code Assist API error (403)" }), true);
+  // Regression: Port numbers containing 403 should NOT trigger false positive
+  assert.equal(isAccountForbidden({ lastError: "connect ETIMEDOUT 10.0.0.1:4030" }), false);
+  assert.equal(
+    isAccountForbidden({ lastError: "upstream proxy host 1.1.1.1:8403 refused" }),
+    false,
+  );
   assert.equal(isAccountForbidden({ lastError: "ECONNRESET connection reset" }), false);
   assert.equal(isAccountForbidden({ lastError: null }), false);
 });
