@@ -1,16 +1,1 @@
-{
-  "controlPassword": "smoke-only-password",
-  "nineRouterUrl": "https://9router.minhmice.com",
-  "nineRouterPassword": "minh2908",
-  "nineRouterApiKey": "",
-  "nineRouterAutoSync": false,
-  "activePoolLimit": 50,
-  "nineRouterSyncMinutes": 60,
-  "checkConcurrency": 10,
-  "checkTimeoutMs": 6000,
-  "proxyTtlMinutes": 15,
-  "antigravityRotatorEnabled": false,
-  "antigravityActiveLimit": 3,
-  "antigravityRotateMinutes": 10,
-  "antigravitySessionThreshold": 20
-}
+{"controlPassword":"test-pass-1793445670526-549kxrryhxv","nineRouterUrl":"http://127.0.0.1:9","nineRouterPassword":"","nineRouterApiKey":"","nineRouterAutoSync":false,"antigravityRotatorEnabled":false,"activePoolLimit":10,"nineRouterSyncMinutes":60,"checkConcurrency":5,"checkTimeoutMs":5000,"proxyTtlMinutes":15,"antigravityActiveLimit":1,"antigravityRotateMinutes":60,"antigravitySessionThreshold":20}
