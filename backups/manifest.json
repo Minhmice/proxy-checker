@@ -1,12 +1,12 @@
 {
   "version": 1,
-  "timestamp": "2026-10-31T10:23:43.641Z",
-  "sourceDataDir": "C:\\Users\\minhmice\\AppData\\Local\\Temp\\proxy-isolated-srv-woD5hT",
+  "timestamp": "2026-10-31T10:24:25.112Z",
+  "sourceDataDir": "C:\\Users\\minhmice\\AppData\\Local\\Temp\\proxy-isolated-srv-DzG5wP",
   "files": [
     {
       "name": "settings.json",
       "size": 402,
-      "sha256": "1963e0d0211dcb3f5a98511dbbe786b9a84012c5f1d63df4b8d67f1407c9c52f"
+      "sha256": "db7faa23466f6a6bbe6498f7328820a89d29f2651d01546654cea53ede969290"
     },
     {
       "name": "databases/proxies.sqlite3",
