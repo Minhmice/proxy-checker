@@ -1,17 +1,17 @@
 {
   "version": 1,
-  "timestamp": "2026-10-31T09:05:21.404Z",
-  "sourceDataDir": "C:\\Users\\minhmice\\AppData\\Local\\Temp\\proxy-isolated-srv-3veWY6",
+  "timestamp": "2026-10-31T10:16:29.571Z",
+  "sourceDataDir": "C:\\Users\\minhmice\\AppData\\Local\\Temp\\proxy-isolated-srv-XtIv7V",
   "files": [
     {
       "name": "settings.json",
       "size": 403,
-      "sha256": "f60f8e3a9ad9a5201031659da35219cde4f35567c97591ba4df6302538321e7a"
+      "sha256": "a9c0207ca84f0bb0f0d834985560ea47d20a4c10f12d2f6b4c261dae5f51dc9a"
     },
     {
       "name": "databases/proxies.sqlite3",
-      "size": 77824,
-      "sha256": "d705182bd5164cff30b42a06e10ac4059ffdf62a45de0f7b9b1ae95b11473fb2"
+      "size": 61440,
+      "sha256": "0cbb552bd0d2267b818fd3d20a1d3907eb106f58ef28585e1b533a1ceefb6c7b"
     },
     {
       "name": "databases/antigravity-rotation.sqlite3",
