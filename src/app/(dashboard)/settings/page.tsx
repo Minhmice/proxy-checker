@@ -440,9 +440,9 @@ export default function SettingsPage() {
           Number.isNaN(activeLimit) ||
           !Number.isInteger(activeLimit) ||
           activeLimit < 1 ||
-          activeLimit > 10
+          activeLimit > 50
         ) {
-          throw new Error("Active accounts limit must be an integer between 1 and 10");
+          throw new Error("Active accounts limit must be an integer between 1 and 50");
         }
         const rotateMinutes = Number(form.antigravityRotateMinutes);
         if (
@@ -1368,13 +1368,13 @@ export default function SettingsPage() {
                           <Label htmlFor="ag-active-limit" className="text-xs font-semibold">
                             Active Accounts Limit
                           </Label>
-                          <FieldInfo content="Maximum number of Antigravity accounts active simultaneously (default: 3, range: 1 - 10)." />
+                          <FieldInfo content="Maximum number of Antigravity accounts active simultaneously (default: 3, range: 1 - 50)." />
                         </div>
                         <Input
                           id="ag-active-limit"
                           type="number"
                           min={1}
-                          max={10}
+                          max={50}
                           value={form.antigravityActiveLimit}
                           onChange={(event) =>
                             patchForm("antigravityActiveLimit", event.target.value)

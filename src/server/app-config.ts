@@ -185,7 +185,7 @@ function normalize(settingsValue: AppSettings): AppSettings {
     checkTimeoutMs: clamp(Math.round(settingsValue.checkTimeoutMs), 2000, 30000),
     proxyTtlMinutes: clamp(Math.round(settingsValue.proxyTtlMinutes), 1, 1440),
     antigravityRotatorEnabled: settingsValue.antigravityRotatorEnabled !== false,
-    antigravityActiveLimit: clamp(Math.round(settingsValue.antigravityActiveLimit ?? 3), 1, 10),
+    antigravityActiveLimit: clamp(Math.round(settingsValue.antigravityActiveLimit ?? 3), 1, 50),
     antigravityRotateMinutes: clamp(
       Math.round(settingsValue.antigravityRotateMinutes ?? 10),
       1,
