@@ -1,17 +1,3 @@
-CREATE TABLE `fleet_managed_endpoints` (
-	`node_id` text NOT NULL,
-	`endpoint_id` text NOT NULL,
-	`proxy_key` text NOT NULL,
-	`created_at` integer NOT NULL,
-	`updated_at` integer NOT NULL,
-	`pending_cleanup` integer DEFAULT 0 NOT NULL,
-	`owned_exclusive` integer DEFAULT 1 NOT NULL,
-	PRIMARY KEY(`node_id`, `endpoint_id`, `proxy_key`),
-	FOREIGN KEY (`proxy_key`) REFERENCES `proxies`(`proxy_key`) ON UPDATE no action ON DELETE cascade
-);
---> statement-breakpoint
-CREATE INDEX `idx_fleet_managed_proxy_key` ON `fleet_managed_endpoints` (`proxy_key`);--> statement-breakpoint
-CREATE INDEX `idx_fleet_managed_node_id` ON `fleet_managed_endpoints` (`node_id`);--> statement-breakpoint
 CREATE TABLE `proxies` (
 	`proxy_key` text PRIMARY KEY NOT NULL,
 	`endpoint` text NOT NULL,

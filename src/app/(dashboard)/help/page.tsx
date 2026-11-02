@@ -9,15 +9,12 @@ export default function HelpPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Help & Operations Reference</h1>
           <p className="text-sm text-muted-foreground">
-            Runbook for proxy checks, sync behavior, quota rotation, and fleet nodes.
+            Runbook for proxy checks, sync behavior, quota rotation, and telemetry.
           </p>
         </div>
         <nav aria-label="Quick routes" className="flex flex-wrap gap-2">
           <Button asChild variant="outline" size="sm" className="min-h-[44px]">
             <Link href="/proxies">Proxies</Link>
-          </Button>
-          <Button asChild variant="outline" size="sm" className="min-h-[44px]">
-            <Link href="/nodes">Nodes</Link>
           </Button>
           <Button asChild variant="outline" size="sm" className="min-h-[44px]">
             <Link href="/settings">Settings</Link>
@@ -155,35 +152,6 @@ export default function HelpPage() {
           a static 24-hour TTL (86,400s) from login. Sessions expire strictly 24 hours after
           issuance without sliding extensions or midnight resets.
         </p>
-      </section>
-
-      {/* 6. Fleet Nodes & Diagnostics */}
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold tracking-tight">Worker Nodes & Host Diagnostics</h2>
-        <div className="space-y-2 text-xs text-muted-foreground">
-          <p>
-            Nodes report heartbeats; status becomes{" "}
-            <code className="font-mono text-rose-400">Offline</code> after 60 seconds without a
-            heartbeat. The controller host is registered as an inventory node in{" "}
-            <Link href="/nodes" className="text-primary underline">
-              /nodes
-            </Link>
-            . Configuration changes advance <code className="font-mono">desired_revision</code>; if
-            deployment fails, agent rolls back to{" "}
-            <code className="font-mono">/etc/3proxy/3proxy.cfg.bak</code>.
-          </p>
-          <CodeBlock
-            title="systemd service runbook"
-            language="bash"
-            code={`# Status and logs
-systemctl status proxyfleet-agent
-journalctl -u proxyfleet-agent -f
-
-# Service restarts
-sudo systemctl restart proxyfleet-agent
-sudo systemctl restart 3proxy`}
-          />
-        </div>
       </section>
     </main>
   );

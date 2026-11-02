@@ -74,7 +74,6 @@ test("reproduction: multi-target proxy collision violates mutual exclusion const
       antigravityActiveLimit: 3,
       antigravityRotateMinutes: 10,
       antigravitySessionThreshold: 20,
-      fleetWireguard: null,
     }),
     listConnections: async (overrides) => {
       const url = overrides?.url || "";
@@ -187,7 +186,6 @@ test("reproduction: multi-target rotation breaches antigravityActiveLimit ceilin
       antigravityActiveLimit: configuredActiveLimit,
       antigravityRotateMinutes: 10,
       antigravitySessionThreshold: 20,
-      fleetWireguard: null,
     }),
     listConnections: async (overrides) => {
       const url = overrides?.url || "";

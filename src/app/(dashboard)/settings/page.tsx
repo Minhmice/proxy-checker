@@ -59,9 +59,6 @@ import type {
   SettingsMeta,
   SettingsUpdatePayload,
 } from "@/lib/types";
-import { WireGuardSettingsCard } from "@/components/nodes/wireguard-settings";
-import type { FleetWireGuardSettings } from "@/proxyfleet/wireguard";
-import { DualNineRouterCard } from "@/components/dual-router/dual-router-card";
 
 type FormState = {
   nineRouterUrl: string;
@@ -147,9 +144,6 @@ export default function SettingsPage() {
   const [testResult, setTestResult] = useState<NineRouterTestResult | null>(null);
   const [exporting, setExporting] = useState<"txt" | "csv" | null>(null);
   const [includeCredentials, setIncludeCredentials] = useState(false);
-  const [fleetWireguard, setFleetWireguard] = useState<FleetWireGuardSettings | null | undefined>(
-    undefined,
-  );
   const [backupStatus, setBackupStatus] = useState<BackupStatusResponse["status"] | null>(null);
   const [backupLoading, setBackupLoading] = useState(false);
   const [restoreLoading, setRestoreLoading] = useState(false);
@@ -262,7 +256,6 @@ export default function SettingsPage() {
         const initial = toForm(data.settings);
         setForm(initial);
         setBaselineForm(initial);
-        setFleetWireguard(data.settings.fleetWireguard ?? null);
       } catch (error) {
         if (signal?.aborted || isAbortError(error)) return;
         const message = (error as Error).message || "Failed to load configuration";
@@ -333,7 +326,7 @@ export default function SettingsPage() {
   async function handleRestoreNow() {
     if ((!password && !authenticated) || isActionPending) return;
     const confirmed = window.confirm(
-      "CRITICAL ACTION: Restoring settings and database from Git backups will overwrite settings.json, proxy registries, and dual-router states. Any uncommitted data will be permanently lost.\n\nAre you sure you want to proceed with restore?",
+      "CRITICAL ACTION: Restoring settings and database from Git backups will overwrite settings.json and proxy registries. Any uncommitted data will be permanently lost.\n\nAre you sure you want to proceed with restore?",
     );
     if (!confirmed) return;
     setRestoreLoading(true);
@@ -776,21 +769,6 @@ export default function SettingsPage() {
                 />
               )}
             </TabsTrigger>
-
-            <TabsTrigger
-              value="wireguard"
-              className="relative flex-1 min-w-[130px] flex items-center justify-center gap-2 py-2.5 px-3 text-xs sm:text-sm font-semibold rounded-lg border border-transparent transition-all text-[#9E9EA8] hover:text-white z-10 data-[state=active]:bg-[#FF5B22] data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:shadow-[#FF5B22]/25"
-            >
-              {selectedTab === "wireguard" && (
-                <motion.span
-                  layoutId={isReduced ? undefined : "settings-active-pill"}
-                  className="absolute inset-0 rounded-lg bg-[#FF5B22] shadow-md shadow-[#FF5B22]/25 -z-10"
-                  transition={{ type: "spring", stiffness: 450, damping: 35 }}
-                />
-              )}
-              <Network className="size-4 shrink-0" />
-              <span>WireGuard</span>
-            </TabsTrigger>
           </TabsList>
 
           {/* 1. 9ROUTER TAB */}
@@ -821,17 +799,29 @@ export default function SettingsPage() {
                         <Label htmlFor="ninerouter-url" className="text-xs font-semibold">
                           Endpoint URL <span className="text-destructive">*</span>
                         </Label>
-                        <FieldInfo content="Host and port of your 9Router service. Supports multiple URLs separated by comma (e.g. 192.168.1.54:20128, https://9router.minhmice.com)." />
+                        <FieldInfo content="Host and port of your 9Router service. Pi LAN (192.168.1.54:20128), Tailscale (100.74.116.125:20128), and domain (https://9router.minhmice.com) are network aliases for the same Pi, not independent masters." />
                       </div>
                       <Input
                         id="ninerouter-url"
                         type="text"
                         inputMode="url"
-                        placeholder="http://192.168.1.54:20128, https://9router.minhmice.com"
+                        placeholder="http://192.168.1.54:20128"
                         value={form.nineRouterUrl}
                         onChange={(event) => patchForm("nineRouterUrl", event.target.value)}
                         className="font-mono text-xs"
                       />
+                      <p className="text-[11px] text-muted-foreground">
+                        Single Raspberry Pi topology: LAN (
+                        <code className="font-mono text-zinc-300">192.168.1.54:20128</code>),
+                        Tailscale (
+                        <code className="font-mono text-zinc-300">100.74.116.125:20128</code>), and
+                        domain (
+                        <code className="font-mono text-zinc-300">
+                          https://9router.minhmice.com
+                        </code>
+                        ) are transport routes to the same instance. Do not configure them as
+                        separate active-active masters.
+                      </p>
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -961,8 +951,6 @@ export default function SettingsPage() {
                 </div>
               </CardFooter>
             </Card>
-
-            <DualNineRouterCard configuredUrl={form.nineRouterUrl} />
           </TabsContent>
 
           {/* 2. SYNC & HEALTH TAB */}
@@ -1669,18 +1657,6 @@ export default function SettingsPage() {
                 </div>
               </CardFooter>
             </Card>
-          </TabsContent>
-
-          {/* 5. WIREGUARD TAB */}
-          <TabsContent
-            value="wireguard"
-            forceMount
-            className="data-[state=inactive]:hidden space-y-6"
-          >
-            <WireGuardSettingsCard
-              initialSettings={fleetWireguard}
-              onSettingsSaved={(saved) => setFleetWireguard(saved)}
-            />
           </TabsContent>
         </Tabs>
 

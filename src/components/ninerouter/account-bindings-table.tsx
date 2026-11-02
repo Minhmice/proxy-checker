@@ -1,11 +1,12 @@
 "use client";
 
 import React from "react";
-import { Check, Mail, Unlink, AlertCircle, HelpCircle } from "lucide-react";
+import { Check, Mail, Unlink, AlertCircle, HelpCircle, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import type { LoadState } from "@/lib/proxy-binding-state";
 import { motion } from "motion/react";
 export interface AntigravityConnection {
   id: string;
@@ -26,20 +27,24 @@ interface AccountBindingsTableProps {
   onUnbind: (id: string) => void;
   poolMap: Record<string, { name: string; url: string; index?: number }>;
   loading?: boolean;
+  loadState?: LoadState;
+  loadError?: string | null;
+  onRetry?: () => void;
+  isFiltered?: boolean;
+  onClearFilter?: () => void;
+  unbindingMap?: Record<string, boolean>;
 }
-
 function FieldInfo({ content }: { content: string }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span
-          role="button"
-          tabIndex={0}
+        <button
+          type="button"
           aria-label="More information"
-          className="inline-flex items-center text-[#9E9EA8]/70 hover:text-[#FF5B22] transition-colors cursor-help p-0.5 ml-1"
+          className="inline-flex items-center text-[#9E9EA8]/70 hover:text-[#FF5B22] transition-colors cursor-help p-0.5 ml-1 bg-transparent border-0"
         >
           <HelpCircle className="size-3" />
-        </span>
+        </button>
       </TooltipTrigger>
       <TooltipContent
         side="top"
@@ -60,6 +65,12 @@ export function AccountBindingsTable({
   onUnbind,
   poolMap,
   loading,
+  loadState = "ready",
+  loadError,
+  onRetry,
+  isFiltered,
+  onClearFilter,
+  unbindingMap = {},
 }: AccountBindingsTableProps) {
   return (
     <div className="flex flex-col h-full rounded-2xl border border-[#23232C] bg-[#131318] shadow-sm overflow-hidden">
@@ -93,15 +104,46 @@ export function AccountBindingsTable({
 
       {/* Table Body */}
       <div className="flex-1 overflow-y-auto divide-y divide-[#23232C]/40 min-h-[450px] max-h-[620px]">
-        {loading ? (
+        {loadState === "loading" || loading ? (
           <div className="flex items-center justify-center h-48 text-xs text-[#9E9EA8]">
             Loading connections...
           </div>
-        ) : connections.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-48 text-[#9E9EA8] gap-1.5 text-xs">
-            <AlertCircle className="size-5 text-zinc-600" />
-            <span>No Antigravity accounts configured on this node</span>
+        ) : loadState === "error" ? (
+          <div className="flex flex-col items-center justify-center h-48 text-rose-400 gap-2 text-xs px-4 text-center">
+            <AlertCircle className="size-5" />
+            <span className="font-medium">{loadError || "Failed to load accounts from node"}</span>
+            {onRetry && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onRetry}
+                className="h-7 text-xs border-[#23232C] bg-[#1C1C24] text-zinc-200 hover:text-white mt-1 gap-1"
+              >
+                <RefreshCw className="size-3" />
+                Retry Connection
+              </Button>
+            )}
           </div>
+        ) : connections.length === 0 ? (
+          isFiltered ? (
+            <div className="flex flex-col items-center justify-center h-48 text-[#9E9EA8] gap-2 text-xs">
+              <span>No accounts match current search or filter</span>
+              {onClearFilter && (
+                <button
+                  type="button"
+                  onClick={onClearFilter}
+                  className="text-[#FF5B22] hover:underline text-xs"
+                >
+                  Clear filters
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center h-48 text-[#9E9EA8] gap-1.5 text-xs">
+              <AlertCircle className="size-5 text-zinc-600" />
+              <span>No Antigravity accounts configured on this node</span>
+            </div>
+          )
         ) : (
           connections.map((conn) => {
             const isSelected = selectedConnectionId === conn.id;
@@ -124,7 +166,13 @@ export function AccountBindingsTable({
                 }`}
               >
                 {/* Column 1: Identity & Status Indicator */}
-                <div className="col-span-6 flex items-center gap-2.5 min-w-0 pr-2">
+                <button
+                  type="button"
+                  onClick={() => onSelectConnection(conn.id)}
+                  aria-pressed={isSelected}
+                  aria-label={`Select account ${conn.email || conn.name || conn.id}`}
+                  className="col-span-6 flex items-center gap-2.5 min-w-0 pr-2 text-left bg-transparent border-0 p-0 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5B22] rounded-md"
+                >
                   <div
                     className={`size-2 rounded-full shrink-0 ${
                       isActive ? "bg-[#10B981] shadow-[0_0_6px_#10B981]" : "bg-zinc-600"
@@ -138,8 +186,7 @@ export function AccountBindingsTable({
                       ID: {conn.id.slice(0, 14)}...
                     </span>
                   </div>
-                </div>
-
+                </button>
                 {/* Column 2: Bound Pool */}
                 <div className="col-span-3 min-w-0 flex items-center">
                   {boundPool ? (
@@ -169,9 +216,11 @@ export function AccountBindingsTable({
                     <Button
                       size="sm"
                       variant="ghost"
+                      disabled={unbindingMap[conn.id]}
                       onClick={() => onUnbind(conn.id)}
                       title="Unbind proxy pool"
-                      className="size-7 p-0 text-[#9E9EA8] hover:text-[#EF4444] hover:bg-[#EF4444]/10"
+                      aria-label={`Unbind proxy from ${conn.email || conn.name || conn.id}`}
+                      className="size-7 p-0 text-[#9E9EA8] hover:text-[#EF4444] hover:bg-[#EF4444]/10 cursor-pointer"
                     >
                       <Unlink className="size-3.5" />
                     </Button>
@@ -180,9 +229,9 @@ export function AccountBindingsTable({
                   <Switch
                     checked={isActive}
                     onCheckedChange={(checked) => onToggleActive(conn.id, checked)}
+                    aria-label={`Toggle active status for ${conn.email || conn.name || conn.id}`}
                     className="data-[state=checked]:bg-[#10B981] data-[state=unchecked]:bg-[#23232C]"
                   />
-
                   {isSelected ? (
                     <span className="flex size-5 items-center justify-center rounded-full bg-[#FF5B22] text-white shadow-sm shadow-[#FF5B22]/30">
                       <Check className="size-3 stroke-[3]" />

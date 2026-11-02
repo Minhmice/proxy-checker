@@ -31,11 +31,25 @@ async function main() {
     return;
   }
 
+  if (command === "snapshot") {
+    console.log("Creating backup snapshot in backups/ ...");
+    const snap = createBackupSnapshot();
+    if (!snap.ok) {
+      console.error("Backup snapshot warnings/errors:", snap.errors);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(`Snapshot complete. Files: ${snap.manifest.files.length}`);
+    return;
+  }
+
   if (command === "backup" || command === "sync") {
     console.log("Creating backup snapshot in backups/ ...");
     const snap = createBackupSnapshot();
     if (!snap.ok) {
       console.error("Backup snapshot warnings/errors:", snap.errors);
+      process.exitCode = 1;
+      return;
     }
     console.log(`Snapshot complete. Files: ${snap.manifest.files.length}`);
 
@@ -56,7 +70,7 @@ async function main() {
     return;
   }
 
-  console.error(`Unknown command: ${command}. Use 'backup', 'restore', or 'status'.`);
+  console.error(`Unknown command: ${command}. Use 'backup', 'snapshot', 'restore', or 'status'.`);
   process.exitCode = 1;
 }
 

@@ -5,7 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { createBackupSnapshot, restoreBackup } from "../src/server/backup/backup-service.js";
-import { getBackupSyncStatus, hasGitRemote } from "../src/server/backup/git-sync.js";
+import {
+  getBackupSyncStatus,
+  hasGitRemote,
+  syncBackupToGit,
+} from "../src/server/backup/git-sync.js";
 import { createApiApp } from "../src/server/api/app.js";
 import type { ApiDependencies } from "../src/server/api/types.js";
 
@@ -13,13 +17,9 @@ function createMockDeps(): ApiDependencies {
   return {
     verifyControlPassword: (c) => c === "secret",
     proxyIntelligenceRepo: {} as unknown as ApiDependencies["proxyIntelligenceRepo"],
-    fleetRepo: {} as unknown as ApiDependencies["fleetRepo"],
     poolRanker: {} as unknown as ApiDependencies["poolRanker"],
     antigravityRotator: {} as unknown as ApiDependencies["antigravityRotator"],
     unifiedSyncCoordinator: {} as unknown as ApiDependencies["unifiedSyncCoordinator"],
-    fleetWireguard: () => null,
-    handleFleetRuntimeApi: async () => false,
-    handleFleetApi: async () => false,
     handleProxyCheck: async () => false,
     router: {} as unknown as ApiDependencies["router"],
     settings: {
@@ -118,14 +118,18 @@ test("backup-service restore overwrites data and purges stale wal/shm files", ()
     "utf8",
   );
 
-  const backupDbPath = path.join(backupDir, "databases", "fleet.sqlite3");
+  const backupDbPath = path.join(backupDir, "databases", "proxies.sqlite3");
   const bDb = new Database(backupDbPath);
-  bDb.exec("CREATE TABLE nodes (id TEXT PRIMARY KEY);");
-  bDb.prepare("INSERT INTO nodes (id) VALUES (?)").run("node-backup");
+  bDb.exec(
+    "CREATE TABLE proxies (proxy_key TEXT PRIMARY KEY, endpoint TEXT NOT NULL, protocol TEXT NOT NULL);",
+  );
+  bDb
+    .prepare("INSERT INTO proxies (proxy_key, endpoint, protocol) VALUES (?, ?, ?)")
+    .run("http://backup.example:8080", "backup.example:8080", "http");
   bDb.close();
 
   // Active data dir has stale wal and shm
-  const activeDbPath = path.join(dataDir, "fleet.sqlite3");
+  const activeDbPath = path.join(dataDir, "proxies.sqlite3");
   fs.writeFileSync(activeDbPath, "corrupt-old-data");
   fs.writeFileSync(`${activeDbPath}-wal`, "stale-wal");
   fs.writeFileSync(`${activeDbPath}-shm`, "stale-shm");
@@ -134,7 +138,7 @@ test("backup-service restore overwrites data and purges stale wal/shm files", ()
     const res = restoreBackup({ dataDir, backupDir });
     assert.equal(res.ok, true);
     assert.ok(res.restoredFiles.includes("settings.json"));
-    assert.ok(res.restoredFiles.includes("databases/fleet.sqlite3"));
+    assert.ok(res.restoredFiles.includes("databases/proxies.sqlite3"));
 
     // Verify wal and shm were purged
     assert.equal(fs.existsSync(`${activeDbPath}-wal`), false);
@@ -142,8 +146,16 @@ test("backup-service restore overwrites data and purges stale wal/shm files", ()
 
     // Verify database can be queried cleanly
     const restoredDb = new Database(activeDbPath, { readonly: true });
-    const row = restoredDb.prepare("SELECT * FROM nodes").get() as { id: string };
-    assert.equal(row.id, "node-backup");
+    const row = restoredDb.prepare("SELECT * FROM proxies").get() as {
+      proxy_key: string;
+      endpoint: string;
+      protocol: string;
+    };
+    assert.deepEqual(row, {
+      proxy_key: "http://backup.example:8080",
+      endpoint: "backup.example:8080",
+      protocol: "http",
+    });
     restoredDb.close();
   } finally {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
@@ -166,4 +178,19 @@ test("api/backup/status endpoint responds with status", async () => {
   const body = (await res.json()) as { ok: boolean; status?: unknown };
   assert.equal(body.ok, true);
   assert.ok(body.status);
+});
+
+test("git-sync safely handles backupDir outside repository", async () => {
+  const tmpOutsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "outside-backup-test-"));
+  try {
+    const res = await syncBackupToGit({ backupDir: tmpOutsideDir });
+    assert.equal(res.ok, false);
+    assert.match(res.error || "", /outside repository/i);
+
+    const status = await getBackupSyncStatus({ backupDir: tmpOutsideDir });
+    assert.equal(typeof status.hasUncommittedChanges, "boolean");
+    assert.equal(status.hasUncommittedChanges, false);
+  } finally {
+    fs.rmSync(tmpOutsideDir, { recursive: true, force: true });
+  }
 });

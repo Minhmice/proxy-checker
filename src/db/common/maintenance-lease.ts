@@ -4,6 +4,10 @@ import path from "node:path";
 
 export type DataLeaseMode = "application" | "maintenance";
 
+export const LEASE_HEARTBEAT_MS = 15_000;
+// ponytail: event loop blocked > 2 min lets a second instance steal the lease; raise if seen.
+export const LEASE_STALE_MS = 120_000;
+
 function processIsAlive(pid: number): boolean {
   if (pid === process.pid) return true;
   if (!Number.isInteger(pid) || pid <= 0) return false;
@@ -47,7 +51,11 @@ export function acquireDataLease(dataDir: string, mode: DataLeaseMode): () => vo
       : [];
     const ownerMode = owner[0];
     const ownerPid = Number(owner[1]);
-    if (!Number.isInteger(ownerPid) || processIsAlive(ownerPid)) {
+    // Crash leaves the owner file behind and the OS may hand its PID to another node
+    // process; a live owner refreshes mtime, so a stale heartbeat means dead owner.
+    const heartbeatFresh =
+      fs.existsSync(ownerPath) && Date.now() - fs.statSync(ownerPath).mtimeMs < LEASE_STALE_MS;
+    if (!Number.isInteger(ownerPid) || (heartbeatFresh && processIsAlive(ownerPid))) {
       throw new Error(
         mode === "maintenance"
           ? `Data directory is in use; stop application writers before maintenance: ${dataDir}`
@@ -60,14 +68,23 @@ export function acquireDataLease(dataDir: string, mode: DataLeaseMode): () => vo
     fs.rmSync(leaseDir, { recursive: true, force: true });
     fs.mkdirSync(leaseDir);
   }
-  fs.writeFileSync(path.join(leaseDir, "owner"), `${mode}\n${process.pid}\n`, {
-    encoding: "utf8",
-  });
+  const ownerFile = path.join(leaseDir, "owner");
+  fs.writeFileSync(ownerFile, `${mode}\n${process.pid}\n`, { encoding: "utf8" });
+  const heartbeat = setInterval(() => {
+    try {
+      const now = new Date();
+      fs.utimesSync(ownerFile, now, now);
+    } catch {
+      // lease dir removed externally; nothing to refresh
+    }
+  }, LEASE_HEARTBEAT_MS);
+  heartbeat.unref();
   let released = false;
   const release = () => {
     if (released) return;
     released = true;
     try {
+      clearInterval(heartbeat);
       process.removeListener("exit", release);
       fs.rmSync(leaseDir, { recursive: true, force: true });
     } catch {

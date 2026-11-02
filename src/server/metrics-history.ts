@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { writeJsonAtomicSync } from "./fs-atomic.js";
 import type { MetricsHistory, MetricsSnapshot, PoolRecord } from "../lib/types.js";
 
 const MAX_SNAPSHOTS = 500;
@@ -17,10 +18,7 @@ export function createMetricsHistory({ dataDir }: { dataDir: string }) {
   }
 
   function write(history: MetricsHistory) {
-    fs.mkdirSync(dataDir, { recursive: true });
-    const temp = `${historyFile}.tmp`;
-    fs.writeFileSync(temp, JSON.stringify(history, null, 2));
-    fs.renameSync(temp, historyFile);
+    writeJsonAtomicSync(historyFile, history);
   }
 
   function recordFromPools(

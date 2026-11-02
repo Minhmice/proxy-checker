@@ -3,7 +3,7 @@ import { inspectDatabase } from "../src/db/common/sqlite.js";
 
 const beforeDir = path.resolve(process.argv[2] || "data");
 const afterDir = path.resolve(process.argv[3] || "data");
-const files = ["proxies.sqlite3", "fleet.sqlite3", "antigravity-rotation.sqlite3"];
+const files = ["proxies.sqlite3", "antigravity-rotation.sqlite3"];
 
 for (const file of files) {
   const before = inspectDatabase(path.join(beforeDir, file));

@@ -119,36 +119,3 @@ test("app-config normalizes, validates, and updates nineRouterUrl in settings", 
     } catch {}
   }
 });
-
-test("fleet overlay settings persist validated public configuration without private keys", () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fleet-settings-"));
-  const savedPath = process.env.APP_CONFIG_PATH;
-  const savedPassword = process.env.CONTROL_PASSWORD;
-  process.env.APP_CONFIG_PATH = path.join(tmpDir, "settings.json");
-  process.env.CONTROL_PASSWORD = "isolated-fleet-settings";
-  try {
-    initAppConfig();
-    const configured = {
-      interfaceName: "proxyfleet",
-      controllerAddressCidr: "10.77.0.1/24",
-      publicEndpoint: "vpn.example.test:51820",
-      listenPort: 51820,
-      mtu: null,
-    };
-    updateSettings({ fleetWireguard: configured });
-    initAppConfig();
-    assert.deepEqual(getSettingsSecrets().fleetWireguard, configured);
-    assert.throws(() =>
-      updateSettings({ fleetWireguard: { ...configured, interfaceName: "omp-pi" } }),
-    );
-    assert.deepEqual(getSettingsSecrets().fleetWireguard, configured);
-    updateSettings({ fleetWireguard: null });
-    assert.equal(getSettingsSecrets().fleetWireguard, null);
-  } finally {
-    if (savedPath === undefined) delete process.env.APP_CONFIG_PATH;
-    else process.env.APP_CONFIG_PATH = savedPath;
-    if (savedPassword === undefined) delete process.env.CONTROL_PASSWORD;
-    else process.env.CONTROL_PASSWORD = savedPassword;
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  }
-});

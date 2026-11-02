@@ -4,23 +4,9 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
-import {
-  LayoutDashboard,
-  Globe,
-  HelpCircle,
-  Settings,
-  LogOut,
-  Server,
-  Network,
-  Activity,
-  Bell,
-  BarChart3,
-  Shuffle,
-  Flame,
-} from "lucide-react";
+import { Globe, Settings, LogOut, BarChart3, Shuffle, Flame } from "lucide-react";
 import { useAuth } from "./auth-provider";
 import { AntigravityQuotaWidget } from "./antigravity-quota-widget";
-import { FleetUpdateBanner } from "@/components/fleet/update-notifier";
 import { cn } from "@/lib/utils";
 import {
   Sidebar,
@@ -37,24 +23,12 @@ import {
   SidebarSeparator,
 } from "@/components/ui/sidebar";
 
-const NAV_MAIN = [
-  { href: "/", label: "Overview", icon: LayoutDashboard },
+const NAV_ITEMS = [
+  { href: "/", label: "Dashboard", icon: BarChart3 },
   { href: "/proxies", label: "Proxies", icon: Globe },
-  { href: "/help", label: "Help Center", icon: HelpCircle },
+  { href: "/bindings", label: "Bindings", icon: Shuffle },
+  { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
-
-const NAV_INFRASTRUCTURE = [
-  { href: "/nodes", label: "Nodes", icon: Server },
-  { href: "/proxy-endpoints", label: "Proxy Endpoints", icon: Network },
-  { href: "/monitoring", label: "Monitoring", icon: Activity },
-  { href: "/events", label: "Events", icon: Bell },
-] as const;
-
-const NAV_NINEROUTER = [
-  { href: "/ninerouter/dashboard", label: "Dashboard", icon: BarChart3 },
-  { href: "/ninerouter/proxies", label: "Proxies & Bindings", icon: Shuffle },
-] as const;
-
 function NavMenuItem({
   href,
   label,
@@ -113,6 +87,7 @@ function NavMenuItem({
         <Link
           href={href}
           onClick={handleClick}
+          aria-current={isActive ? "page" : undefined}
           className="flex items-center gap-2.5 w-full group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0"
         >
           {isActive && (
@@ -180,7 +155,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
                   </span>
                   <span className="truncate text-[10px] text-muted-foreground/80 flex items-center gap-1 mt-0.5 font-medium">
                     <Flame className="size-3 text-[#FFAA00] animate-pulse shrink-0" />
-                    Fleet Controller
+                    Proxy &amp; Token Control
                   </span>
                 </div>
               </Link>
@@ -191,12 +166,9 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 
       <SidebarContent className="px-2 py-1.5 gap-0.5 scrollbar-thin group-data-[collapsible=icon]:px-0">
         <SidebarGroup className="p-0.5 group-data-[collapsible=icon]:p-0">
-          <SidebarGroupLabel className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold px-2 mb-1 group-data-[collapsible=icon]:hidden">
-            Workspace
-          </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu className="gap-0.5">
-              {NAV_MAIN.map((item) => {
+              {NAV_ITEMS.map((item) => {
                 const isActive =
                   item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
                 return (
@@ -212,76 +184,8 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-
-        <SidebarSeparator className="my-1.5" />
-
-        <SidebarGroup className="p-0.5 group-data-[collapsible=icon]:p-0">
-          <SidebarGroupLabel className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold px-2 mb-1 group-data-[collapsible=icon]:hidden">
-            Infrastructure
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu className="gap-0.5">
-              {NAV_INFRASTRUCTURE.map((item) => {
-                const isActive = pathname.startsWith(item.href);
-                return (
-                  <NavMenuItem
-                    key={item.href}
-                    href={item.href}
-                    label={item.label}
-                    icon={item.icon}
-                    isActive={isActive}
-                  />
-                );
-              })}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarSeparator className="my-1.5" />
-
-        <SidebarGroup className="p-0.5 group-data-[collapsible=icon]:p-0">
-          <SidebarGroupLabel className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold px-2 mb-1 group-data-[collapsible=icon]:hidden">
-            9Router Modifier
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu className="gap-0.5">
-              {NAV_NINEROUTER.map((item) => {
-                const isActive = pathname.startsWith(item.href);
-                return (
-                  <NavMenuItem
-                    key={item.href}
-                    href={item.href}
-                    label={item.label}
-                    icon={item.icon}
-                    isActive={isActive}
-                  />
-                );
-              })}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarSeparator className="my-1.5" />
-
-        <SidebarGroup className="p-0.5 group-data-[collapsible=icon]:p-0">
-          <SidebarGroupLabel className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold px-2 mb-1 group-data-[collapsible=icon]:hidden">
-            System
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu className="gap-0.5">
-              <NavMenuItem
-                href="/settings"
-                label="Settings"
-                icon={Settings}
-                isActive={pathname.startsWith("/settings")}
-              />
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
       </SidebarContent>
-
       <SidebarFooter className="border-t border-[#23232C] p-2 space-y-1.5 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:items-center">
-        <FleetUpdateBanner />
         <AntigravityQuotaWidget />
         <SidebarMenu>
           <SidebarMenuItem className="group-data-[collapsible=icon]:flex group-data-[collapsible=icon]:justify-center">

@@ -226,14 +226,14 @@ export default function AuthPage() {
                     minhmiceProxy
                   </span>
                   <span className="text-xs font-mono text-slate-400 tracking-wide">
-                    9Router Fleet Companion
+                    Token &amp; Proxy Observer
                   </span>
                 </div>
               </div>
 
               <div className="mt-8 lg:mt-16">
                 <h1 className="text-2xl sm:text-4xl lg:text-5xl font-bold tracking-tight text-ink leading-[1.14]">
-                  High-throughput proxy fleet orchestration under complete control.
+                  High-throughput proxy management and token efficiency under complete control.
                 </h1>
                 <p className="mt-4 text-sm sm:text-base text-slate-300 max-w-xl leading-relaxed">
                   Live latency ranking, sub-second route toggling, and automated health verification
@@ -322,7 +322,7 @@ export default function AuthPage() {
               </div>
               <div className="auth-trust-item text-slate-300">
                 <Server className="size-3.5 text-slate-400" />
-                <span>Local Fleet Controller</span>
+                <span>Protected Token Console</span>
               </div>
             </div>
           </div>
@@ -368,7 +368,7 @@ export default function AuthPage() {
                   Authorize Control Plane
                 </CardTitle>
                 <CardDescription className="text-sm text-slate-300">
-                  Enter control password to access proxy fleet routes and settings.
+                  Enter control password to access proxy management routes and settings.
                 </CardDescription>
               </CardHeader>
               <CardContent>

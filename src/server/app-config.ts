@@ -1,15 +1,15 @@
-import {
-  validateFleetWireGuardSettings,
-  type FleetWireGuardSettings,
-} from "../proxyfleet/wireguard.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-
+import { writeJsonAtomicSync } from "./fs-atomic.js";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 function getSettingsFilePath(): string {
-  return process.env.APP_CONFIG_PATH || path.join(root, "data", "settings.json");
+  if (process.env.APP_CONFIG_PATH) return process.env.APP_CONFIG_PATH;
+  if (process.env.APP_DATA_DIR) {
+    return path.join(path.resolve(process.env.APP_DATA_DIR), "settings.json");
+  }
+  return path.join(root, "data", "settings.json");
 }
 
 export interface AppSettings {
@@ -27,7 +27,6 @@ export interface AppSettings {
   antigravityActiveLimit: number;
   antigravityRotateMinutes: number;
   antigravitySessionThreshold: number;
-  fleetWireguard?: FleetWireGuardSettings | null;
 }
 
 export interface AppSettingsPublic {
@@ -46,7 +45,6 @@ export interface AppSettingsPublic {
   antigravityActiveLimit: number;
   antigravityRotateMinutes: number;
   antigravitySessionThreshold: number;
-  fleetWireguard?: FleetWireGuardSettings | null;
 }
 
 export interface SettingsMeta {
@@ -70,7 +68,6 @@ export interface SettingsUpdatePatch {
   antigravityActiveLimit?: number;
   antigravityRotateMinutes?: number;
   antigravitySessionThreshold?: number;
-  fleetWireguard?: FleetWireGuardSettings | null;
 }
 
 type ChangeListener = (settings: AppSettings, changed: string[]) => void;
@@ -108,7 +105,6 @@ function defaultsFromEnv(): AppSettings {
     antigravityActiveLimit: envNumber("ANTIGRAVITY_ACTIVE_LIMIT", 3),
     antigravityRotateMinutes: envNumber("ANTIGRAVITY_ROTATE_MINUTES", 10),
     antigravitySessionThreshold: envNumber("ANTIGRAVITY_SESSION_THRESHOLD", 20),
-    fleetWireguard: null,
   };
 }
 
@@ -196,10 +192,6 @@ function normalize(settingsValue: AppSettings): AppSettings {
       5,
       50,
     ),
-    fleetWireguard:
-      settingsValue.fleetWireguard == null
-        ? null
-        : validateFleetWireGuardSettings(settingsValue.fleetWireguard),
   };
 }
 
@@ -222,10 +214,7 @@ function syncProcessEnv(next: AppSettings) {
 
 function writeSettingsFile(next: AppSettings) {
   const file = getSettingsFilePath();
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temp = `${file}.tmp`;
-  fs.writeFileSync(temp, JSON.stringify(next, null, 2));
-  fs.renameSync(temp, file);
+  writeJsonAtomicSync(file, next);
 }
 
 function loadFromDisk(): AppSettings | null {
@@ -282,7 +271,6 @@ export function getSettingsPublic(): { settings: AppSettingsPublic; meta: Settin
       antigravityActiveLimit: settings.antigravityActiveLimit,
       antigravityRotateMinutes: settings.antigravityRotateMinutes,
       antigravitySessionThreshold: settings.antigravitySessionThreshold,
-      fleetWireguard: settings.fleetWireguard ?? null,
     },
     meta: {
       restartRequired: [],
@@ -300,11 +288,6 @@ export function verifyControlPassword(candidate: string): boolean {
 export function updateSettings(patch: SettingsUpdatePatch) {
   const next = { ...settings };
   const changed: string[] = [];
-  if (patch.fleetWireguard !== undefined) {
-    next.fleetWireguard =
-      patch.fleetWireguard === null ? null : validateFleetWireGuardSettings(patch.fleetWireguard);
-    changed.push("fleetWireguard");
-  }
 
   if (patch.controlPassword !== undefined) {
     if (!patch.currentPassword || !verifyControlPassword(patch.currentPassword)) {

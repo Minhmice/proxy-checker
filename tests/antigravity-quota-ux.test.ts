@@ -35,16 +35,3 @@ test("AntigravityQuotaWidget includes collapsible icon-mode responsive containme
     "Must attach a live ticker interval when panel is open",
   );
 });
-
-test("FleetUpdateBanner supports icon-mode collapsed sidebar rail", () => {
-  const content = fs.readFileSync("src/components/fleet/update-notifier.tsx", "utf8");
-  assert.ok(
-    content.includes("group-data-[collapsible=icon]:size-8!") ||
-      content.includes("group-data-[collapsible=icon]:size-9!"),
-    "FleetUpdateBanner must support icon rail sizing",
-  );
-  assert.ok(
-    content.includes("group-data-[collapsible=icon]:hidden"),
-    "FleetUpdateBanner text must hide in icon mode",
-  );
-});

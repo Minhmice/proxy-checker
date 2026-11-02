@@ -99,10 +99,9 @@ test("unified sync coordinator chains 9router sync, db reconcile, and antigravit
   assert.equal(result.started, true);
   assert.equal(coordinator.isRunning, false);
 });
-test("coordinator runs router sync, antigravity rotator, and fleet maintenance concurrently", async () => {
+test("coordinator runs router sync and antigravity rotator concurrently", async () => {
   const routerStarted = Promise.withResolvers<void>();
   const rotatorStarted = Promise.withResolvers<void>();
-  const fleetStarted = Promise.withResolvers<void>();
   const releaseGate = Promise.withResolvers<void>();
 
   let observedAllActive = false;
@@ -128,28 +127,22 @@ test("coordinator runs router sync, antigravity rotator, and fleet maintenance c
   const coordinator = createUnifiedSyncCoordinator({
     poolRanker: mockPoolRanker,
     antigravityRotator: mockRotator,
-    fleetMaintenance: async () => {
-      fleetStarted.resolve();
-      await releaseGate.promise;
-      return { pendingRemovals: 1, syncedEndpoints: 4 };
-    },
   });
 
   const cyclePromise = coordinator.runUnifiedSyncCycle();
 
-  await Promise.all([routerStarted.promise, rotatorStarted.promise, fleetStarted.promise]);
+  await Promise.all([routerStarted.promise, rotatorStarted.promise]);
   observedAllActive = true;
   releaseGate.resolve();
 
   const result = await cyclePromise;
   assert.equal(result.started, true);
   assert.equal(observedAllActive, true);
-  assert.ok(result.fleetResult);
-  assert.equal(result.fleetResult.pendingRemovals, 1);
-  assert.equal(result.fleetResult.syncedEndpoints, 4);
+  assert.ok(result.syncResult);
+  assert.ok(result.rotatorSnapshot);
 });
 
-test("fleet maintenance failure is isolated and does not fail router or rotator work", async () => {
+test("rotator failure is isolated and does not fail router work", async () => {
   const mockPoolRanker = {
     async syncPools() {
       return { ok: true, active: 5 };
@@ -159,7 +152,7 @@ test("fleet maintenance failure is isolated and does not fail router or rotator 
 
   const mockRotator = {
     async runRotation() {
-      return { activeCount: 2 };
+      throw new Error("Rotator API timeout");
     },
     isRunning: false,
   };
@@ -167,23 +160,17 @@ test("fleet maintenance failure is isolated and does not fail router or rotator 
   const coordinator = createUnifiedSyncCoordinator({
     poolRanker: mockPoolRanker,
     antigravityRotator: mockRotator,
-    fleetMaintenance: async () => {
-      throw new Error("Pi worker host timeout");
-    },
   });
 
   const result = await coordinator.runUnifiedSyncCycle();
   assert.equal(result.started, true);
   assert.ok(result.syncResult);
-  assert.ok(result.rotatorSnapshot);
-  assert.ok(result.fleetResult);
-  assert.equal(result.fleetResult.error, "Pi worker host timeout");
+  assert.equal(result.error, "Rotator API timeout");
 });
 
 test("coordinator respects selective skip flags for router and rotation without error", async () => {
   let routerCalled = false;
   let rotatorCalled = false;
-  let fleetCalled = false;
 
   const mockPoolRanker = {
     async syncPools() {
@@ -204,53 +191,12 @@ test("coordinator respects selective skip flags for router and rotation without 
   const coordinator = createUnifiedSyncCoordinator({
     poolRanker: mockPoolRanker,
     antigravityRotator: mockRotator,
-    fleetMaintenance: async () => {
-      fleetCalled = true;
-      return { pendingRemovals: 0, syncedEndpoints: 2 };
-    },
   });
 
   const result = await coordinator.runUnifiedSyncCycle({ router: false, rotation: false });
   assert.equal(result.started, true);
   assert.equal(routerCalled, false);
   assert.equal(rotatorCalled, false);
-  assert.equal(fleetCalled, true);
   assert.equal(result.routerSkipped, true);
   assert.equal(result.rotationSkipped, true);
-  assert.ok(result.fleetResult);
-  assert.equal(result.fleetResult.syncedEndpoints, 2);
-});
-test("fleet-only cycle runs even if excluded router or rotator are busy", async () => {
-  let fleetRan = false;
-
-  const mockPoolRanker = {
-    async syncPools() {
-      throw new Error("should not be called");
-    },
-    isSyncing: () => true, // router is busy!
-  };
-
-  const mockRotator = {
-    async runRotation() {
-      throw new Error("should not be called");
-    },
-    isRunning: true, // rotator is busy!
-  };
-
-  const coordinator = createUnifiedSyncCoordinator({
-    poolRanker: mockPoolRanker,
-    antigravityRotator: mockRotator,
-    fleetMaintenance: async () => {
-      fleetRan = true;
-      return { pendingRemovals: 2, syncedEndpoints: 5 };
-    },
-  });
-
-  const result = await coordinator.runUnifiedSyncCycle({ router: false, rotation: false });
-  assert.equal(result.started, true);
-  assert.equal(fleetRan, true);
-  assert.equal(result.routerSkipped, true);
-  assert.equal(result.rotationSkipped, true);
-  assert.ok(result.fleetResult);
-  assert.equal(result.fleetResult.syncedEndpoints, 5);
 });

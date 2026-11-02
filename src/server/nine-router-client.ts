@@ -100,6 +100,13 @@ async function fetchWithSignal(
   }
 }
 
+async function delay(ms: number, signal?: AbortSignal | null): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  setTimeout(resolve, ms);
+  await promise;
+  signal?.throwIfAborted();
+}
+
 function extractAuthCookie(response: Response): string | null {
   const setCookies =
     typeof response.headers.getSetCookie === "function" ? response.headers.getSetCookie() : [];
@@ -215,15 +222,30 @@ async function request<T>(
     timeoutMs,
     signal: options.signal,
   });
-  const signal = combineSignals(timeoutMs, options.signal);
-  const response = await fetchWithSignal(
-    `${config.url}${path}`,
-    {
-      ...options,
-      headers: { ...headers, ...(options.headers as Record<string, string>) },
-    },
-    signal,
-  );
+  const method = (options.method ?? "GET").toUpperCase();
+  // ponytail: one retry for reads only; mutations are never replayed (could double-apply).
+  const attempts = method === "GET" ? 2 : 1;
+  let response: Response | undefined;
+  for (let attempt = 1; ; attempt++) {
+    const signal = combineSignals(timeoutMs, options.signal);
+    try {
+      response = await fetchWithSignal(
+        `${config.url}${path}`,
+        {
+          ...options,
+          headers: { ...headers, ...(options.headers as Record<string, string>) },
+        },
+        signal,
+      );
+    } catch (error) {
+      if (attempt >= attempts || signal.aborted) throw error;
+      await delay(500, options.signal);
+      continue;
+    }
+    if (attempt >= attempts || ![502, 503, 504].includes(response.status)) break;
+    await response.body?.cancel();
+    await delay(500, options.signal);
+  }
   const text = await response.text();
   let body: Record<string, unknown>;
   try {

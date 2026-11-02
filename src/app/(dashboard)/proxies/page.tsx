@@ -243,13 +243,13 @@ export default function ProxiesPage() {
             ? `Re-assigned ${res.reassignedCount} account(s) (${res.forbiddenAccounts || 0} forbidden) to clean proxies`
             : "All accounts verified: no forbidden proxies found",
         );
-        await loadProxies();
       } else {
         toast.error(res.error || "Failed to reset proxies");
       }
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
+      await loadProxies().catch(() => null);
       setResettingProxies(false);
     }
   };
@@ -507,7 +507,7 @@ export default function ProxiesPage() {
             ) : (
               <RefreshCw className="h-3.5 w-3.5" />
             )}
-            <span>Sync & check fleet</span>
+            <span>Sync & check proxies</span>
           </Button>
         </div>
       </div>

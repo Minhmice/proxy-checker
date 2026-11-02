@@ -7,6 +7,14 @@ import { fetchTokenUsage } from "@/lib/api";
 import { formatTokens } from "@/components/ninerouter/mini-usage-card";
 import type { AggregatedTokenUsage } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 // --- 5x7 DOT-MATRIX GLYPH SPECIFICATION ---
 // 1 = illuminated dot (pure white #FFFFFF with soft luminous aura)
@@ -331,23 +339,21 @@ function DotMatrixDisplay({ text, className }: DotMatrixDisplayProps) {
 }
 
 // --- TELEMETRY PERIOD DEFINITIONS ---
-const PERIODS = [
+export const TOKEN_USAGE_PERIODS = [
   { id: "today", label: "Today", fullLabel: "Today" },
   { id: "24h", label: "24h", fullLabel: "Last 24 hours" },
   { id: "7d", label: "7D", fullLabel: "Last 7 days" },
   { id: "30d", label: "30D", fullLabel: "Last 30 days" },
-  { id: "all", label: "All", fullLabel: "All time" },
 ];
 
 interface TokenUsageCardProps {
   className?: string;
-  defaultPeriod?: string;
-  showNodeSelector?: boolean;
+  period: string;
 }
 
-export function TokenUsageCard({ className, defaultPeriod = "today" }: TokenUsageCardProps) {
+export function TokenUsageCard({ className, period }: TokenUsageCardProps) {
   const { password } = useAuth();
-  const [period, setPeriod] = useState(defaultPeriod);
+
   const [data, setData] = useState<AggregatedTokenUsage | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -357,6 +363,11 @@ export function TokenUsageCard({ className, defaultPeriod = "today" }: TokenUsag
   const [displayMode, setDisplayMode] = useState<"tokens" | "cost">("tokens");
   const [isSwitching, setIsSwitching] = useState(false);
 
+  // Keep track of latest fetched snapshot and active period across renders/fetches
+  const latestDataRef = useRef<AggregatedTokenUsage | null>(null);
+  const activePeriodRef = useRef(period);
+  activePeriodRef.current = period;
+
   // Keep track of previous values for dynamic trend calculations across refreshes
   const prevTokensRef = useRef<number | null>(null);
   const prevCostRef = useRef<number | null>(null);
@@ -365,7 +376,7 @@ export function TokenUsageCard({ className, defaultPeriod = "today" }: TokenUsag
     async (isManualRefresh = false) => {
       if (isManualRefresh) {
         setRefreshing(true);
-      } else if (!data) {
+      } else if (!latestDataRef.current || latestDataRef.current.period !== period) {
         setLoading(true);
       }
       setError(null);
@@ -379,24 +390,36 @@ export function TokenUsageCard({ className, defaultPeriod = "today" }: TokenUsag
           controller.signal,
         );
 
-        // Store previous value before updating to compute dynamic delta
-        if (data?.totalTokens != null) {
-          prevTokensRef.current = data.totalTokens;
-        }
-        if (data?.totalCost != null) {
-          prevCostRef.current = data.totalCost;
+        // If user changed period while request was in-flight, discard stale result
+        if (activePeriodRef.current !== period) {
+          return;
         }
 
+        // Only compare snapshots from the same period.
+        const prevSnapshot = latestDataRef.current;
+        if (prevSnapshot?.period === period) {
+          if (prevSnapshot.totalTokens != null) prevTokensRef.current = prevSnapshot.totalTokens;
+          if (prevSnapshot.totalCost != null) prevCostRef.current = prevSnapshot.totalCost;
+        } else {
+          prevTokensRef.current = null;
+          prevCostRef.current = null;
+        }
+
+        latestDataRef.current = result;
         setData(result);
         setError(null);
       } catch (err) {
-        setError((err as Error).message || "Failed to load token usage statistics");
+        if (activePeriodRef.current === period) {
+          setError((err as Error).message || "Failed to load token usage statistics");
+        }
       } finally {
-        setLoading(false);
-        setRefreshing(false);
+        if (activePeriodRef.current === period) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     },
-    [period, data, password],
+    [period, password],
   );
 
   useEffect(() => {
@@ -407,14 +430,17 @@ export function TokenUsageCard({ className, defaultPeriod = "today" }: TokenUsag
     return () => clearInterval(interval);
   }, [loadData]);
 
-  const currentPeriod = useMemo(() => PERIODS.find((p) => p.id === period) ?? PERIODS[0], [period]);
+  const currentPeriod = useMemo(
+    () => TOKEN_USAGE_PERIODS.find((p) => p.id === period) ?? TOKEN_USAGE_PERIODS[0],
+    [period],
+  );
 
-  const totalTokens = data?.totalTokens ?? 0;
-  const promptTokens = data?.totalPromptTokens ?? 0;
-  const completionTokens = data?.totalCompletionTokens ?? 0;
-  const cachedTokens = data?.totalCachedTokens ?? 0;
+  const totalTokens = data?.totalTokens;
+  const promptTokens = data?.totalPromptTokens;
+  const completionTokens = data?.totalCompletionTokens;
+  const cachedTokens = data?.totalCachedTokens;
   const requests = data?.totalRequests ?? 0;
-  const cost = data?.totalCost ?? 0;
+  const cost = data?.totalCost;
 
   const nodes = data?.nodes ?? [];
   const onlineNodes = nodes.filter((n) => n.online);
@@ -424,10 +450,11 @@ export function TokenUsageCard({ className, defaultPeriod = "today" }: TokenUsag
   const dotMatrixDisplay = useMemo(() => {
     if (loading && !data) return "—";
     if (displayMode === "cost") {
+      if (cost == null) return "—";
       const roundedCost = Math.round(cost * 100) / 100;
       return `$${roundedCost.toFixed(2)}`;
     }
-    return formatTokens(totalTokens);
+    return totalTokens == null ? "—" : formatTokens(totalTokens);
   }, [displayMode, cost, totalTokens, loading, data]);
 
   // Restrained toggle transition (180–220ms opacity and slight translateY)
@@ -453,24 +480,28 @@ export function TokenUsageCard({ className, defaultPeriod = "today" }: TokenUsag
   // Dynamic Trend & Comparison Calculations (truthful to real data semantics)
   const { trendDirection, trendPercent, supportingText } = useMemo(() => {
     if (displayMode === "tokens") {
-      // Prompt cache efficiency or delta comparison
-      const cacheRate = totalTokens > 0 ? (cachedTokens / totalTokens) * 100 : 0;
       const prev = prevTokensRef.current;
-      const hasDelta = prev !== null && prev > 0 && totalTokens !== prev;
-      const deltaPercent = hasDelta ? ((totalTokens - prev) / prev) * 100 : cacheRate;
+      const deltaPercent =
+        prev !== null &&
+        prev > 0 &&
+        totalTokens != null &&
+        Number.isFinite(totalTokens) &&
+        totalTokens !== prev
+          ? ((totalTokens - prev) / prev) * 100
+          : null;
 
       const direction: "up" | "down" | "neutral" =
-        deltaPercent > 0.05 ? "up" : deltaPercent < -0.05 ? "down" : "neutral";
+        deltaPercent !== null && deltaPercent > 0.05
+          ? "up"
+          : deltaPercent !== null && deltaPercent < -0.05
+            ? "down"
+            : "neutral";
 
       const percentStr =
-        deltaPercent !== 0
-          ? Math.abs(deltaPercent).toFixed(1)
-          : cacheRate > 0
-            ? cacheRate.toFixed(1)
-            : null;
+        deltaPercent !== null && deltaPercent !== 0 ? Math.abs(deltaPercent).toFixed(1) : null;
 
       const support =
-        cachedTokens > 0
+        cachedTokens != null && cachedTokens > 0 && promptTokens != null
           ? `${formatTokens(promptTokens)} in • ${formatTokens(cachedTokens)} cached (${currentPeriod.label})`
           : `${requests.toLocaleString()} requests • ${currentPeriod.label}`;
 
@@ -480,26 +511,34 @@ export function TokenUsageCard({ className, defaultPeriod = "today" }: TokenUsag
         supportingText: support,
       };
     }
-
-    // Cost mode: Cost savings from caching and cost per volume
-    const cacheRate = totalTokens > 0 ? (cachedTokens / totalTokens) * 100 : 0;
     const prevCost = prevCostRef.current;
-    const hasCostDelta = prevCost !== null && prevCost > 0 && cost !== prevCost;
-    const costDeltaPercent = hasCostDelta ? ((cost - prevCost) / prevCost) * 100 : cacheRate;
+    const costDeltaPercent =
+      prevCost !== null &&
+      prevCost > 0 &&
+      cost != null &&
+      Number.isFinite(cost) &&
+      cost !== prevCost
+        ? ((cost - prevCost) / prevCost) * 100
+        : null;
 
     const direction: "up" | "down" | "neutral" =
-      costDeltaPercent > 0.05 ? "up" : costDeltaPercent < -0.05 ? "down" : "neutral";
+      costDeltaPercent !== null && costDeltaPercent > 0.05
+        ? "up"
+        : costDeltaPercent !== null && costDeltaPercent < -0.05
+          ? "down"
+          : "neutral";
 
     const percentStr =
-      costDeltaPercent !== 0
+      costDeltaPercent !== null && costDeltaPercent !== 0
         ? Math.abs(costDeltaPercent).toFixed(1)
-        : cacheRate > 0
-          ? cacheRate.toFixed(1)
-          : null;
+        : null;
 
-    const avgPerMillion = totalTokens > 0 ? (cost / totalTokens) * 1_000_000 : 0;
+    const avgPerMillion =
+      cost != null && Number.isFinite(cost) && totalTokens != null && totalTokens > 0
+        ? (cost / totalTokens) * 1_000_000
+        : null;
     const support =
-      cost > 0
+      avgPerMillion !== null
         ? `~$${avgPerMillion.toFixed(3)}/M tokens • ${requests.toLocaleString()} reqs`
         : `${requests.toLocaleString()} requests • ${currentPeriod.label}`;
 
@@ -509,6 +548,23 @@ export function TokenUsageCard({ className, defaultPeriod = "today" }: TokenUsag
       supportingText: support,
     };
   }, [displayMode, totalTokens, cachedTokens, promptTokens, cost, requests, currentPeriod]);
+  const efficiency = (numerator: number | undefined, denominator: number | undefined) =>
+    numerator != null &&
+    denominator != null &&
+    Number.isFinite(numerator) &&
+    Number.isFinite(denominator) &&
+    denominator > 0
+      ? `${((numerator / denominator) * 100).toFixed(1)}%`
+      : "Unavailable";
+  const modelRows = Object.entries(data?.byModel ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  const completionPromptRatio =
+    data && promptTokens != null && promptTokens > 0 && completionTokens != null
+      ? (completionTokens / promptTokens) * 100
+      : null;
+  const cacheSavingsRate =
+    data && totalTokens != null && totalTokens > 0 && cachedTokens != null
+      ? (cachedTokens / totalTokens) * 100
+      : null;
 
   return (
     <div
@@ -554,33 +610,13 @@ export function TokenUsageCard({ className, defaultPeriod = "today" }: TokenUsag
             </span>
           </div>
 
-          {/* Grouped Period Selector Pills + Refresh Action */}
           <div className="flex items-center gap-1.5 shrink-0">
-            <div className="flex items-center bg-[#090F42]/60 border border-[#867ACF]/20 rounded-xl p-0.5 gap-0.5">
-              {PERIODS.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => setPeriod(p.id)}
-                  className={cn(
-                    "h-6 px-2 sm:px-2.5 text-[11px] font-semibold rounded-lg transition-all cursor-pointer",
-                    period === p.id
-                      ? "bg-[#3442DC]/60 text-white border border-[#A899FB]/30 shadow-xs"
-                      : "text-[#A2A8D0] hover:text-white hover:bg-white/[0.06]",
-                  )}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Subtle Refresh Action */}
             <button
               type="button"
               onClick={() => void loadData(true)}
               disabled={refreshing}
-              className="text-[#A2A8D0] hover:text-white transition-colors cursor-pointer p-1 rounded-lg hover:bg-white/[0.06]"
-              title="Refresh telemetry"
+              className="text-[#A2A8D0] hover:text-white transition-colors cursor-pointer p-2 rounded-lg hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#A899FB]"
+              aria-label="Refresh telemetry"
             >
               <RefreshCw className={cn("size-3.5", refreshing && "animate-spin text-[#A899FB]")} />
             </button>
@@ -618,12 +654,12 @@ export function TokenUsageCard({ className, defaultPeriod = "today" }: TokenUsag
             tabIndex={0}
             onClick={handleToggleMode}
             onKeyDown={handleKeyDown}
-            aria-label={`Current metric: ${displayMode === "tokens" ? `${totalTokens.toLocaleString()} tokens` : `$${cost.toFixed(2)} cost`}. Click or press Enter to toggle between tokens and cost.`}
+            aria-label={`Current metric: ${displayMode === "tokens" ? (totalTokens == null ? "Unavailable tokens" : `${totalTokens.toLocaleString()} tokens`) : cost == null ? "Unavailable cost" : `$${cost.toFixed(2)} cost`}. Click or press Enter to toggle between tokens and cost.`}
             className="group/num relative inline-flex items-center gap-3 cursor-pointer select-none rounded-xl p-1 -m-1 transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#A899FB] focus-visible:ring-offset-2 focus-visible:ring-offset-[#090F42]"
             title={
               displayMode === "tokens"
-                ? `${totalTokens.toLocaleString()} tokens · Click to view Cost`
-                : `$${cost.toFixed(4)} USD · Click to view Tokens`
+                ? `${totalTokens == null ? "Unavailable" : totalTokens.toLocaleString()} tokens · Click to view Cost`
+                : `${cost == null ? "Unavailable" : `$${cost.toFixed(4)} USD`} · Click to view Tokens`
             }
           >
             {/* Smooth 200ms opacity and translateY transition on toggle */}
@@ -662,7 +698,7 @@ export function TokenUsageCard({ className, defaultPeriod = "today" }: TokenUsag
                 </span>
               ) : (
                 <span className="text-[#A2A8D0]">
-                  <span>{trendPercent ? `${trendPercent}%` : "Live"}</span>
+                  <span>{trendPercent ? `${trendPercent}%` : "Unavailable"}</span>
                 </span>
               )}
             </div>
@@ -674,6 +710,115 @@ export function TokenUsageCard({ className, defaultPeriod = "today" }: TokenUsag
           </div>
         </div>
       )}
+      <section aria-labelledby="token-efficiency-heading" className="mt-8 space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <h3 id="token-efficiency-heading" className="text-sm font-semibold text-white">
+            Efficiency telemetry
+          </h3>
+          <span className="text-[11px] text-[#A2A8D0]">{currentPeriod.fullLabel}</span>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
+            <p className="text-xs text-[#A2A8D0]">Completion / prompt</p>
+            <p className="mt-1 font-mono text-2xl font-bold tabular-nums">
+              {completionPromptRatio == null
+                ? "Unavailable"
+                : `${completionPromptRatio.toFixed(1)}%`}
+            </p>
+            <p className="mt-1 text-[11px] text-[#A2A8D0]">
+              {completionTokens == null || promptTokens == null
+                ? "Unavailable"
+                : `${formatTokens(completionTokens)} completion · ${formatTokens(promptTokens)} prompt`}
+            </p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
+            <p className="text-xs text-[#A2A8D0]">Cache savings rate</p>
+            <p className="mt-1 font-mono text-2xl font-bold tabular-nums">
+              {cacheSavingsRate == null ? "Unavailable" : `${cacheSavingsRate.toFixed(1)}%`}
+            </p>
+            <p className="mt-1 text-[11px] text-[#A2A8D0]">
+              {cachedTokens == null || totalTokens == null
+                ? "Unavailable"
+                : `${formatTokens(cachedTokens)} cached · ${formatTokens(totalTokens)} total`}
+            </p>
+          </div>
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
+          <h4 className="px-2 pb-2 text-xs font-semibold text-white">Usage by model</h4>
+          <Table aria-label="Token usage by model">
+            <TableHeader>
+              <TableRow className="border-white/10 hover:bg-transparent">
+                <TableHead className="text-[#A2A8D0]">Model</TableHead>
+                <TableHead className="text-right text-[#A2A8D0]">Requests</TableHead>
+                <TableHead className="text-right text-[#A2A8D0]">Prompt</TableHead>
+                <TableHead className="text-right text-[#A2A8D0]">Completion</TableHead>
+                <TableHead className="text-right text-[#A2A8D0]">Cached</TableHead>
+                <TableHead className="text-right text-[#A2A8D0]">Total tokens</TableHead>
+                <TableHead className="text-right text-[#A2A8D0]">Cost</TableHead>
+                <TableHead className="text-right text-[#A2A8D0]">Comp / prompt</TableHead>
+                <TableHead className="text-right text-[#A2A8D0]">Cache save</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {modelRows.length === 0 ? (
+                <TableRow className="border-white/10 hover:bg-transparent">
+                  <TableCell colSpan={9} className="h-20 text-center text-xs text-[#A2A8D0]">
+                    Unavailable
+                  </TableCell>
+                </TableRow>
+              ) : (
+                modelRows.map(([model, stats]) => {
+                  const modelTotal =
+                    Number.isFinite(stats.promptTokens) &&
+                    Number.isFinite(stats.completionTokens) &&
+                    Number.isFinite(stats.cachedTokens)
+                      ? stats.promptTokens + stats.completionTokens + stats.cachedTokens
+                      : null;
+                  return (
+                    <TableRow key={model} className="border-white/10 hover:bg-white/[0.04]">
+                      <TableCell className="max-w-[180px] truncate font-medium text-white">
+                        {model}
+                      </TableCell>
+                      <TableCell className="text-right font-mono tabular-nums">
+                        {Number.isFinite(stats.requests)
+                          ? stats.requests.toLocaleString()
+                          : "Unavailable"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono tabular-nums">
+                        {Number.isFinite(stats.promptTokens)
+                          ? formatTokens(stats.promptTokens)
+                          : "Unavailable"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono tabular-nums">
+                        {Number.isFinite(stats.completionTokens)
+                          ? formatTokens(stats.completionTokens)
+                          : "Unavailable"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono tabular-nums">
+                        {Number.isFinite(stats.cachedTokens)
+                          ? formatTokens(stats.cachedTokens)
+                          : "Unavailable"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono tabular-nums">
+                        {modelTotal == null ? "Unavailable" : formatTokens(modelTotal)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono tabular-nums">
+                        {Number.isFinite(stats.cost) ? `$${stats.cost.toFixed(4)}` : "Unavailable"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono tabular-nums">
+                        {efficiency(stats.completionTokens, stats.promptTokens)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono tabular-nums">
+                        {efficiency(stats.cachedTokens, modelTotal ?? undefined)}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </section>
     </div>
   );
 }

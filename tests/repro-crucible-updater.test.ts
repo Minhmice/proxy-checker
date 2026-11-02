@@ -3,10 +3,10 @@ import assert from "node:assert/strict";
 import {
   NineRouterServerManager,
   TARGET_NINEROUTER_SERVERS,
+  compareSemver,
   type NineRouterServerTarget,
   type InteractiveUpgradeResult,
 } from "../src/server/server-interactive-updater.js";
-import { compareSemver } from "../src/proxyfleet/update-checker.js";
 
 test("REGRESSION-01: compareSemver correctly follows SemVer 2.0.0 precedence for prerelease tags", () => {
   // Pre-release versions have LOWER precedence than normal releases (0.5.109-beta.1 < 0.5.109)
@@ -88,7 +88,7 @@ test("REGRESSION-04: Runner promise rejection is safely caught and marked failed
   const crashingRunner = async (
     target: NineRouterServerTarget,
   ): Promise<InteractiveUpgradeResult> => {
-    if (target.id === "server-vpn") {
+    if (target.id === "server-lan") {
       throw new Error("Simulated unhandled SSH crash or network segmentation fault");
     }
     return {
@@ -108,6 +108,6 @@ test("REGRESSION-04: Runner promise rejection is safely caught and marked failed
   // 1. The crashed target must NOT remain in "running" state
   // 2. The crashed target status must be "failed"
   // 3. The overall job status must be "failed"
-  assert.equal(job.targets["server-vpn"].status, "failed");
+  assert.equal(job.targets["server-lan"].status, "failed");
   assert.equal(job.status, "failed");
 });

@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AuthProvider, useAuth } from "@/components/auth-provider";
 import { CommandPalette, useCommandPalette } from "@/components/command-palette";
-import { RightPanel } from "@/components/right-panel";
 import { AppSidebar } from "@/components/app-sidebar";
 import { TopBar } from "@/components/topbar";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
@@ -46,7 +45,6 @@ function DashboardFrame({
   setOpen: (value: boolean) => void;
   close: () => void;
 }) {
-  const [operationsOpen, setOperationsOpen] = useState(false);
   return (
     <>
       <a
@@ -59,11 +57,7 @@ function DashboardFrame({
         <SidebarProvider defaultOpen={true}>
           <AppSidebar />
           <SidebarInset className="flex flex-col min-w-0 bg-background">
-            <TopBar
-              onSearchClick={() => setOpen(true)}
-              onOperationsClick={() => setOperationsOpen((current) => !current)}
-              operationsOpen={operationsOpen}
-            />
+            <TopBar onSearchClick={() => setOpen(true)} />
             <div className="flex flex-1 min-h-0 overflow-hidden">
               <main
                 id="main-content"
@@ -71,7 +65,6 @@ function DashboardFrame({
               >
                 <DashboardRedirectBoundary>{children}</DashboardRedirectBoundary>
               </main>
-              <RightPanel open={operationsOpen} onOpenChange={setOperationsOpen} />
             </div>
           </SidebarInset>
         </SidebarProvider>

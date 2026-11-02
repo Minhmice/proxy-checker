@@ -77,6 +77,7 @@ export async function syncBackupToGit(options?: {
     const backupDir = path.resolve(options?.backupDir || getDefaultBackupDir());
     const relBackupDir = path.relative(repoRoot, backupDir).replace(/\\/g, "/");
 
+    const backupPathspec = `:(literal)${relBackupDir}`;
     try {
       // 1. Check if git repo exists
       const isRepo = fs.existsSync(path.join(repoRoot, ".git"));
@@ -89,9 +90,18 @@ export async function syncBackupToGit(options?: {
           error: "Not a git repository",
         };
       }
+      if (!relBackupDir || relBackupDir.startsWith("..") || path.isAbsolute(relBackupDir)) {
+        return {
+          ok: false,
+          changed: false,
+          committed: false,
+          pushed: false,
+          error: `Backup directory (${backupDir}) is outside repository or is the repository root (${repoRoot}); git sync requires a subdirectory`,
+        };
+      }
 
       // 2. Check for changes in backupDir
-      const { stdout: statusOut } = await runGit(["status", "--porcelain", relBackupDir]);
+      const { stdout: statusOut } = await runGit(["status", "--porcelain", "--", backupPathspec]);
       const changed = statusOut.trim().length > 0;
 
       if (!changed) {
@@ -104,12 +114,12 @@ export async function syncBackupToGit(options?: {
       }
 
       // 3. Stage backup files
-      await runGit(["add", relBackupDir]);
+      await runGit(["add", "--", backupPathspec]);
 
       // 4. Commit
       const timestamp = new Date().toISOString().replace("T", " ").substring(0, 19);
       const commitMsg = `backup(9router): sync config and db [${timestamp}]`;
-      const { stdout: commitOut } = await runGit(["commit", "-m", commitMsg]);
+      await runGit(["commit", "--only", "-m", commitMsg, "--", backupPathspec]);
 
       // Get latest commit sha
       const { stdout: shaOut } = await runGit(["rev-parse", "--short", "HEAD"]);
@@ -162,6 +172,7 @@ export async function getBackupSyncStatus(options?: {
 }): Promise<BackupSyncStatus> {
   const backupDir = path.resolve(options?.backupDir || getDefaultBackupDir());
   const relBackupDir = path.relative(repoRoot, backupDir).replace(/\\/g, "/");
+  const backupPathspec = `:(literal)${relBackupDir}`;
 
   let lastBackupTime: string | null = null;
   let lastCommitSha: string | null = null;
@@ -195,11 +206,13 @@ export async function getBackupSyncStatus(options?: {
 
   try {
     const isRepo = fs.existsSync(path.join(repoRoot, ".git"));
-    if (isRepo) {
+    const isInsideRepo =
+      !!relBackupDir && !relBackupDir.startsWith("..") && !path.isAbsolute(relBackupDir);
+    if (isRepo && isInsideRepo) {
       remoteConfigured = await hasGitRemote();
 
       // Check uncommitted changes
-      const { stdout: statusOut } = await runGit(["status", "--porcelain", relBackupDir]);
+      const { stdout: statusOut } = await runGit(["status", "--porcelain", "--", backupPathspec]);
       hasUncommittedChanges = statusOut.trim().length > 0;
 
       // Last commit affecting backups
@@ -208,7 +221,7 @@ export async function getBackupSyncStatus(options?: {
         "-1",
         "--format=%h|%s|%cI",
         "--",
-        relBackupDir,
+        backupPathspec,
       ]);
       const logLine = logOut.trim();
       if (logLine) {
@@ -246,6 +259,18 @@ export async function triggerFullBackupAndSync(options?: {
     dataDir: options?.dataDir,
     backupDir: options?.backupDir,
   });
+  if (!backup.ok) {
+    return {
+      backup,
+      git: {
+        ok: false,
+        changed: false,
+        committed: false,
+        pushed: false,
+        error: `Backup snapshot failed: ${backup.errors.join("; ")}`,
+      },
+    };
+  }
 
   const git = await syncBackupToGit({
     backupDir: options?.backupDir,

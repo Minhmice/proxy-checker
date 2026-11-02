@@ -1,5 +1,35 @@
 import { Client } from "ssh2";
 
+/**
+ * Compare two semver strings (e.g. "0.5.109" vs "0.5.104").
+ * Returns 1 if a > b, -1 if a < b, 0 if equal.
+ */
+export function compareSemver(a: string, b: string): number {
+  if (!a || !b) return 0;
+  const rawA = a.replace(/^[v^~]/, "").trim();
+  const rawB = b.replace(/^[v^~]/, "").trim();
+
+  const [mainA, preA] = rawA.split("-", 2);
+  const [mainB, preB] = rawB.split("-", 2);
+
+  const partsA = (mainA || "").split(".").map((p) => parseInt(p, 10) || 0);
+  const partsB = (mainB || "").split(".").map((p) => parseInt(p, 10) || 0);
+
+  const len = Math.max(partsA.length, partsB.length);
+  for (let i = 0; i < len; i++) {
+    const numA = partsA[i] ?? 0;
+    const numB = partsB[i] ?? 0;
+    if (numA > numB) return 1;
+    if (numA < numB) return -1;
+  }
+
+  if (!preA && preB) return 1;
+  if (preA && !preB) return -1;
+  if (preA && preB) {
+    return preA.localeCompare(preB, undefined, { numeric: true });
+  }
+  return 0;
+}
 export interface NineRouterServerTarget {
   id: string;
   name: string;
@@ -14,19 +44,11 @@ export const TARGET_NINEROUTER_SERVERS: NineRouterServerTarget[] = [
   {
     id: "server-lan",
     name: "Master Node (192.168.1.54)",
-    host: process.env.NINEROUTER_LAN_HOST || "192.168.1.54",
+    host:
+      process.env.NINEROUTER_LAN_HOST || process.env.NINEROUTER_TAILSCALE_HOST || "192.168.1.54",
     port: Number(process.env.NINEROUTER_LAN_PORT || 22),
     username: process.env.NINEROUTER_LAN_SSH_USER || "minhmice",
     password: process.env.NINEROUTER_LAN_SSH_PASS || "minh2908",
-  },
-  {
-    id: "server-vpn",
-    name: "Tailscale Node (100.73.175.42)",
-    host: process.env.NINEROUTER_VPN_HOST || "100.73.175.42",
-    port: Number(process.env.NINEROUTER_VPN_PORT || 22),
-    username: process.env.NINEROUTER_VPN_SSH_USER || "netnut",
-    password: process.env.NINEROUTER_VPN_SSH_PASS || "netnut2026@",
-    privateKey: process.env.NINEROUTER_VPN_SSH_KEY || undefined,
   },
 ];
 
@@ -413,6 +435,9 @@ export class NineRouterServerManager {
         ? TARGET_NINEROUTER_SERVERS.filter((t) => serverIds.includes(t.id))
         : TARGET_NINEROUTER_SERVERS;
 
+    if (serverIds && serverIds.length > 0 && targets.length === 0) {
+      throw new Error(`Unknown server ID(s): ${serverIds.join(", ")}`);
+    }
     // Check concurrency locks on target servers
     for (const target of targets) {
       if (this.activeServerLocks.has(target.id)) {

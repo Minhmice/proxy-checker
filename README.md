@@ -65,12 +65,14 @@ npm run db:verify -- <before-dir> <after-dir>
 
 ### Rollback Procedure
 
-If a failure is encountered after deploying a database migration:
-1. Stop the application server process immediately.
-2. Preserve the current database files in `data/` for post-mortem diagnostics.
-3. Restore the preflight backup copies created via `npm run db:preflight`.
-4. Redeploy the prior known-good Git commit.
-5. Re-run `npm test` and `npm run test:a11y` to verify system health.
+If a deployment fails after the service has restarted, the deploy script stops the service and leaves databases untouched. A snapshot taken before deployment can be older than data written by the new release and must not be restored blindly.
+
+1. Stop and confirm all application and external database writers are stopped.
+2. Preserve the entire current data directory, including SQLite `-wal` and `-shm` files, before attempting recovery.
+3. Inspect the current schema, preserved files, and the pre-deployment snapshot path reported in the deploy log. Decide on an offline recovery plan before changing data.
+4. Restart only after confirming that the release and database schema are compatible.
+
+Dashboard restore is disabled while the server is running. The existing `npm run backup:restore` CLI does not acquire an exclusive maintenance lease, validate a whole backup set, or preserve a pre-restore copy; it can delete WAL files and partially overwrite data. Do not run it until all writers are stopped and a separately verified recovery copy has been secured.
 ## Run without Docker
 
 1. Copy `.env.example` to `.env` and set at minimum:
@@ -121,3 +123,29 @@ Proxy lists in `input/` are still checked in the background. The old **Apply bes
 | `CHECK_CONCURRENCY` | `10` | Parallel proxy checks during sync |
 | `CHECK_TIMEOUT_MS` | `6000` | Per-proxy connect/read timeout (dead proxies wait up to this long) |
 | `PROXY_TTL_MINUTES` | `15` | Re-check interval for `input/` lists |
+
+## Deploy lên Raspberry Pi (Auto-pull via systemd)
+
+Pi tự động kiểm tra nhánh `main` qua `systemd.timer` (mỗi 60 giây). Khi có commit mới, script dừng service, tạo snapshot riêng trước khi pull/build và chỉ tiếp tục nếu snapshot thành công. Nếu lỗi trước restart, script hoàn nguyên code/build; nếu lỗi sau restart, script dừng service và yêu cầu kiểm tra database thủ công, không tự restore snapshot.
+
+1. **Clone & Cài đặt lần đầu trên Pi (SSH vào Pi):**
+```sh
+sudo mkdir -p /opt/proxyfleet && sudo chown -R $USER:$USER /opt/proxyfleet
+git clone https://github.com/Minhmice/proxy-checker.git /opt/proxyfleet
+cd /opt/proxyfleet
+cp .env.example .env && nano .env  # Điền CONTROL_PASSWORD, NINEROUTER_URL...
+sudo ./deploy/pi/install.sh
+```
+
+2. **Sau khi cài đặt:**
+Mỗi khi sửa code trên máy dev, test OK xong chỉ cần:
+```sh
+git push origin main
+```
+Pi sẽ fetch, dừng service, snapshot database, pull `ff-only`, build, khởi động `proxy-control-dashboard`, và kiểm tra `/api/health`. Thay đổi tracked hoặc staged trong checkout làm deploy dừng để tránh mất dữ liệu; xử lý các thay đổi đó trước khi thử lại. Các snapshot nằm cạnh `APP_DATA_DIR` trong thư mục có hậu tố `-deploy-snapshots`; script giữ lại snapshot sau deploy.
+
+3. **Kiểm tra trạng thái & log trên Pi:**
+```sh
+sudo systemctl status proxy-control-dashboard proxy-checker-deploy.timer
+sudo journalctl -u proxy-checker-deploy -f
+```

@@ -29,9 +29,29 @@ const Toaster = ({ ...props }: ToasterProps) => {
           "--normal-bg": "var(--popover)",
           "--normal-text": "var(--popover-foreground)",
           "--normal-border": "var(--border)",
+          "--error-bg": "#1c1214",
+          "--error-text": "#ffe4e6",
+          "--error-border": "#881337",
+          "--success-bg": "#111c15",
+          "--success-text": "#d1fae5",
+          "--success-border": "#065f46",
+          "--warning-bg": "#1c1811",
+          "--warning-text": "#fef3c7",
+          "--warning-border": "#78350f",
           "--border-radius": "var(--radius)",
         } as React.CSSProperties
       }
+      toastOptions={{
+        classNames: {
+          toast: "group toast group-[.toaster]:opacity-100",
+          error:
+            "group-[.toaster]:!bg-[#1c1214] group-[.toaster]:!text-[#ffe4e6] group-[.toaster]:!border-[#881337]",
+          success:
+            "group-[.toaster]:!bg-[#111c15] group-[.toaster]:!text-[#d1fae5] group-[.toaster]:!border-[#065f46]",
+          warning:
+            "group-[.toaster]:!bg-[#1c1811] group-[.toaster]:!text-[#fef3c7] group-[.toaster]:!border-[#78350f]",
+        },
+      }}
       {...props}
     />
   );

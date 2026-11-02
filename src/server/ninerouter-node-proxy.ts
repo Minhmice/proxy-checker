@@ -14,12 +14,6 @@ export const KNOWN_NODES: NineRouterNodeInfo[] = [
     url: "http://192.168.1.54:20128",
     host: "192.168.1.54",
   },
-  {
-    id: "server-vpn",
-    name: "Tailscale Node (100.73.175.42)",
-    url: "http://100.73.175.42:20128",
-    host: "100.73.175.42",
-  },
 ];
 
 const nodeCookies = new Map<string, string>();
@@ -27,6 +21,7 @@ const inFlightLogins = new Map<string, Promise<string | null>>();
 
 export function clearNodeCookies(): void {
   nodeCookies.clear();
+  inFlightLogins.clear();
 }
 
 export function getNodeInventory(): NineRouterNodeInfo[] {
@@ -35,9 +30,44 @@ export function getNodeInventory(): NineRouterNodeInfo[] {
 
 export function resolveNodeUrl(nodeId: string): string {
   const node = KNOWN_NODES.find((n) => n.id === nodeId);
-  if (node) return node.url;
-  const settings = getSettingsSecrets();
-  return settings.nineRouterUrl?.split(",")[0]?.trim() || "http://192.168.1.54:20128";
+  if (!node) {
+    throw new Error(`Unknown 9Router node ID: "${nodeId}"`);
+  }
+  return node.url;
+}
+
+export function getNodeCandidateUrls(nodeId: string): string[] {
+  const node = KNOWN_NODES.find((n) => n.id === nodeId);
+  if (!node) {
+    throw new Error(`Unknown 9Router node ID: "${nodeId}"`);
+  }
+  const routes: string[] = [];
+  try {
+    const settings = getSettingsSecrets();
+    if (settings.nineRouterUrl) {
+      const configured = settings.nineRouterUrl
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      for (const raw of configured) {
+        const normalized = raw.replace(/\/+$/, "");
+        if (!routes.some((r) => r.replace(/\/+$/, "") === normalized)) {
+          routes.push(raw);
+        }
+      }
+    }
+  } catch {
+    // settings unavailable
+  }
+
+  for (const fallback of [node.url, "http://100.74.116.125:20128"]) {
+    const normalized = fallback.replace(/\/+$/, "");
+    if (!routes.some((r) => r.replace(/\/+$/, "") === normalized)) {
+      routes.push(fallback);
+    }
+  }
+
+  return routes;
 }
 
 function extractAuthCookie(res: Response): string | null {
@@ -64,7 +94,17 @@ async function loginToNode(nodeUrl: string, password?: string): Promise<string |
   if (existing) return existing;
 
   const loginPromise = (async () => {
-    const pass = password || getSettingsSecrets().nineRouterPassword || "minh2908";
+    let pass = password;
+    if (!pass) {
+      try {
+        pass = getSettingsSecrets().nineRouterPassword;
+      } catch {
+        // settings unavailable
+      }
+    }
+    if (!pass) {
+      return null;
+    }
     try {
       const res = await fetch(`${nodeUrl}/api/auth/login`, {
         method: "POST",
@@ -95,43 +135,67 @@ export async function fetchFromNode(
   options?: RequestInit,
   retryAuth = true,
 ): Promise<Response> {
-  const baseUrl = resolveNodeUrl(nodeId);
-  const targetUrl = `${baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
+  const candidateUrls = getNodeCandidateUrls(nodeId);
+  const method = (options?.method || "GET").toUpperCase();
+  const isIdempotentRead = method === "GET" || method === "HEAD";
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
 
-  let cookie = nodeCookies.get(nodeId);
-  if (!cookie) {
-    const newCookie = await loginToNode(baseUrl);
-    if (newCookie) {
-      cookie = newCookie;
-      nodeCookies.set(nodeId, newCookie);
-    }
-  }
+  let lastError: unknown;
 
-  const headers = new Headers(options?.headers);
-  if (cookie) {
-    headers.set("Cookie", cookie);
-  }
+  for (let i = 0; i < candidateUrls.length; i++) {
+    const baseUrl = candidateUrls[i].replace(/\/+$/, "");
+    const targetUrl = `${baseUrl}${normalizedPath}`;
 
-  const res = await fetch(targetUrl, {
-    ...options,
-    headers,
-    signal: options?.signal || AbortSignal.timeout(10000),
-  });
+    try {
+      let cookie = nodeCookies.get(baseUrl);
+      if (!cookie) {
+        const newCookie = await loginToNode(baseUrl);
+        if (newCookie) {
+          cookie = newCookie;
+          nodeCookies.set(baseUrl, newCookie);
+        }
+      }
 
-  if (res.status === 401 && retryAuth) {
-    nodeCookies.delete(nodeId);
-    const newCookie = await loginToNode(baseUrl);
-    if (newCookie) {
-      nodeCookies.set(nodeId, newCookie);
-      const retryHeaders = new Headers(options?.headers);
-      retryHeaders.set("Cookie", newCookie);
-      return fetch(targetUrl, {
+      const headers = new Headers(options?.headers);
+      if (cookie) {
+        headers.set("Cookie", cookie);
+      }
+
+      const res = await fetch(targetUrl, {
         ...options,
-        headers: retryHeaders,
+        headers,
         signal: options?.signal || AbortSignal.timeout(10000),
       });
+
+      if (res.status === 401 && retryAuth) {
+        nodeCookies.delete(baseUrl);
+        const newCookie = await loginToNode(baseUrl);
+        if (newCookie) {
+          nodeCookies.set(baseUrl, newCookie);
+          const retryHeaders = new Headers(options?.headers);
+          retryHeaders.set("Cookie", newCookie);
+          return await fetch(targetUrl, {
+            ...options,
+            headers: retryHeaders,
+            signal: options?.signal || AbortSignal.timeout(10000),
+          });
+        }
+      }
+
+      return res;
+    } catch (err) {
+      lastError = err;
+      // Never blindly replay mutations after ambiguous delivery
+      if (!isIdempotentRead) {
+        throw err;
+      }
+      // Retry alternate route on network error for idempotent reads
+      if (i < candidateUrls.length - 1) {
+        continue;
+      }
+      throw err;
     }
   }
 
-  return res;
+  throw lastError || new Error(`Failed to fetch from node ${nodeId}`);
 }

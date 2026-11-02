@@ -3,8 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import Database from "better-sqlite3";
 import { fileURLToPath } from "node:url";
-import { getSettingsSecrets } from "../app-config.js";
-
+import { replaceFileAtomicSync } from "../fs-atomic.js";
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const repoRoot = path.resolve(here, "../../..");
 
@@ -51,7 +50,7 @@ function computeSha256(filePath: string): string {
 }
 
 function vacuumSnapshot(sourceDbPath: string, targetDbPath: string): void {
-  if (!fs.existsSync(sourceDbPath)) return;
+  if (!fs.existsSync(sourceDbPath)) throw new Error(`Database not found: ${sourceDbPath}`);
 
   const tempTarget = `${targetDbPath}.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   if (fs.existsSync(tempTarget)) {
@@ -64,7 +63,7 @@ function vacuumSnapshot(sourceDbPath: string, targetDbPath: string): void {
   let lastErr: unknown = null;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      db = new Database(sourceDbPath, { timeout: 3000 });
+      db = new Database(sourceDbPath, { readonly: true, timeout: 3000, fileMustExist: true });
       db.prepare("VACUUM INTO ?").run(path.resolve(tempTarget));
       lastErr = null;
       break;
@@ -93,10 +92,7 @@ function vacuumSnapshot(sourceDbPath: string, targetDbPath: string): void {
   }
 
   fs.mkdirSync(path.dirname(targetDbPath), { recursive: true });
-  if (fs.existsSync(targetDbPath)) {
-    fs.unlinkSync(targetDbPath);
-  }
-  fs.renameSync(tempTarget, targetDbPath);
+  replaceFileAtomicSync(tempTarget, targetDbPath);
 }
 
 export function createBackupSnapshot(options?: {
@@ -120,9 +116,7 @@ export function createBackupSnapshot(options?: {
     if (fs.existsSync(settingsSrc)) {
       fs.copyFileSync(settingsSrc, settingsDest);
     } else {
-      // Fallback: dump current in-memory secrets if file doesn't exist yet
-      const current = getSettingsSecrets();
-      fs.writeFileSync(settingsDest, JSON.stringify(current, null, 2), "utf8");
+      throw new Error(`Settings file not found: ${settingsSrc}`);
     }
     files.push({
       name: "settings.json",
@@ -134,7 +128,7 @@ export function createBackupSnapshot(options?: {
   }
 
   // 2. Backup SQLite databases via VACUUM INTO
-  const sqliteFiles = ["proxies.sqlite3", "fleet.sqlite3", "antigravity-rotation.sqlite3"];
+  const sqliteFiles = ["proxies.sqlite3", "antigravity-rotation.sqlite3", "router-sync.sqlite3"];
   for (const name of sqliteFiles) {
     const srcPath = path.join(dataDir, name);
     const destPath = path.join(databasesDir, name);
@@ -212,6 +206,9 @@ export function restoreBackup(options?: {
   const errors: string[] = [];
 
   fs.mkdirSync(dataDir, { recursive: true });
+  const databaseFiles = fs.existsSync(databasesDir)
+    ? fs.readdirSync(databasesDir).filter((name) => name.endsWith(".sqlite3"))
+    : [];
 
   // 1. Restore settings.json
   const settingsBackup = path.join(backupDir, "settings.json");
@@ -226,23 +223,18 @@ export function restoreBackup(options?: {
   }
 
   // 2. Restore SQLite databases
-  if (fs.existsSync(databasesDir)) {
-    const files = fs.readdirSync(databasesDir).filter((f) => f.endsWith(".sqlite3"));
-    for (const name of files) {
-      const src = path.join(databasesDir, name);
-      const dest = path.join(dataDir, name);
-      try {
-        // Clean WAL and SHM to prevent SQLite corruption on restored DB
-        const walPath = `${dest}-wal`;
-        const shmPath = `${dest}-shm`;
-        if (fs.existsSync(walPath)) fs.unlinkSync(walPath);
-        if (fs.existsSync(shmPath)) fs.unlinkSync(shmPath);
-
-        fs.copyFileSync(src, dest);
-        restoredFiles.push(`databases/${name}`);
-      } catch (err) {
-        errors.push(`Failed to restore database ${name}: ${(err as Error).message}`);
-      }
+  for (const name of databaseFiles) {
+    const src = path.join(databasesDir, name);
+    const dest = path.join(dataDir, name);
+    try {
+      const walPath = `${dest}-wal`;
+      const shmPath = `${dest}-shm`;
+      if (fs.existsSync(walPath)) fs.unlinkSync(walPath);
+      if (fs.existsSync(shmPath)) fs.unlinkSync(shmPath);
+      fs.copyFileSync(src, dest);
+      restoredFiles.push(`databases/${name}`);
+    } catch (err) {
+      errors.push(`Failed to restore database ${name}: ${(err as Error).message}`);
     }
   }
 

@@ -6,11 +6,7 @@ import { getNodeInventory, fetchFromNode } from "../../ninerouter-node-proxy.js"
 export function createNineRouterRoutes(deps: ApiDependencies): Hono<ApiEnv> {
   const router = new Hono<ApiEnv>();
 
-  // 1. Get Node inventory
-  router.get("/nodes", (c) => {
-    return c.json({ nodes: getNodeInventory() });
-  });
-  // 1b. Aggregate Stats across all nodes or specific node
+  // 1. Aggregate Stats across all nodes or specific node
   router.get("/stats", async (c) => {
     const period = c.req.query("period") || "today";
     const requestedNodeId = c.req.query("nodeId");
@@ -139,57 +135,6 @@ export function createNineRouterRoutes(deps: ApiDependencies): Hono<ApiEnv> {
     }
   });
 
-  // 3. Node Recent Request Logs
-  router.get("/nodes/:nodeId/request-logs", async (c) => {
-    const nodeId = c.req.param("nodeId");
-    const limit = c.req.query("limit") || "20";
-    try {
-      const res = await fetchFromNode(
-        nodeId,
-        `/api/usage/request-logs?limit=${encodeURIComponent(limit)}`,
-      );
-      if (!res.ok) {
-        return c.json({ error: `Node returned ${res.status}` }, res.status as 500);
-      }
-      const data = await res.json();
-      return c.json(data);
-    } catch (err) {
-      return c.json({ error: (err as Error).message }, 502);
-    }
-  });
-
-  // 4. Node SSE Console Logs Stream
-  router.get("/nodes/:nodeId/logs/stream", async (c) => {
-    const nodeId = c.req.param("nodeId");
-
-    try {
-      const nodeRes = await fetchFromNode(
-        nodeId,
-        "/api/translator/console-logs/stream",
-        {
-          headers: { Accept: "text/event-stream" },
-          signal: c.req.raw.signal,
-        },
-        true,
-      );
-
-      if (!nodeRes.ok || !nodeRes.body) {
-        return c.text("Failed to open stream to 9router node", 502);
-      }
-
-      return new Response(nodeRes.body, {
-        headers: {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache, no-transform",
-          Connection: "keep-alive",
-          "X-Accel-Buffering": "no",
-        },
-      });
-    } catch (err) {
-      return c.text(`Stream error: ${(err as Error).message}`, 502);
-    }
-  });
-
   // 5. Node Proxy Pools
   router.get("/nodes/:nodeId/proxy-pools", async (c) => {
     const nodeId = c.req.param("nodeId");
@@ -272,17 +217,29 @@ export function createNineRouterRoutes(deps: ApiDependencies): Hono<ApiEnv> {
   });
 
   // 10. Bind Connection to Pool
+  // 10. Bind Connection to Pool or Update Account State
   router.put("/nodes/:nodeId/connections/:connectionId/bind-pool", async (c) => {
     const nodeId = c.req.param("nodeId");
     const connectionId = c.req.param("connectionId");
-    const body = await c.req.json();
-    const { poolId } = body;
-    try {
-      const patch = {
-        providerSpecificData: {
-          proxyPoolId: poolId || null,
-        },
+    const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+    const patch: Record<string, unknown> = {};
+
+    if ("poolId" in body) {
+      const poolId = body.poolId;
+      patch.providerSpecificData = {
+        proxyPoolId: typeof poolId === "string" && poolId.trim().length > 0 ? poolId : null,
       };
+    }
+
+    if (typeof body.isActive === "boolean") {
+      patch.isActive = body.isActive;
+    }
+
+    if (Object.keys(patch).length === 0) {
+      return c.json({ error: "Missing poolId or isActive in request body" }, 400);
+    }
+
+    try {
       const res = await fetchFromNode(
         nodeId,
         `/api/providers/${encodeURIComponent(connectionId)}`,

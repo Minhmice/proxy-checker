@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { writeJsonAtomicSync } from "./fs-atomic.js";
 import type {
   DetailedDiagnosticResult,
   PoolRecord,
@@ -211,10 +212,7 @@ export function createPoolRanker(
   }
 
   function writeState(state: PoolState) {
-    fs.mkdirSync(dataDir, { recursive: true });
-    const temp = `${stateFile}.tmp`;
-    fs.writeFileSync(temp, JSON.stringify(state, null, 2));
-    fs.renameSync(temp, stateFile);
+    writeJsonAtomicSync(stateFile, state);
   }
 
   function mutatePool(localId: string, mutator: (pool: PoolRecord) => void): PoolRecord {

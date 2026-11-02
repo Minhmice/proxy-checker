@@ -186,7 +186,6 @@ export function parseBenchmarkConfig(argv = [], env = process.env) {
     else if (a === "--duration" && i + 1 < argv.length) flags.duration = argv[++i];
     else if (a === "--protocol" && i + 1 < argv.length) flags.protocol = argv[++i];
     else if (a === "--ca-cert" && i + 1 < argv.length) flags.caCert = argv[++i];
-    else if (a === "--node-id" && i + 1 < argv.length) flags.nodeId = argv[++i];
     else if (a.startsWith("--proxy-url")) {
       throw new Error(
         "Security validation error: --proxy-url cannot be passed via CLI. Set BENCHMARK_PROXY_URL.",
@@ -290,9 +289,6 @@ export function parseBenchmarkConfig(argv = [], env = process.env) {
     maxRequests: requests,
     durationSeconds: duration,
     caCertData,
-    nodeId: flags.nodeId || env.FLEET_NODE_ID || null,
-    controllerUrl: env.FLEET_CONTROLLER_URL || null,
-    controllerToken: env.FLEET_CONTROLLER_TOKEN || null,
     secretsToRedact,
   };
 }
@@ -461,7 +457,7 @@ export async function executeRequest(config, signal, activeSockets) {
         agent,
         headers: {
           Host: config.target.authority,
-          "User-Agent": "fleet-capacity-benchmark/1.0",
+          "User-Agent": "proxy-capacity-benchmark/1.0",
           Connection: "close",
         },
         signal,
@@ -518,32 +514,6 @@ export async function executeRequest(config, signal, activeSockets) {
   return promise;
 }
 
-async function fetchControllerSnapshot(config) {
-  if (!config.controllerUrl || !config.controllerToken || !config.nodeId) return null;
-  try {
-    const targetUrl = new URL(
-      `/api/fleet/nodes/${encodeURIComponent(config.nodeId)}`,
-      config.controllerUrl,
-    );
-    const res = await fetch(targetUrl.href, {
-      headers: { Authorization: `Bearer ${config.controllerToken}` },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return { available: false, status: res.status };
-    const data = await res.json();
-    return {
-      available: true,
-      node: {
-        id: data.node?.id,
-        status: data.node?.status,
-        maxConnections: data.node?.maxConnections,
-      },
-    };
-  } catch (err) {
-    return { available: false, error: sanitizeSecrets(err.message, config.secretsToRedact) };
-  }
-}
-
 export async function runBenchmark(config) {
   const abortCtrl = new AbortController();
   const activeSockets = new Set();
@@ -558,10 +528,7 @@ export async function runBenchmark(config) {
   };
   abortCtrl.signal.addEventListener("abort", onAbortAll, { once: true });
 
-  // 1. Snapshot taken BEFORE timer starts so controller latency doesn't consume workload deadline
-  const initialSnapshot = await fetchControllerSnapshot(config);
-
-  // 2. Start workload deadline
+  // Start workload deadline
   const timer = setTimeout(
     () => abortCtrl.abort(new Error("Deadline reached")),
     config.durationSeconds * 1000,
@@ -604,7 +571,6 @@ export async function runBenchmark(config) {
   onAbortAll();
 
   const durationMs = Math.max(Date.now() - startTime, 1);
-  const finalSnapshot = await fetchControllerSnapshot(config);
 
   const sorted = [...results.latencies].sort((a, b) => a - b);
   const p = (pct) =>
@@ -647,8 +613,7 @@ export async function runBenchmark(config) {
       statusCodes: results.statusCodes,
       errors: results.errors,
     },
-    controllerTelemetry:
-      initialSnapshot || finalSnapshot ? { before: initialSnapshot, after: finalSnapshot } : null,
+    controllerTelemetry: null,
   };
 }
 

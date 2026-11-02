@@ -53,28 +53,32 @@ const activeRepairs = new Map<string, Promise<RepairResult>>();
 export function repairAntigravityRoute(
   input: RepairRequest,
   deps?: RepairDependencies,
+  authority?: ProxyOwnershipAuthority,
 ): Promise<RepairResult> {
   const key = `${input.routerUrl}:${input.accountId}`;
   const pending = activeRepairs.get(key);
   if (pending) return Promise.resolve({ status: "conflict", reason: "Account repair in progress" });
   const target = { url: input.routerUrl };
-  const io: RepairDependencies = deps || {
-    capabilities: () => router.getSafetyCapabilities(target),
-    binding: () => router.getConnectionBinding(input.accountId, target),
-    pools: () => router.listPools(target),
-    audit: (p) => router.auditRouterGooglePool(p.id, p.poolRevision || 1, target),
-    update: (update) => router.updateConnectionConditional(input.accountId, update, target),
-    verify: (binding, pool) =>
-      router.verifyConnectionQuota(
-        input.accountId,
-        {
-          expectedRevision: binding.revision,
-          expectedPoolId: pool.id,
-          expectedPoolRevision: pool.poolRevision || 1,
-        },
-        target,
-        input.signal,
-      ),
+  const io: RepairDependencies = {
+    ...(deps || {
+      capabilities: () => router.getSafetyCapabilities(target),
+      binding: () => router.getConnectionBinding(input.accountId, target),
+      pools: () => router.listPools(target),
+      audit: (p) => router.auditRouterGooglePool(p.id, p.poolRevision || 1, target),
+      update: (update) => router.updateConnectionConditional(input.accountId, update, target),
+      verify: (binding, pool) =>
+        router.verifyConnectionQuota(
+          input.accountId,
+          {
+            expectedRevision: binding.revision,
+            expectedPoolId: pool.id,
+            expectedPoolRevision: pool.poolRevision || 1,
+          },
+          target,
+          input.signal,
+        ),
+    }),
+    authority: deps?.authority ?? authority,
   };
   const work = (async (): Promise<RepairResult> => {
     if (input.signal.aborted) return { status: "aborted" };

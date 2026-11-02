@@ -10,13 +10,9 @@ function createMockDeps(): ApiDependencies {
   return {
     verifyControlPassword: (candidate) => candidate === "test-control-pass-123",
     proxyIntelligenceRepo: {} as unknown as ApiDependencies["proxyIntelligenceRepo"],
-    fleetRepo: {} as unknown as ApiDependencies["fleetRepo"],
     poolRanker: {} as unknown as ApiDependencies["poolRanker"],
     antigravityRotator: {} as unknown as ApiDependencies["antigravityRotator"],
     unifiedSyncCoordinator: {} as unknown as ApiDependencies["unifiedSyncCoordinator"],
-    fleetWireguard: () => null,
-    handleFleetRuntimeApi: async () => false,
-    handleFleetApi: async () => false,
     handleProxyCheck: async () => false,
     router: {} as unknown as ApiDependencies["router"],
     settings: {} as unknown as ApiDependencies["settings"],

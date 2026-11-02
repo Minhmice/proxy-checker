@@ -58,26 +58,6 @@ export const proxyTestHistory = sqliteTable(
   (table) => [index("idx_proxy_test_history_key").on(table.proxyKey, desc(table.testedAt))],
 );
 
-export const fleetManagedEndpoints = sqliteTable(
-  "fleet_managed_endpoints",
-  {
-    nodeId: text("node_id").notNull(),
-    endpointId: text("endpoint_id").notNull(),
-    proxyKey: text("proxy_key")
-      .notNull()
-      .references(() => proxies.proxyKey, { onDelete: "cascade" }),
-    createdAt: integer("created_at").notNull(),
-    updatedAt: integer("updated_at").notNull(),
-    pendingCleanup: integer("pending_cleanup").notNull().default(0),
-    ownedExclusive: integer("owned_exclusive").notNull().default(1),
-  },
-  (table) => [
-    primaryKey({ columns: [table.nodeId, table.endpointId, table.proxyKey] }),
-    index("idx_fleet_managed_proxy_key").on(table.proxyKey),
-    index("idx_fleet_managed_node_id").on(table.nodeId),
-  ],
-);
-
 export const googleTransportObservations = sqliteTable(
   "google_transport_observations",
   {

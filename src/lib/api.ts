@@ -11,12 +11,6 @@ import type {
   UnifiedProxyHistoryEntry,
   ProxyAuditDetail,
   AntigravityRotatorSnapshot,
-  DualRouterStatusResponse,
-  DualRouterConflictResponse,
-  DualRouterAuditResponse,
-  DualRouterReconcileResponse,
-  DualRouterResolveConflictResponse,
-  DualRouterValue,
   AggregatedTokenUsage,
 } from "./types";
 import { isAbortError } from "./request-lifecycle";
@@ -1040,70 +1034,6 @@ export async function restoreBackup(
   return response.json();
 }
 
-export async function fetchDualRouterStatus(password?: string): Promise<DualRouterStatusResponse> {
-  const response = await fetch("/api/ninerouter/dual/status", {
-    credentials: "same-origin",
-    headers: authHeaders(password),
-  });
-  if (response.status === 401) throw new Error("Wrong control password");
-  return response.json();
-}
-
-export async function fetchDualRouterConflicts(
-  password?: string,
-): Promise<DualRouterConflictResponse> {
-  const response = await fetch("/api/ninerouter/dual/conflicts", {
-    credentials: "same-origin",
-    headers: authHeaders(password),
-  });
-  if (response.status === 401) throw new Error("Wrong control password");
-  return response.json();
-}
-
-export async function triggerDualRouterAudit(password?: string): Promise<DualRouterAuditResponse> {
-  const response = await fetch("/api/ninerouter/dual/audit", {
-    method: "POST",
-    credentials: "same-origin",
-    headers: authHeaders(password),
-  });
-  if (response.status === 401) throw new Error("Wrong control password");
-  return response.json();
-}
-
-export async function triggerDualRouterReconcile(
-  mode: "incremental" | "full" = "incremental",
-  password?: string,
-): Promise<DualRouterReconcileResponse> {
-  const response = await fetch("/api/ninerouter/dual/reconcile", {
-    method: "POST",
-    credentials: "same-origin",
-    headers: authHeaders(password),
-    body: JSON.stringify({ mode }),
-  });
-  if (response.status === 401) throw new Error("Wrong control password");
-  return response.json();
-}
-
-export async function resolveDualRouterConflict(
-  id: string,
-  revision: number,
-  value: DualRouterValue,
-  password?: string,
-): Promise<DualRouterResolveConflictResponse> {
-  const response = await fetch(`/api/ninerouter/dual/conflicts/${encodeURIComponent(id)}/resolve`, {
-    method: "POST",
-    credentials: "same-origin",
-    headers: authHeaders(password),
-    body: JSON.stringify({ revision, value }),
-  });
-  if (response.status === 401) throw new Error("Wrong control password");
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({ error: "Failed to resolve conflict" }));
-    throw new Error(err.error || `Failed with status ${response.status}`);
-  }
-  return response.json();
-}
-
 export async function fetchTokenUsage(
   arg1?: string,
   arg2?: string,
@@ -1179,7 +1109,7 @@ export async function fetchTokenUsage(
     nodes: [
       {
         id: targetNode,
-        name: "Master Node (Pi)",
+        name: "Raspberry Pi (server-lan)",
         url: "http://192.168.1.54:20128",
         online: true,
         totalTokens: prompt + comp + cached,

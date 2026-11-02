@@ -12,7 +12,7 @@ if (dataDir === backupDir) throw new Error("Backup directory must differ from so
 const release = acquireDataLease(dataDir, "maintenance");
 try {
   fs.mkdirSync(backupDir, { recursive: true });
-  for (const file of ["proxies.sqlite3", "fleet.sqlite3", "antigravity-rotation.sqlite3"]) {
+  for (const file of ["proxies.sqlite3", "antigravity-rotation.sqlite3"]) {
     preflightAndBackupDatabase(path.join(dataDir, file), path.join(backupDir, file));
     console.log(`Backed up and verified ${file}`);
   }

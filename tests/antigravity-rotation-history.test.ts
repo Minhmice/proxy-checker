@@ -87,6 +87,7 @@ function fixture(t: TestContext) {
       antigravityActiveLimit: 1,
       antigravitySessionThreshold: 20,
     }),
+    getRouterUrls: () => [],
     getUsableProxies: () => proxies,
     listConnections: async () => structuredClone(connections),
     getUsage: async (id: string): Promise<Record<string, unknown>> => {
@@ -164,6 +165,27 @@ test("temporary quota failure preserves running account and consumes its slot", 
   );
 });
 
+test("unreachable router reports failure without activating an account", async (t) => {
+  const f = fixture(t);
+  let updates = 0;
+  f.deps.listConnections = async () => {
+    throw new Error("Connection refused (ECONNREFUSED)");
+  };
+  const update = f.deps.updateConnection;
+  f.deps.updateConnection = async (id, patch) => {
+    updates += 1;
+    return update(id, patch);
+  };
+
+  const snapshot = await createAntigravityRotator(f.deps).runRotation({ force: true });
+  assert.equal(snapshot.endpoints?.length, 1);
+  assert.equal(snapshot.endpoints?.[0].ok, false);
+  assert.match(snapshot.endpoints?.[0].error ?? "", /ECONNREFUSED/);
+  assert.equal(snapshot.activeCount, 0);
+  assert.deepEqual(snapshot.accounts, []);
+  assert.equal(updates, 0);
+});
+
 test("overlapping cycle does not activate a second account", async (t) => {
   const f = fixture(t);
   const rotator = createAntigravityRotator(f.deps);
@@ -181,6 +203,76 @@ test("failed proxy replacement keeps confirmed assignment and does not activate 
   assert.equal(state.proxyHealthy, false);
   assert.equal(state.isActive, false);
   assert.equal(state.lastError, "upstream rejected update");
+});
+test("rotation does not activate reserve without a usable proxy", () => {
+  const plan = computeRotationPlan([account("reserve", { proxyPoolId: "missing" })], [], {
+    activeLimit: 1,
+  });
+  assert.deepEqual(plan.activations, []);
+  assert.deepEqual(plan.activeIds, []);
+  assert.deepEqual(plan.proxyReassignments, {});
+});
+
+test("failed active proxy replacement updates snapshot after successful OFF", async (t) => {
+  const f = fixture(t);
+  f.connections[0].isActive = true;
+  f.connections[0].providerSpecificData!.proxyPoolId = "dead-proxy";
+  const update = f.deps.updateConnection;
+  f.deps.updateConnection = async (id, patch) => {
+    if (id === "a" && patch.providerSpecificData) throw new Error("proxy update failed");
+    return update(id, patch);
+  };
+
+  const snapshot = await createAntigravityRotator(f.deps).runRotation({ force: true });
+  assert.equal(f.connections[0].isActive, false);
+  assert.equal(snapshot.accounts.find((item) => item.id === "a")?.isActive, false);
+  assert.equal(snapshot.accounts.find((item) => item.id === "a")?.proxyPoolId, "dead-proxy");
+  assert.ok(!getActiveAccountIds(snapshot).includes("a"));
+});
+
+test("rotation reuses a live proxy only after its exhausted owner is switched off", async (t) => {
+  const f = fixture(t);
+  f.connections[0].isActive = true;
+  f.connections[0].providerSpecificData!.proxyPoolId = "shared-proxy";
+  f.connections[1].providerSpecificData!.proxyPoolId = "dead-proxy";
+  f.quota.get("a")!.session = 20;
+  f.deps.getUsableProxies = () => [{ remoteId: "shared-proxy" }];
+  const events: string[] = [];
+  const update = f.deps.updateConnection;
+  f.deps.updateConnection = async (id, patch) => {
+    if (id === "b" && patch.providerSpecificData?.proxyPoolId === "shared-proxy") {
+      assert.equal(f.connections[0].isActive, false, "reuse requires confirmed OFF");
+      events.push("bind-b");
+    }
+    const result = await update(id, patch);
+    if (id === "a" && patch.isActive === false) events.push("off-a");
+    if (id === "b" && patch.isActive === true) {
+      assert.equal(f.connections[0].isActive, false, "activation cannot overlap proxy owner");
+      events.push("on-b");
+    }
+    return result;
+  };
+
+  const snapshot = await createAntigravityRotator(f.deps).runRotation({ force: true });
+  assert.deepEqual(events, ["off-a", "bind-b", "on-b"]);
+  assert.deepEqual(getActiveAccountIds(snapshot), ["b"]);
+  assert.equal(f.connections[1].providerSpecificData?.proxyPoolId, "shared-proxy");
+});
+
+test("rotation does not reuse a proxy from an account whose deactivation failed", async (t) => {
+  const f = fixture(t);
+  f.connections[0].isActive = true;
+  f.connections[0].providerSpecificData!.proxyPoolId = "shared-proxy";
+  f.connections[1].providerSpecificData!.proxyPoolId = "dead-proxy";
+  f.quota.get("a")!.session = 20;
+  f.deps.getUsableProxies = () => [{ remoteId: "shared-proxy" }];
+  f.failures.add("a");
+
+  const snapshot = await createAntigravityRotator(f.deps).runRotation({ force: true });
+  assert.deepEqual(getActiveAccountIds(snapshot), ["a"]);
+  assert.equal(f.connections[0].providerSpecificData?.proxyPoolId, "shared-proxy");
+  assert.equal(f.connections[1].providerSpecificData?.proxyPoolId, "dead-proxy");
+  assert.equal(f.connections[1].isActive, false);
 });
 
 test("overlapping callers await completed rotation instead of cached snapshot", async (t) => {

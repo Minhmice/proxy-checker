@@ -9,7 +9,14 @@ import {
   CheckCircle2,
   XCircle,
   HelpCircle,
+  AlertCircle,
+  RefreshCw,
 } from "lucide-react";
+import {
+  type LoadState,
+  resolvePoolLifecycleBadge,
+  resolvePoolLatencyDisplay,
+} from "@/lib/proxy-binding-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -37,20 +44,24 @@ interface ProxyPoolsTableProps {
   testResults: Record<string, { ok: boolean; elapsedMs?: number; error?: string }>;
   testingMap: Record<string, boolean>;
   loading?: boolean;
+  loadState?: LoadState;
+  loadError?: string | null;
+  onRetry?: () => void;
+  isFiltered?: boolean;
+  onClearFilter?: () => void;
 }
 
 function FieldInfo({ content }: { content: string }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span
-          role="button"
-          tabIndex={0}
+        <button
+          type="button"
           aria-label="More information"
-          className="inline-flex items-center text-[#9E9EA8]/70 hover:text-[#FF5B22] transition-colors cursor-help p-0.5 ml-1"
+          className="inline-flex items-center text-[#9E9EA8]/70 hover:text-[#FF5B22] transition-colors cursor-help p-0.5 ml-1 bg-transparent border-0"
         >
           <HelpCircle className="size-3" />
-        </span>
+        </button>
       </TooltipTrigger>
       <TooltipContent
         side="top"
@@ -63,46 +74,20 @@ function FieldInfo({ content }: { content: string }) {
   );
 }
 
-function renderStatusBadge(
-  pool: ProxyPoolItem,
-  testResult?: { ok: boolean; elapsedMs?: number; error?: string },
-) {
-  if (testResult && !testResult.ok) {
-    return (
-      <Badge
-        variant="outline"
-        className="text-[10px] px-1.5 py-0.5 font-medium border-[#EF4444]/30 bg-[#EF4444]/15 text-[#EF4444]"
-      >
-        Dead
-      </Badge>
-    );
-  }
-  if (!pool.isActive) {
-    return (
-      <Badge
-        variant="outline"
-        className="text-[10px] px-1.5 py-0.5 font-medium border-zinc-700 bg-zinc-800/60 text-zinc-400"
-      >
-        Inactive
-      </Badge>
-    );
-  }
-  if (pool.type === "fallback" || pool.name.toLowerCase().includes("fallback")) {
-    return (
-      <Badge
-        variant="outline"
-        className="text-[10px] px-1.5 py-0.5 font-medium border-[#F59E0B]/30 bg-[#F59E0B]/15 text-[#F59E0B]"
-      >
-        Fallback
-      </Badge>
-    );
-  }
+function renderStatusBadge(pool: ProxyPoolItem) {
+  const badge = resolvePoolLifecycleBadge(pool);
+  const colorMap = {
+    success: "border-[#10B981]/30 bg-[#10B981]/15 text-[#10B981]",
+    warning: "border-[#F59E0B]/30 bg-[#F59E0B]/15 text-[#F59E0B]",
+    error: "border-rose-500/30 bg-rose-500/15 text-rose-400",
+    muted: "border-zinc-700 bg-zinc-800/60 text-zinc-400",
+  };
   return (
     <Badge
       variant="outline"
-      className="text-[10px] px-1.5 py-0.5 font-medium border-[#10B981]/30 bg-[#10B981]/15 text-[#10B981]"
+      className={`text-[10px] px-1.5 py-0.5 font-medium ${colorMap[badge.tone]}`}
     >
-      Active
+      {badge.label}
     </Badge>
   );
 }
@@ -117,6 +102,11 @@ export function ProxyPoolsTable({
   testResults,
   testingMap,
   loading,
+  loadState = "ready",
+  loadError,
+  onRetry,
+  isFiltered,
+  onClearFilter,
 }: ProxyPoolsTableProps) {
   return (
     <div className="flex flex-col h-full rounded-2xl border border-[#23232C] bg-[#131318] shadow-sm overflow-hidden">
@@ -160,14 +150,47 @@ export function ProxyPoolsTable({
 
       {/* Table Body */}
       <div className="flex-1 overflow-y-auto divide-y divide-[#23232C]/40 min-h-[450px] max-h-[620px]">
-        {loading ? (
+        {loadState === "loading" || loading ? (
           <div className="flex items-center justify-center h-48 text-xs text-[#9E9EA8]">
             Loading proxy pools...
           </div>
-        ) : pools.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-48 text-[#9E9EA8] gap-1.5 text-xs">
-            <span>No proxy pools found on this node</span>
+        ) : loadState === "error" ? (
+          <div className="flex flex-col items-center justify-center h-48 text-rose-400 gap-2 text-xs px-4 text-center">
+            <AlertCircle className="size-5" />
+            <span className="font-medium">
+              {loadError || "Failed to load proxy pools from node"}
+            </span>
+            {onRetry && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onRetry}
+                className="h-7 text-xs border-[#23232C] bg-[#1C1C24] text-zinc-200 hover:text-white mt-1 gap-1"
+              >
+                <RefreshCw className="size-3" />
+                Retry Connection
+              </Button>
+            )}
           </div>
+        ) : pools.length === 0 ? (
+          isFiltered ? (
+            <div className="flex flex-col items-center justify-center h-48 text-[#9E9EA8] gap-2 text-xs">
+              <span>No proxy pools match current search or filter</span>
+              {onClearFilter && (
+                <button
+                  type="button"
+                  onClick={onClearFilter}
+                  className="text-[#FF5B22] hover:underline text-xs"
+                >
+                  Clear filters
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center h-48 text-[#9E9EA8] gap-1.5 text-xs">
+              <span>No proxy pools found on this node</span>
+            </div>
+          )
         ) : (
           pools.map((pool) => {
             const isTesting = Boolean(testingMap[pool.id]);
@@ -190,7 +213,7 @@ export function ProxyPoolsTable({
                     <span className="text-xs font-semibold text-zinc-100 truncate">
                       {pool.name || "Proxy Pool"}
                     </span>
-                    {renderStatusBadge(pool, testResult)}
+                    {renderStatusBadge(pool)}
                   </div>
                   <span
                     className="text-[11px] text-[#9E9EA8] font-mono truncate block mt-0.5"
@@ -202,34 +225,48 @@ export function ProxyPoolsTable({
 
                 {/* Column 2: Latency */}
                 <div className="col-span-2 flex items-center text-[11px] font-mono">
-                  {testResult ? (
-                    testResult.ok ? (
-                      <span className="text-[#10B981] flex items-center gap-1 font-semibold">
-                        <CheckCircle2 className="size-3" />
-                        {testResult.elapsedMs}ms
-                      </span>
-                    ) : (
-                      <span
-                        className="text-[#EF4444] flex items-center gap-1"
-                        title={testResult.error || "Connection timed out"}
-                      >
-                        <XCircle className="size-3" />
-                        Fail
-                      </span>
-                    )
-                  ) : pool.latencyMs ? (
-                    <span className="text-zinc-300 flex items-center gap-1">
-                      {pool.latencyMs}ms
-                    </span>
-                  ) : (
-                    <span className="text-zinc-600">—</span>
-                  )}
+                  {(() => {
+                    const lat = resolvePoolLatencyDisplay(pool, isTesting, testResult);
+                    if (lat.state === "testing") {
+                      return (
+                        <span className="text-[#FF5B22] flex items-center gap-1 font-semibold animate-pulse">
+                          <FlaskConical className="size-3 animate-spin" />
+                          Pinging...
+                        </span>
+                      );
+                    }
+                    if (lat.state === "ok") {
+                      return (
+                        <span className="text-[#10B981] flex items-center gap-1 font-semibold">
+                          <CheckCircle2 className="size-3" />
+                          {lat.label}
+                        </span>
+                      );
+                    }
+                    if (lat.state === "failed") {
+                      return (
+                        <span
+                          className="text-rose-400 flex items-center gap-1 font-medium"
+                          title={lat.error || "Ping failed"}
+                        >
+                          <XCircle className="size-3" />
+                          {lat.label}
+                        </span>
+                      );
+                    }
+                    if (lat.state === "recorded") {
+                      return (
+                        <span className="text-zinc-300 flex items-center gap-1">{lat.label}</span>
+                      );
+                    }
+                    return <span className="text-zinc-600">—</span>;
+                  })()}
                 </div>
 
                 {/* Column 3: Fail Count & Weight */}
                 <div className="col-span-2 flex items-center gap-2 text-[11px] font-mono">
                   <span
-                    className={failCount > 0 ? "text-[#EF4444] font-medium" : "text-zinc-400"}
+                    className={failCount > 0 ? "text-rose-400 font-medium" : "text-zinc-400"}
                     title="Fail count"
                   >
                     {failCount}f
@@ -269,7 +306,8 @@ export function ProxyPoolsTable({
                     disabled={isTesting}
                     onClick={() => onTestPool(pool.id)}
                     title="Test connection latency"
-                    className="size-7 p-0 text-zinc-400 hover:text-[#FF5B22] hover:bg-[#FF5B22]/10"
+                    aria-label={`Test connection latency for ${pool.name || pool.proxyUrl}`}
+                    className="size-7 p-0 text-zinc-400 hover:text-[#FF5B22] hover:bg-[#FF5B22]/10 cursor-pointer"
                   >
                     <FlaskConical
                       className={`size-3.5 ${isTesting ? "animate-spin text-[#FF5B22]" : ""}`}
@@ -280,6 +318,7 @@ export function ProxyPoolsTable({
                   <Switch
                     checked={pool.isActive ?? false}
                     onCheckedChange={(checked) => onToggleActive(pool.id, checked)}
+                    aria-label={`Toggle active state for proxy pool ${pool.name || pool.proxyUrl}`}
                     className="data-[state=checked]:bg-[#10B981] data-[state=unchecked]:bg-[#23232C]"
                   />
 
@@ -289,7 +328,8 @@ export function ProxyPoolsTable({
                     variant="ghost"
                     onClick={() => onDeletePool(pool.id)}
                     title="Delete pool"
-                    className="size-7 p-0 text-zinc-400 hover:text-[#EF4444] hover:bg-[#EF4444]/10"
+                    aria-label={`Delete proxy pool ${pool.name || pool.proxyUrl}`}
+                    className="size-7 p-0 text-zinc-400 hover:text-[#EF4444] hover:bg-[#EF4444]/10 cursor-pointer"
                   >
                     <Trash2 className="size-3.5" />
                   </Button>

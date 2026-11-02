@@ -4,22 +4,7 @@ import { chromium } from "playwright";
 import AxeBuilder from "@axe-core/playwright";
 import { startIsolatedServer } from "../helpers/isolated-server.js";
 
-const routes = [
-  "/",
-  "/proxies",
-  "/proxy-endpoints",
-  "/nodes",
-  "/monitoring",
-  "/events",
-  "/settings",
-  "/wallet",
-  "/reseller",
-  "/referral",
-  "/invoice",
-  "/cdk",
-  "/scraping",
-  "/help",
-] as const;
+const routes = ["/", "/proxies", "/bindings", "/settings", "/help"] as const;
 
 test("dashboard routes have no selected WCAG violations", { timeout: 180_000 }, async (t) => {
   const app = await startIsolatedServer({ mode: "production", mockApi: false });

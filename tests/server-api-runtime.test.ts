@@ -15,11 +15,6 @@ test("runtime server delegates api requests through Hono while preserving native
     const healthData = await healthRes.json();
     assert.deepEqual(healthData, { ok: true });
 
-    // 2. Native installer route
-    const installRes = await fetch(`${app.baseUrl}/install-agent.sh`);
-    assert.equal(installRes.status, 200);
-    assert.ok((await installRes.text()).includes("curl"));
-
     // 3. Unauthenticated protected API rejects with 401
     const unauthRes = await fetch(`${app.baseUrl}/api/settings`);
     assert.equal(unauthRes.status, 401);

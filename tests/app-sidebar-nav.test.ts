@@ -2,20 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
-test("AppSidebar includes 9Router Modifier navigation group", () => {
+test("AppSidebar links to the dashboard, proxies and bindings", () => {
   const sidebarContent = fs.readFileSync("src/components/app-sidebar.tsx", "utf8");
-  assert.ok(
-    sidebarContent.includes("/ninerouter/dashboard"),
-    "AppSidebar must include /ninerouter/dashboard",
-  );
-  assert.ok(
-    sidebarContent.includes("/ninerouter/proxies"),
-    "AppSidebar must include /ninerouter/proxies",
-  );
-  assert.ok(
-    sidebarContent.includes("9Router Modifier"),
-    "AppSidebar must include 9Router Modifier group label",
-  );
+  assert.ok(sidebarContent.includes('href: "/", label: "Dashboard"'));
+  assert.ok(sidebarContent.includes('href: "/proxies", label: "Proxies"'));
+  assert.ok(sidebarContent.includes('href: "/bindings", label: "Bindings"'));
 });
 
 test("Sidebar primitives enforce pure shadcn icon-mode centering and gap height", () => {
@@ -88,25 +79,11 @@ test("AppSidebar implements transient ignite-and-fade flame interaction", () => 
   );
 });
 
-test("AppSidebar removes button borders and preserves shadcn SidebarSeparator", () => {
+test("AppSidebar removes active button borders", () => {
   const sidebarContent = fs.readFileSync("src/components/app-sidebar.tsx", "utf8");
-
-  // Border must be removed from menu buttons
   assert.ok(
     !sidebarContent.includes("border-[#FF5B22]"),
     "Active button must not have bounding box border",
   );
   assert.ok(sidebarContent.includes("border-0"), "NavMenuItem button must explicitly use border-0");
-
-  // Preserves shadcn SidebarSeparator
-  assert.ok(
-    sidebarContent.includes("<SidebarSeparator"),
-    "AppSidebar must render SidebarSeparator between navigation groups",
-  );
-  assert.ok(
-    sidebarContent.includes(
-      'import {\n  Sidebar,\n  SidebarContent,\n  SidebarFooter,\n  SidebarGroup,\n  SidebarGroupContent,\n  SidebarGroupLabel,\n  SidebarHeader,\n  SidebarMenu,\n  SidebarMenuButton,\n  SidebarMenuItem,\n  SidebarRail,\n  SidebarSeparator,\n} from "@/components/ui/sidebar"',
-    ),
-    "SidebarSeparator must be imported from shadcn sidebar UI",
-  );
 });

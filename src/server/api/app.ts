@@ -3,8 +3,6 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type { ApiDependencies, ApiEnv } from "./types.js";
 import { createAuthMiddleware } from "./middleware/auth.js";
 import { createAuthRoutes } from "./routes/auth.js";
-import { createFleetRoutes } from "./routes/fleet.js";
-import { createDualRouterRoutes } from "./routes/dual-router.js";
 import { createNineRouterRoutes } from "./routes/ninerouter.js";
 import { createAntigravityRoutes } from "./routes/antigravity.js";
 import { createSettingsRoutes } from "./routes/settings.js";
@@ -56,8 +54,6 @@ export function createApiApp(deps: ApiDependencies): Hono<ApiEnv> {
 
   // Route modules
   app.route("/api/auth", createAuthRoutes(deps));
-  app.route("/api/fleet", createFleetRoutes(deps));
-  app.route("/api/ninerouter/dual", createDualRouterRoutes(deps));
   app.route("/api/ninerouter", createNineRouterRoutes(deps));
   app.route("/api/antigravity", createAntigravityRoutes(deps));
   app.route("/api/settings", createSettingsRoutes(deps));

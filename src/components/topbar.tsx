@@ -2,13 +2,16 @@
 
 import * as React from "react";
 import {
+  BarChart3,
   Bell,
   CheckCircle2,
+  Globe,
   LogOut,
   PanelRightOpen,
   Search,
   Settings,
   ShieldCheck,
+  Shuffle,
 } from "lucide-react";
 import Link from "next/link";
 import { useAuth } from "./auth-provider";
@@ -31,8 +34,8 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 interface TopBarProps {
   onSearchClick: () => void;
-  onOperationsClick: () => void;
-  operationsOpen: boolean;
+  onOperationsClick?: () => void;
+  operationsOpen?: boolean;
 }
 
 export function TopBar({ onSearchClick, onOperationsClick, operationsOpen }: TopBarProps) {
@@ -108,22 +111,24 @@ export function TopBar({ onSearchClick, onOperationsClick, operationsOpen }: Top
 
         <Separator orientation="vertical" className="h-4 hidden sm:block bg-[#23232C]" />
 
-        <Button
-          variant="ghost"
-          size="icon"
-          className="relative size-11 sm:size-8 text-muted-foreground hover:bg-white/[0.04] hover:text-foreground xl:hidden touch-manipulation"
-          onClick={onOperationsClick}
-          aria-label={operationsOpen ? "Close operations" : "Open operations"}
-          aria-expanded={operationsOpen}
-        >
-          <PanelRightOpen className="size-4" />
-          <span
-            className={cn(
-              "absolute right-1 top-1 size-1.5 rounded-full ring-2 ring-background",
-              authenticated || Boolean(password) ? "bg-emerald-500" : "bg-amber-400",
-            )}
-          />
-        </Button>
+        {onOperationsClick && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="relative size-11 sm:size-8 text-muted-foreground hover:bg-white/[0.04] hover:text-foreground xl:hidden touch-manipulation"
+            onClick={onOperationsClick}
+            aria-label={operationsOpen ? "Close operations" : "Open operations"}
+            aria-expanded={operationsOpen}
+          >
+            <PanelRightOpen className="size-4" />
+            <span
+              className={cn(
+                "absolute right-1 top-1 size-1.5 rounded-full ring-2 ring-background",
+                authenticated || Boolean(password) ? "bg-emerald-500" : "bg-amber-400",
+              )}
+            />
+          </Button>
+        )}
 
         {/* User Account Dropdown */}
         <DropdownMenu>
@@ -170,14 +175,20 @@ export function TopBar({ onSearchClick, onOperationsClick, operationsOpen }: Top
             <DropdownMenuGroup>
               <DropdownMenuItem asChild>
                 <Link href="/" className="flex items-center gap-2 cursor-pointer text-xs">
-                  <CheckCircle2 className="size-3.5 text-muted-foreground" />
-                  <span>Overview</span>
+                  <BarChart3 className="size-3.5 text-muted-foreground" />
+                  <span>Dashboard</span>
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuItem asChild>
                 <Link href="/proxies" className="flex items-center gap-2 cursor-pointer text-xs">
-                  <ShieldCheck className="size-3.5 text-muted-foreground" />
+                  <Globe className="size-3.5 text-muted-foreground" />
                   <span>Proxies</span>
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link href="/bindings" className="flex items-center gap-2 cursor-pointer text-xs">
+                  <Shuffle className="size-3.5 text-muted-foreground" />
+                  <span>Bindings</span>
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuItem asChild>

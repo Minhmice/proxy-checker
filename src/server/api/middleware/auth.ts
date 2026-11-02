@@ -12,9 +12,7 @@ export function createAuthMiddleware(deps: ApiDependencies): MiddlewareHandler<A
       pathname === "/api/health" ||
       pathname === "/api/auth/login" ||
       pathname === "/api/auth/logout" ||
-      pathname === "/api/auth/session" ||
-      pathname === "/api/fleet/enroll" ||
-      pathname.startsWith("/api/fleet/agent/")
+      pathname === "/api/auth/session"
     ) {
       return next();
     }

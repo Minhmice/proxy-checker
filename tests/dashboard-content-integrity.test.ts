@@ -36,13 +36,12 @@ test("C4: Streamgraph does not display fake 00:00 and 12:00 timeline timestamps 
   );
 });
 
-test("C6, C7, C8, C9: Overview page table headers, failover copy, sync labels, and hero status are truthful", () => {
+test("C6, C7, C8, C9: Overview exposes labeled account status and truthful copy", () => {
   const code = fs.readFileSync("src/app/(dashboard)/page.tsx", "utf8");
-  assert.ok(
-    code.includes('<TableHead className="text-xs font-mono w-12">#</TableHead>') ||
-      code.includes('<TableHead className="text-xs font-mono">#</TableHead>'),
-    "Table must have a column header for rank number (#)",
-  );
+  const status = fs.readFileSync("src/components/account-proxy-status-card.tsx", "utf8");
+  assert.ok(status.includes("Identity / Account"), "Table must label the account column");
+  assert.ok(status.includes("Gemini Session Quota"), "Table must label session quota");
+  assert.ok(status.includes("Assigned Proxy"), "Table must label the assigned proxy");
   assert.ok(!code.includes("instant failover"), "Must not claim instant failover");
   assert.ok(
     !code.includes('"9Router Core Live"'),

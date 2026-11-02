@@ -1,9 +1,8 @@
 import { Hono } from "hono";
 import type { ApiDependencies, ApiEnv } from "../types.js";
 import { getBackupSyncStatus, triggerFullBackupAndSync } from "../../backup/git-sync.js";
-import { restoreBackup } from "../../backup/backup-service.js";
 
-export function createBackupRoutes(deps: ApiDependencies): Hono<ApiEnv> {
+export function createBackupRoutes(_deps: ApiDependencies): Hono<ApiEnv> {
   const router = new Hono<ApiEnv>();
 
   // GET /api/backup/status
@@ -31,26 +30,27 @@ export function createBackupRoutes(deps: ApiDependencies): Hono<ApiEnv> {
         push: body.push !== false,
       });
 
-      return c.json({ ok: true, ...result });
+      return c.json({
+        ok: result.backup.ok && result.git.ok,
+        ...result,
+        error: result.git.error || (result.backup.ok ? undefined : result.backup.errors.join("; ")),
+      });
     } catch (err) {
       return c.json({ ok: false, error: (err as Error).message || "Backup and sync failed" }, 500);
     }
   });
 
   // POST /api/backup/restore
-  router.post("/restore", async (c) => {
-    try {
-      const result = restoreBackup();
-      if (deps.settings && typeof deps.settings.initAppConfig === "function") {
-        try {
-          deps.settings.initAppConfig();
-        } catch {}
-      }
-      return c.json({ ...result });
-    } catch (err) {
-      return c.json({ ok: false, error: (err as Error).message || "Restore failed" }, 500);
-    }
-  });
+  router.post("/restore", (c) =>
+    c.json(
+      {
+        ok: false,
+        error:
+          "Restore is unavailable while the server is running. Stop all writers and use an offline recovery procedure.",
+      },
+      409,
+    ),
+  );
 
   return router;
 }

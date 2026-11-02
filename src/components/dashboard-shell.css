@@ -2156,3 +2156,13 @@
     animation: none;
   }
 }
+
+/* Sonner toast high-contrast enforcement */
+[data-sonner-toast] {
+  opacity: 1 !important;
+}
+[data-sonner-toast][data-type="error"] {
+  background: #1c1214 !important;
+  color: #ffe4e6 !important;
+  border-color: #881337 !important;
+}

@@ -100,7 +100,7 @@ export function AuditJobIndicator({
 
           <span className="font-semibold text-foreground">
             {isRunning
-              ? "Auditing proxy fleet..."
+              ? "Auditing proxies..."
               : isInterrupted
                 ? "Audit interrupted (server restart)"
                 : "Audit job complete"}

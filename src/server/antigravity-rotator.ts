@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { writeJsonAtomicSync } from "./fs-atomic.js";
 import type {
   AntigravityAccountState,
   AntigravityRotatorSnapshot,
@@ -19,6 +20,7 @@ import {
   openAntigravityRotationHistory,
   type AntigravityRotationHistory,
 } from "./antigravity-rotation-history.js";
+import type { RepairResult } from "./antigravity-repair.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -64,6 +66,7 @@ export interface ResetProxiesResult {
   totalAccounts: number;
   reassignedCount: number;
   forbiddenAccounts: number;
+  repairedCount: number;
   reassigned: Array<{
     accountId: string;
     email?: string;
@@ -71,6 +74,7 @@ export interface ResetProxiesResult {
     newProxyId: string;
     routerUrl?: string;
   }>;
+  failedEndpoints?: Array<{ url: string; error: string }>;
 }
 
 export interface AntigravityRotator {
@@ -167,21 +171,61 @@ export function extractAntigravityUsage(rawUsage: Record<string, unknown>): Anti
     lastError,
   };
 }
-export function isAccountForbidden(account: {
-  lastError?: string | null;
-  sessionPercentage?: number;
-  quotaAvailable?: boolean;
-}): boolean {
-  if (!account.lastError) return false;
-  const msg = account.lastError.toLowerCase();
+export function isAccountForbidden(
+  account:
+    | {
+        lastError?: string | null | unknown;
+        sessionPercentage?: number;
+        quotaAvailable?: boolean;
+      }
+    | null
+    | undefined,
+): boolean {
+  if (!account || !account.lastError) return false;
+  let msg = "";
+  if (typeof account.lastError === "string") {
+    msg = account.lastError;
+  } else if (account.lastError instanceof Error) {
+    msg = account.lastError.message;
+  } else if (typeof account.lastError === "object") {
+    const obj = account.lastError as Record<string, unknown>;
+    msg =
+      typeof obj.message === "string"
+        ? obj.message
+        : typeof obj.error === "string"
+          ? obj.error
+          : JSON.stringify(obj);
+  } else {
+    msg = String(account.lastError);
+  }
+  msg = msg.toLowerCase();
+
+  // Quota scraper denial or warning is non-fatal; chat may still work
+  if (msg.includes("quota api access forbidden") || msg.includes("chat may still work")) {
+    return false;
+  }
+
+  // HTTP 403 status (exclude IP octets e.g. 10.0.403.1 or port 4030)
+  const sanitizedMsg = msg
+    .replace(/\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b/g, "")
+    .replace(/(?:^|\s)[a-z0-9_.-]+:403\b/gi, "");
+  const isHttp403 =
+    /\[403\]|\bhttp\s*403\b|\berror\s*403\b|\bstatus\s*403\b|\b403\s+forbidden\b|\b403\s*(?:unauthorized|service)/i.test(
+      msg,
+    ) || /(?:^|[^0-9.])403(?:[^0-9.]|$)/.test(sanitizedMsg);
+
   return (
-    /\b403\b/.test(msg) ||
+    isHttp403 ||
     msg.includes("forbidden") ||
     msg.includes("self_signed_cert_in_chain") ||
     msg.includes("permission_denied") ||
     msg.includes("service_disabled") ||
     msg.includes("account_suspended") ||
     msg.includes("account_disabled") ||
+    msg.includes("user_project_denied") ||
+    msg.includes("billing_disabled") ||
+    msg.includes("access_token_scope_insufficient") ||
+    msg.includes("consumer_invalid") ||
     msg.includes("model_locked") ||
     msg.includes("modellock")
   );
@@ -214,8 +258,10 @@ export function computeRotationPlan(
     if (p.remoteId) usableProxyMap.set(p.remoteId, p);
   }
 
-  // Count current assignments to usable proxies
+  // Count current assignments to usable proxies. Live accounts reserve their proxies;
+  // replacements must not move another account onto one during the same cycle.
   const proxyAssignmentCounts = new Map<string, number>();
+  const liveProxyIds = new Set<string>();
   for (const p of usableProxies) {
     proxyAssignmentCounts.set(p.remoteId, 0);
   }
@@ -223,7 +269,17 @@ export function computeRotationPlan(
   // Pre-count existing valid proxies (excluding forbidden proxies when reassignForbidden is enabled)
   const effectiveProxyMap = new Map<string, string | null>();
   for (const acc of accounts) {
+    const isExhausted = acc.quotaAvailable !== false && acc.sessionPercentage <= sessionThreshold;
     const isForbidden = Boolean(options.reassignForbidden && isAccountForbidden(acc));
+    if (
+      acc.isActive &&
+      !isExhausted &&
+      !isForbidden &&
+      acc.proxyPoolId &&
+      usableProxyMap.has(acc.proxyPoolId)
+    ) {
+      liveProxyIds.add(acc.proxyPoolId);
+    }
     if (!isForbidden && acc.proxyPoolId && usableProxyMap.has(acc.proxyPoolId)) {
       effectiveProxyMap.set(acc.id, acc.proxyPoolId);
       proxyAssignmentCounts.set(
@@ -239,19 +295,20 @@ export function computeRotationPlan(
   const candidatePool = usableProxies;
 
   for (const acc of accounts) {
+    const isForbidden = Boolean(options.reassignForbidden && isAccountForbidden(acc));
     if (!effectiveProxyMap.get(acc.id) && candidatePool.length > 0) {
-      // Find usable proxy with < 2 assignments (prefer 0 first, then 1)
+      // Find usable proxy with < 2 assignments (prefer 0 first, then 1), excluding live proxies.
       const sortedCandidates = [...candidatePool]
-        .filter((p) => candidatePool.length === 1 || p.remoteId !== acc.proxyPoolId)
+        .filter(
+          (p) => (p.remoteId !== acc.proxyPoolId || !isForbidden) && !liveProxyIds.has(p.remoteId),
+        )
         .sort((a, b) => {
           const countA = proxyAssignmentCounts.get(a.remoteId) ?? 0;
           const countB = proxyAssignmentCounts.get(b.remoteId) ?? 0;
           return countA - countB;
         });
 
-      const chosen =
-        sortedCandidates.find((p) => (proxyAssignmentCounts.get(p.remoteId) ?? 0) < 2) ??
-        sortedCandidates[0];
+      const chosen = sortedCandidates.find((p) => (proxyAssignmentCounts.get(p.remoteId) ?? 0) < 2);
       if (chosen) {
         effectiveProxyMap.set(acc.id, chosen.remoteId);
         plan.proxyReassignments[acc.id] = chosen.remoteId;
@@ -267,6 +324,10 @@ export function computeRotationPlan(
   const survivingActive: AntigravityAccountInput[] = [];
   for (const acc of accounts) {
     if (!acc.isActive) continue;
+    if (!effectiveProxyMap.get(acc.id)) {
+      plan.deactivations.push(acc.id);
+      continue;
+    }
     const isExhausted = acc.quotaAvailable !== false && acc.sessionPercentage <= sessionThreshold;
     if (isExhausted) plan.deactivations.push(acc.id);
     else survivingActive.push(acc);
@@ -325,9 +386,9 @@ export function computeRotationPlan(
     for (const cand of candidates) {
       if (availableSlots <= 0) break;
       const candProxy = effectiveProxyMap.get(cand.id);
-      if (candProxy && occupiedProxies.has(candProxy)) continue;
+      if (!candProxy || occupiedProxies.has(candProxy)) continue;
       plan.activations.push(cand.id);
-      if (candProxy) occupiedProxies.add(candProxy);
+      occupiedProxies.add(candProxy);
       availableSlots -= 1;
     }
   }
@@ -364,6 +425,8 @@ export interface AntigravityRotatorDeps {
   dataDir?: string;
   history?: AntigravityRotationHistory;
   endpointTimeoutMs?: number;
+  /** Verified route repair (antigravity-repair). Runs before any proxy swap on reset. */
+  repairRoute?: (accountId: string, routerUrl: string | undefined) => Promise<RepairResult>;
 }
 
 export function createAntigravityRotator(deps?: AntigravityRotatorDeps) {
@@ -381,7 +444,8 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps) {
   let activeRunPromise: Promise<AntigravityRotatorSnapshot> | null = null;
   let rerunQueued = false;
   let queuedForce = false;
-
+  let queuedReassignForbidden = false;
+  let activeResetPromise: Promise<ResetProxiesResult> | null = null;
   function loadSnapshot(): AntigravityRotatorSnapshot {
     if (cachedSnapshot) return cachedSnapshot;
     try {
@@ -407,10 +471,7 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps) {
   function saveSnapshot(snapshot: AntigravityRotatorSnapshot) {
     cachedSnapshot = snapshot;
     try {
-      fs.mkdirSync(path.dirname(snapshotFile), { recursive: true });
-      const temp = `${snapshotFile}.tmp`;
-      fs.writeFileSync(temp, JSON.stringify(snapshot, null, 2));
-      fs.renameSync(temp, snapshotFile);
+      writeJsonAtomicSync(snapshotFile, snapshot);
     } catch (err) {
       console.error("[antigravity-rotator] Failed to save snapshot:", (err as Error).message);
     }
@@ -571,6 +632,7 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps) {
     options: { force?: boolean; reassignForbidden?: boolean } = {},
   ): Promise<AntigravityRotatorSnapshot> {
     if (options.force) queuedForce = true;
+    if (options.reassignForbidden) queuedReassignForbidden = true;
     if (activeRunPromise) {
       rerunQueued = true;
       return activeRunPromise;
@@ -580,9 +642,10 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps) {
       try {
         while (true) {
           const force = queuedForce;
+          const reassignForbidden = queuedReassignForbidden;
           queuedForce = false;
+          queuedReassignForbidden = false;
           rerunQueued = false;
-
           const settings = getSettings();
           if (!force && settings.antigravityRotatorEnabled === false) {
             return loadSnapshot();
@@ -661,9 +724,20 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps) {
             const plan = computeRotationPlan(globalInputs, usableProxies, {
               activeLimit: settings.antigravityActiveLimit,
               sessionThreshold: settings.antigravitySessionThreshold,
-              reassignForbidden: options.reassignForbidden ?? force === true,
+              reassignForbidden: reassignForbidden || options.reassignForbidden || force === true,
             });
-
+            const liveProxyIds = new Set(
+              globalInputs
+                .filter(
+                  (account) =>
+                    account.isActive &&
+                    !isAccountForbidden(account) &&
+                    account.quotaAvailable !== false &&
+                    account.sessionPercentage > settings.antigravitySessionThreshold &&
+                    account.proxyPoolId,
+                )
+                .map((account) => account.proxyPoolId as string),
+            );
             logScoped(
               "Antigravity",
               "runRotation",
@@ -676,63 +750,12 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps) {
                 deactivations: plan.deactivations,
               },
             );
-            // 4. Apply plan: proxy reassignments in parallel
+
             const successfulProxyReassignments = new Map<string, string>();
             const failedProxyReassignments = new Set<string>();
-            const reassignmentTasks = Object.entries(plan.proxyReassignments).map(
-              async ([globalKey, newProxyId]) => {
-                const meta = accountMetaByKey.get(globalKey);
-                if (!meta) return;
-                const currentPsData =
-                  (meta.rawConnection?.providerSpecificData as Record<string, unknown>) || {};
-                const urlLabel = meta.routerUrl ? ` [${meta.routerUrl}]` : "";
-                const overrides = {
-                  ...(meta.routerUrl ? { url: meta.routerUrl } : {}),
-                  ...(deps?.endpointTimeoutMs ? { timeoutMs: deps.endpointTimeoutMs } : {}),
-                };
-                const effectiveOverrides =
-                  Object.keys(overrides).length > 0 ? overrides : undefined;
-                try {
-                  await updateConn(
-                    meta.originalId,
-                    {
-                      providerSpecificData: {
-                        ...currentPsData,
-                        proxyPoolId: newProxyId,
-                      },
-                    },
-                    effectiveOverrides,
-                  );
-                  successfulProxyReassignments.set(globalKey, newProxyId);
-                  logScoped(
-                    "Antigravity",
-                    "reassignProxy",
-                    "info",
-                    `Reassigned proxy for ${meta.account.email || meta.originalId}: ${meta.account.proxyPoolId || "none"} -> ${newProxyId}${urlLabel}`,
-                    {
-                      accountId: meta.originalId,
-                      oldProxy: meta.account.proxyPoolId || null,
-                      newProxy: newProxyId,
-                    },
-                  );
-                } catch (err) {
-                  failedProxyReassignments.add(globalKey);
-                  meta.state.lastError = (err as Error).message;
-                  meta.state.proxyHealthy = false;
-                  logScoped(
-                    "Antigravity",
-                    "reassignProxy",
-                    "warn",
-                    `Failed to update proxy for ${meta.account.email || meta.originalId}: ${(err as Error).message}${urlLabel}`,
-                    { accountId: meta.originalId, error: (err as Error).message },
-                  );
-                }
-              },
-            );
-            await Promise.allSettled(reassignmentTasks);
-
             // 5. Apply plan: deactivations in parallel
             const failedDeactivations = new Set<string>();
+            const deactivatedAccounts = new Set<string>();
             const deactivationTasks = plan.deactivations.map(async (globalKey) => {
               const meta = accountMetaByKey.get(globalKey);
               if (!meta) return;
@@ -744,6 +767,8 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps) {
               const effectiveOverrides = Object.keys(overrides).length > 0 ? overrides : undefined;
               try {
                 await updateConn(meta.originalId, { isActive: false }, effectiveOverrides);
+                deactivatedAccounts.add(globalKey);
+                if (meta.account.proxyPoolId) liveProxyIds.delete(meta.account.proxyPoolId);
                 const reason =
                   meta.account.sessionPercentage <= (settings.antigravitySessionThreshold ?? 20)
                     ? `quota <= ${settings.antigravitySessionThreshold ?? 20}%`
@@ -771,6 +796,109 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps) {
               }
             });
             await Promise.allSettled(deactivationTasks);
+            liveProxyIds.clear();
+            for (const account of globalInputs) {
+              if (
+                account.isActive &&
+                !isAccountForbidden(account) &&
+                !deactivatedAccounts.has(account.id) &&
+                account.proxyPoolId
+              ) {
+                liveProxyIds.add(account.proxyPoolId);
+              }
+            }
+            for (const failedKey of failedDeactivations) {
+              const failedMeta = accountMetaByKey.get(failedKey);
+              if (failedMeta?.account.proxyPoolId) liveProxyIds.add(failedMeta.account.proxyPoolId);
+            }
+            for (const [globalKey, newProxyId] of Object.entries(plan.proxyReassignments)) {
+              const meta = accountMetaByKey.get(globalKey);
+              if (!meta) {
+                failedProxyReassignments.add(globalKey);
+                continue;
+              }
+              const currentPsData =
+                (meta.rawConnection?.providerSpecificData as Record<string, unknown>) || {};
+              const urlLabel = meta.routerUrl ? ` [${meta.routerUrl}]` : "";
+              const overrides = {
+                ...(meta.routerUrl ? { url: meta.routerUrl } : {}),
+                ...(deps?.endpointTimeoutMs ? { timeoutMs: deps.endpointTimeoutMs } : {}),
+              };
+              const effectiveOverrides = Object.keys(overrides).length > 0 ? overrides : undefined;
+              if (liveProxyIds.has(newProxyId)) {
+                const conflictingOwner = globalInputs.find(
+                  (account) =>
+                    account.id !== globalKey &&
+                    (account.isActive || successfulProxyReassignments.has(account.id)) &&
+                    (account.proxyPoolId === newProxyId ||
+                      successfulProxyReassignments.get(account.id) === newProxyId) &&
+                    !deactivatedAccounts.has(account.id),
+                );
+                const error = conflictingOwner
+                  ? `Proxy reassignment collision: ${newProxyId} is reserved by active account ${conflictingOwner.id}`
+                  : `Proxy reassignment collision: ${newProxyId} is reserved by another assignment`;
+                failedProxyReassignments.add(globalKey);
+                meta.state.lastError = error;
+                meta.state.proxyHealthy = false;
+                if (meta.account.isActive) {
+                  try {
+                    await updateConn(meta.originalId, { isActive: false }, effectiveOverrides);
+                    deactivatedAccounts.add(globalKey);
+                    failedDeactivations.delete(globalKey);
+                  } catch {
+                    failedDeactivations.add(globalKey);
+                  }
+                }
+                logScoped(
+                  "Antigravity",
+                  "reassignProxy",
+                  "warn",
+                  `Failed to update proxy for ${meta.account.email || meta.originalId}: ${error}${urlLabel}`,
+                  {
+                    accountId: meta.originalId,
+                    proxyPoolId: newProxyId,
+                    conflictingAccountId: conflictingOwner?.id,
+                    error,
+                  },
+                );
+                continue;
+              }
+              try {
+                await updateConn(
+                  meta.originalId,
+                  {
+                    providerSpecificData: {
+                      ...currentPsData,
+                      proxyPoolId: newProxyId,
+                    },
+                  },
+                  effectiveOverrides,
+                );
+                successfulProxyReassignments.set(globalKey, newProxyId);
+                liveProxyIds.add(newProxyId);
+              } catch (err) {
+                failedProxyReassignments.add(globalKey);
+                meta.state.lastError = (err as Error).message;
+                meta.state.proxyHealthy = false;
+                if (meta.account.isActive) {
+                  try {
+                    await updateConn(meta.originalId, { isActive: false }, effectiveOverrides);
+                    deactivatedAccounts.add(globalKey);
+                    failedDeactivations.delete(globalKey);
+                    if (meta.account.proxyPoolId) liveProxyIds.delete(meta.account.proxyPoolId);
+                  } catch {
+                    failedDeactivations.add(globalKey);
+                  }
+                }
+                logScoped(
+                  "Antigravity",
+                  "reassignProxy",
+                  "warn",
+                  `Failed to update proxy for ${meta.account.email || meta.originalId}: ${(err as Error).message}${urlLabel}`,
+                  { accountId: meta.originalId, error: (err as Error).message },
+                );
+              }
+            }
 
             // 6. Apply plan: activations in parallel (only if all deactivations succeeded)
             const successfulActivations = new Set<string>();
@@ -825,7 +953,9 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps) {
             // 7. Update states
             const activeSet = new Set(
               plan.activeIds.filter((globalKey) => {
+                if (deactivatedAccounts.has(globalKey)) return false;
                 if (failedDeactivations.has(globalKey)) return true;
+                if (failedProxyReassignments.has(globalKey)) return false;
                 const meta = accountMetaByKey.get(globalKey);
                 return Boolean(meta?.account.isActive) || successfulActivations.has(globalKey);
               }),
@@ -1026,64 +1156,132 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps) {
     return { updated: totalUpdated, accounts: allReassignments };
   }
   async function resetProxies(options: { forceAll?: boolean } = {}): Promise<ResetProxiesResult> {
-    const configuredUrls = getRouterUrls();
-    const targetUrls =
-      configuredUrls.length > 0 ? configuredUrls : [undefined as unknown as string];
-    const usable = deps?.getUsableProxies ? deps.getUsableProxies() : [];
-    if (usable.length === 0) {
-      return {
-        ok: false,
-        totalAccounts: 0,
-        reassignedCount: 0,
-        forbiddenAccounts: 0,
-        reassigned: [],
-      };
-    }
+    if (activeResetPromise) return activeResetPromise;
 
-    const endpointResults = await Promise.allSettled(
-      targetUrls.map((url) => fetchEndpointAccounts(url)),
-    );
+    activeResetPromise = (async (): Promise<ResetProxiesResult> => {
+      const configuredUrls = getRouterUrls();
+      const targetUrls =
+        configuredUrls.length > 0 ? configuredUrls : [undefined as unknown as string];
+      const usable = deps?.getUsableProxies ? deps.getUsableProxies() : [];
+      if (usable.length === 0) {
+        return {
+          ok: false,
+          totalAccounts: 0,
+          reassignedCount: 0,
+          forbiddenAccounts: 0,
+          repairedCount: 0,
+          reassigned: [],
+        };
+      }
 
-    const reassigned: ResetProxiesResult["reassigned"] = [];
-    let totalAccounts = 0;
-    let forbiddenCount = 0;
+      const endpointResults = await Promise.allSettled(
+        targetUrls.map((url) => fetchEndpointAccounts(url)),
+      );
 
-    for (let i = 0; i < targetUrls.length; i++) {
-      const epRes = endpointResults[i];
-      if (epRes.status !== "fulfilled") continue;
-      const { rawConnections, accountInputs, url } = epRes.value;
-      totalAccounts += accountInputs.length;
+      const reassigned: ResetProxiesResult["reassigned"] = [];
+      const failedEndpoints: Array<{ url: string; error: string }> = [];
+      let totalAccounts = 0;
+      let forbiddenCount = 0;
 
-      for (const acc of accountInputs) {
-        if (isAccountForbidden(acc)) {
-          forbiddenCount++;
+      interface GlobalAccountMeta {
+        account: AntigravityAccountInput;
+        rawConnection?: NineRouterConnectionItem;
+        routerUrl?: string;
+        originalId: string;
+      }
+      const accountMetaByKey = new Map<string, GlobalAccountMeta>();
+      const globalInputs: AntigravityAccountInput[] = [];
+
+      for (let i = 0; i < targetUrls.length; i++) {
+        const epRes = endpointResults[i];
+        const url = targetUrls[i] || "";
+        if (epRes.status !== "fulfilled") {
+          const errMessage = (epRes.reason as Error).message || "Connection failed";
+          failedEndpoints.push({ url, error: errMessage });
+          continue;
+        }
+
+        const { rawConnections, accountInputs } = epRes.value;
+        totalAccounts += accountInputs.length;
+        const connMap = new Map(rawConnections.map((c) => [c.id, c]));
+
+        for (const acc of accountInputs) {
+          if (isAccountForbidden(acc)) {
+            forbiddenCount++;
+          }
+          const globalKey = url ? `${url}:::${acc.id}` : acc.id;
+          accountMetaByKey.set(globalKey, {
+            account: acc,
+            rawConnection: connMap.get(acc.id),
+            routerUrl: url || undefined,
+            originalId: acc.id,
+          });
+          globalInputs.push({
+            ...acc,
+            id: globalKey,
+          });
         }
       }
 
-      const plan = computeRotationPlan(accountInputs, usable, {
+      // Repair forbidden routes first; only accounts repair could not fix fall through to swap.
+      let repairedCount = 0;
+      if (deps?.repairRoute) {
+        for (const input of globalInputs) {
+          if (!isAccountForbidden(input)) continue;
+          const meta = accountMetaByKey.get(input.id);
+          if (!meta) continue;
+          const result = await deps.repairRoute(meta.originalId, meta.routerUrl).catch(
+            (err: unknown): RepairResult => ({
+              status: "verification_failed",
+              reason: err instanceof Error ? err.message : String(err),
+            }),
+          );
+          logScoped("Antigravity", "resetProxies", "info", `Route repair: ${result.status}`, {
+            accountId: meta.originalId,
+            endpoint: meta.routerUrl || "default",
+            reason: result.reason,
+          });
+          if (result.status !== "repaired" || !result.binding) continue;
+          repairedCount++;
+          input.proxyPoolId = result.binding.poolId;
+          input.lastError = null;
+          meta.rawConnection = meta.rawConnection && {
+            ...meta.rawConnection,
+            providerSpecificData: {
+              ...meta.rawConnection.providerSpecificData,
+              proxyPoolId: result.binding.poolId ?? undefined,
+            },
+          };
+        }
+      }
+
+      const settings = getSettings();
+      const plan = computeRotationPlan(globalInputs, usable, {
+        activeLimit: settings.antigravityActiveLimit,
+        sessionThreshold: settings.antigravitySessionThreshold,
         reassignForbidden: true,
       });
 
-      const connMap = new Map(rawConnections.map((c) => [c.id, c]));
-      const urlLabel = url ? ` [${url}]` : "";
-      const overrides = {
-        ...(url ? { url } : {}),
-        ...(deps?.endpointTimeoutMs ? { timeoutMs: deps.endpointTimeoutMs } : {}),
-      };
-      const effectiveOverrides = Object.keys(overrides).length > 0 ? overrides : undefined;
-
-      for (const [accId, newProxyId] of Object.entries(plan.proxyReassignments)) {
-        const conn = connMap.get(accId);
-        if (!conn) continue;
-        const oldProxyId = (conn.providerSpecificData?.proxyPoolId as string | undefined) ?? null;
+      for (const [globalKey, newProxyId] of Object.entries(plan.proxyReassignments)) {
+        const meta = accountMetaByKey.get(globalKey);
+        if (!meta || !meta.rawConnection) continue;
+        const oldProxyId =
+          (meta.rawConnection.providerSpecificData?.proxyPoolId as string | undefined) ?? null;
         if (oldProxyId === newProxyId && !options.forceAll) continue;
 
         const currentPsData =
-          (conn.providerSpecificData as Record<string, unknown> | undefined) || {};
+          (meta.rawConnection.providerSpecificData as Record<string, unknown> | undefined) || {};
+        const url = meta.routerUrl;
+        const urlLabel = url ? ` [${url}]` : "";
+        const overrides = {
+          ...(url ? { url } : {}),
+          ...(deps?.endpointTimeoutMs ? { timeoutMs: deps.endpointTimeoutMs } : {}),
+        };
+        const effectiveOverrides = Object.keys(overrides).length > 0 ? overrides : undefined;
 
         try {
           await updateConn(
-            accId,
+            meta.originalId,
             {
               providerSpecificData: {
                 ...currentPsData,
@@ -1093,8 +1291,8 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps) {
             effectiveOverrides,
           );
           reassigned.push({
-            accountId: accId,
-            email: conn.email || conn.name || accId,
+            accountId: meta.originalId,
+            email: meta.rawConnection.email || meta.rawConnection.name || meta.originalId,
             oldProxyId,
             newProxyId,
             routerUrl: url,
@@ -1103,30 +1301,40 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps) {
             "Antigravity",
             "resetProxies",
             "info",
-            `Reset Proxies${urlLabel}: Re-assigned proxy for ${conn.email || accId} -> ${newProxyId}`,
-            { accountId: accId, oldProxyId, newProxyId, endpoint: url || "default" },
+            `Reset Proxies${urlLabel}: Re-assigned proxy for ${meta.rawConnection.email || meta.originalId} -> ${newProxyId}`,
+            { accountId: meta.originalId, oldProxyId, newProxyId, endpoint: url || "default" },
           );
         } catch (err) {
           logScoped(
             "Antigravity",
             "resetProxies",
             "warn",
-            `Reset Proxies${urlLabel}: Failed to reassign proxy for ${conn.email || accId}: ${(err as Error).message}`,
-            { accountId: accId, error: (err as Error).message, endpoint: url || "default" },
+            `Reset Proxies${urlLabel}: Failed to reassign proxy for ${meta.rawConnection.email || meta.originalId}: ${(err as Error).message}`,
+            {
+              accountId: meta.originalId,
+              error: (err as Error).message,
+              endpoint: url || "default",
+            },
           );
         }
       }
-    }
 
-    await runRotation({ force: true, reassignForbidden: true }).catch(() => null);
+      await runRotation({ force: true, reassignForbidden: true }).catch(() => null);
 
-    return {
-      ok: true,
-      totalAccounts,
-      reassignedCount: reassigned.length,
-      forbiddenAccounts: forbiddenCount,
-      reassigned,
-    };
+      return {
+        ok: true,
+        totalAccounts,
+        reassignedCount: reassigned.length,
+        forbiddenAccounts: forbiddenCount,
+        repairedCount,
+        reassigned,
+        ...(failedEndpoints.length > 0 ? { failedEndpoints } : {}),
+      };
+    })().finally(() => {
+      activeResetPromise = null;
+    });
+
+    return activeResetPromise;
   }
 
   function getSnapshot(): AntigravityRotatorSnapshot {

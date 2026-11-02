@@ -69,6 +69,116 @@ test("quota-only 403 cannot activate a reserve or blacklist a shared proxy", () 
   assert.deepEqual(plan.activeIds, ["running"]);
 });
 
+test("rotation uses only Gemini session quota at the 20 percent boundary", () => {
+  const exhausted = extractAntigravityUsage({
+    quotas: {
+      gemini_session: { remainingPercentage: 20 },
+      gemini_weekly: { remainingPercentage: 100 },
+      claude_session: { remainingPercentage: 100 },
+      gpt_session: { remainingPercentage: 100 },
+    },
+  });
+  const healthy = extractAntigravityUsage({
+    quotas: {
+      gemini_session: { remainingPercentage: 20.1 },
+      gemini_weekly: { remainingPercentage: 0 },
+      claude_session: { remainingPercentage: 0 },
+      gpt_session: { remainingPercentage: 0 },
+    },
+  });
+  const plan = computeRotationPlan(
+    [
+      { id: "exhausted", isActive: true, ...exhausted, proxyPoolId: "px1" },
+      { id: "healthy", isActive: true, ...healthy, proxyPoolId: "px2" },
+      { id: "at-boundary", isActive: false, ...exhausted, proxyPoolId: "px3" },
+    ],
+    [{ remoteId: "px1" }, { remoteId: "px2" }, { remoteId: "px3" }],
+    { activeLimit: 3, sessionThreshold: 20 },
+  );
+
+  assert.deepEqual(plan.deactivations, ["exhausted"]);
+  assert.deepEqual(plan.activations, []);
+  assert.deepEqual(plan.activeIds, ["healthy"]);
+  assert.deepEqual(plan.proxyReassignments, {});
+});
+
+test("rotation fills the configured limit with the earliest eligible reset, not the highest quota", () => {
+  const plan = computeRotationPlan(
+    [
+      {
+        id: "active",
+        isActive: true,
+        sessionPercentage: 75,
+        weeklyPercentage: 0,
+        resetAt: null,
+        proxyPoolId: "px1",
+      },
+      {
+        id: "late",
+        isActive: false,
+        sessionPercentage: 95,
+        weeklyPercentage: 100,
+        resetAt: "2026-10-04T12:00:00Z",
+        proxyPoolId: "px2",
+      },
+      {
+        id: "early",
+        isActive: false,
+        sessionPercentage: 20.1,
+        weeklyPercentage: 0,
+        resetAt: "2026-10-04T10:00:00Z",
+        proxyPoolId: "px3",
+      },
+      {
+        id: "unknown",
+        isActive: false,
+        sessionPercentage: 99,
+        weeklyPercentage: 100,
+        resetAt: null,
+        proxyPoolId: "px4",
+      },
+    ],
+    [{ remoteId: "px1" }, { remoteId: "px2" }, { remoteId: "px3" }, { remoteId: "px4" }],
+    { activeLimit: 2, sessionThreshold: 20 },
+  );
+
+  assert.deepEqual(plan.deactivations, []);
+  assert.deepEqual(plan.activations, ["early"]);
+  assert.deepEqual(plan.activeIds, ["active", "early"]);
+  assert.deepEqual(plan.proxyReassignments, {});
+});
+test("rotation never replaces a dead proxy with a proxy held by a live account", () => {
+  const accounts = [
+    {
+      id: "healthy",
+      isActive: true,
+      sessionPercentage: 80,
+      weeklyPercentage: 80,
+      resetAt: null,
+      proxyPoolId: "shared",
+    },
+    {
+      id: "dead",
+      isActive: true,
+      sessionPercentage: 70,
+      weeklyPercentage: 70,
+      resetAt: null,
+      proxyPoolId: "dead",
+    },
+  ];
+  const onlyOccupied = computeRotationPlan(accounts, [{ remoteId: "shared" }], { activeLimit: 2 });
+  assert.deepEqual(onlyOccupied.proxyReassignments, {});
+  assert.deepEqual(onlyOccupied.deactivations, ["dead"]);
+  assert.deepEqual(onlyOccupied.activeIds, ["healthy"]);
+
+  const withSpare = computeRotationPlan(accounts, [{ remoteId: "shared" }, { remoteId: "spare" }], {
+    activeLimit: 2,
+  });
+  assert.deepEqual(withSpare.proxyReassignments, { dead: "spare" });
+  assert.deepEqual(withSpare.deactivations, []);
+  assert.deepEqual(withSpare.activeIds, ["healthy", "dead"]);
+});
+
 test("computeRotationPlan demotes <= 20% and promotes candidates with lowest resetAt avoiding proxy collision", () => {
   const accounts = [
     {

@@ -1,4 +1,3 @@
-import type { FleetWireGuardSettings } from "../proxyfleet/wireguard.js";
 export type AuditVerdict = "PASS" | "WARN" | "FAIL" | "UNKNOWN";
 export type ProbeStatus =
   | "PASS"
@@ -244,7 +243,6 @@ export interface AppSettingsPublic {
   antigravityActiveLimit: number;
   antigravityRotateMinutes: number;
   antigravitySessionThreshold: number;
-  fleetWireguard?: FleetWireGuardSettings | null;
 }
 
 export interface SettingsMeta {
@@ -281,7 +279,6 @@ export interface SettingsUpdatePayload {
   antigravityActiveLimit?: number;
   antigravityRotateMinutes?: number;
   antigravitySessionThreshold?: number;
-  fleetWireguard?: FleetWireGuardSettings | null;
 }
 
 export interface AntigravityAccountState {
@@ -399,114 +396,6 @@ export interface AuditorJob {
   resultsCapped: boolean;
   persistenceWarning: string;
   error: string;
-}
-
-export type DualRouterValue =
-  | null
-  | boolean
-  | number
-  | string
-  | DualRouterValue[]
-  | { [key: string]: DualRouterValue };
-export type DualRouterResource = "pool" | "account" | "settings" | "role" | "history";
-export type DualRouterOutcome = "applied" | "rejected" | "conflicted" | "unsupported" | "unknown";
-export type DualRouterRunStatus =
-  | "verified"
-  | "partial"
-  | "conflicted"
-  | "blocked"
-  | "busy"
-  | "idle"
-  | "unconfigured";
-
-export interface DualRouterConflict {
-  id: string;
-  resource: DualRouterResource;
-  key: string;
-  field: string | null;
-  revision: number;
-  reason: "divergent" | "delete-edit" | "identity" | "ownership" | "credential";
-  base: DualRouterValue;
-  a: DualRouterValue;
-  b: DualRouterValue;
-}
-
-export interface DualRouterCapability {
-  resource: DualRouterResource | "usage";
-  read: boolean;
-  export: boolean;
-  write: boolean;
-  conditional: boolean;
-  evidence: string;
-}
-
-export interface DualRouterRunReport {
-  id: string;
-  status: "verified" | "partial" | "conflicted" | "blocked" | "busy";
-  operations: Array<{ id: string; outcome: DualRouterOutcome }>;
-  conflicts: DualRouterConflict[];
-  unmetCapabilities: string[];
-  verifiedAt: number | null;
-}
-
-export interface DualRouterSyncPolicy {
-  enabled: boolean;
-  usageWriteBackAuthorized: boolean;
-  nextIncrementalAt: number;
-  nextFullAt: number;
-}
-
-export interface DualRouterInfo {
-  id: string;
-  url: string;
-  reachable?: boolean;
-  latencyMs?: number | null;
-  activePools?: number | null;
-  totalPools?: number | null;
-  activeAccounts?: number | null;
-  error?: string | null;
-}
-
-export interface DualRouterStatusResponse {
-  ok: boolean;
-  status: DualRouterRunStatus;
-  capabilities: Record<string, DualRouterCapability[]> | DualRouterCapability[];
-  lastVerifiedRun: DualRouterRunReport | null;
-  policy: DualRouterSyncPolicy;
-  activeConflictsCount: number;
-  routers?: DualRouterInfo[];
-}
-
-export interface DualRouterConflictResponse {
-  ok: boolean;
-  conflicts: DualRouterConflict[];
-  total: number;
-}
-
-export interface DualRouterAuditResponse {
-  ok: boolean;
-  report: DualRouterRunReport;
-}
-
-export interface DualRouterReconcileResponse {
-  ok: boolean;
-  report: DualRouterRunReport;
-}
-
-export interface DualRouterResolveConflictResponse {
-  ok: boolean;
-  report: DualRouterRunReport;
-}
-
-export interface DualRouterUsageWriteBackResponse {
-  ok: boolean;
-  receipts: Array<{
-    operationId: string;
-    outcome: DualRouterOutcome;
-    boundary: string | null;
-    evidence: string | null;
-  }>;
-  errors?: string[];
 }
 
 export interface ModelUsageStats {
