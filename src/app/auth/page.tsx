@@ -54,7 +54,7 @@ const LOG_ENTRIES = [
   {
     tag: "AUTH",
     tagClass: "auth-terminal-tag",
-    text: "Control password required for dashboard and proxy operations",
+    text: "Control password required for dashboard and account operations",
   },
   {
     tag: "SESSION",
@@ -69,7 +69,7 @@ const LOG_ENTRIES = [
   {
     tag: "AUDIT",
     tagClass: "auth-terminal-tag",
-    text: "Operational events and proxy audits recorded to local database",
+    text: "Operational events and rotation history recorded to local database",
   },
 ];
 
@@ -226,18 +226,18 @@ export default function AuthPage() {
                     minhmiceProxy
                   </span>
                   <span className="text-xs font-mono text-slate-400 tracking-wide">
-                    Token &amp; Proxy Observer
+                    Token &amp; Quota Observer
                   </span>
                 </div>
               </div>
 
               <div className="mt-8 lg:mt-16">
                 <h1 className="text-2xl sm:text-4xl lg:text-5xl font-bold tracking-tight text-ink leading-[1.14]">
-                  High-throughput proxy management and token efficiency under complete control.
+                  Autonomous account quota management and token efficiency under complete control.
                 </h1>
                 <p className="mt-4 text-sm sm:text-base text-slate-300 max-w-xl leading-relaxed">
-                  Live latency ranking, sub-second route toggling, and automated health verification
-                  for 9Router proxy pools in dim control-room conditions.
+                  Live session quota monitoring, autonomous threshold rotation, and real-time token
+                  telemetry for 9Router endpoints in dim control-room conditions.
                 </p>
               </div>
 
@@ -368,7 +368,7 @@ export default function AuthPage() {
                   Authorize Control Plane
                 </CardTitle>
                 <CardDescription className="text-sm text-slate-300">
-                  Enter control password to access proxy management routes and settings.
+                  Enter control password to access account rotation and dashboard settings.
                 </CardDescription>
               </CardHeader>
               <CardContent>

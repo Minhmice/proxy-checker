@@ -1,13 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { isAbortError } from "../src/lib/request-lifecycle.js";
-import {
-  checkSession,
-  fetchStatus,
-  fetchPools,
-  fetchMetrics,
-  fetchAntigravityStatus,
-} from "../src/lib/api.js";
+import { checkSession, fetchSettings, fetchAntigravityStatus } from "../src/lib/api.js";
+
 test("isAbortError recognizes DOM abort cancellations without swallowing other errors", () => {
   assert.equal(isAbortError(new DOMException("signal aborted", "AbortError")), true);
   const errorAbort = new Error("signal is aborted without reason");
@@ -49,32 +44,17 @@ test("fetch client helpers gracefully handle aborted signals without rejections"
   const sessionRes = await checkSession(c1.signal);
   assert.equal(sessionRes, false);
 
-  // 2. fetchStatus with signal aborted in-flight
+  // 2. fetchSettings with signal aborted in-flight
   const c2 = new AbortController();
-  const statusPromise = fetchStatus(undefined, c2.signal);
+  const settingsPromise = fetchSettings(undefined, c2.signal);
   c2.abort();
-  const statusRes = await statusPromise;
-  assert.equal(statusRes.running, false);
-  assert.equal(statusRes.stats.total, 0);
+  const settingsRes = await settingsPromise;
+  assert.equal(settingsRes.settings.controlPasswordSet, false);
 
-  // 3. fetchPools with undefined password and signal in arg3
+  // 3. fetchAntigravityStatus with in-flight abort
   const c3 = new AbortController();
-  const poolsPromise = fetchPools(undefined, "active", c3.signal);
+  const agPromise = fetchAntigravityStatus(undefined, c3.signal);
   c3.abort();
-  const poolsRes = await poolsPromise;
-  assert.deepEqual(poolsRes, []);
-
-  // 4. fetchMetrics with undefined password and signal in arg3
-  const c4 = new AbortController();
-  const metricsPromise = fetchMetrics(undefined, 24, c4.signal);
-  c4.abort();
-  const metricsRes = await metricsPromise;
-  assert.deepEqual(metricsRes, []);
-
-  // 5. fetchAntigravityStatus with in-flight abort
-  const c5 = new AbortController();
-  const agPromise = fetchAntigravityStatus(undefined, c5.signal);
-  c5.abort();
   const agRes = await agPromise;
   assert.equal(agRes, null);
 });

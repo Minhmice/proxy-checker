@@ -5,12 +5,6 @@ import {
   parseNineRouterUrls,
 } from "./app-config.js";
 
-import type {
-  BindingUpdate,
-  ConditionalUpdateResult,
-  RouterBindingRevision,
-} from "./antigravity-contract.js";
-import type { TransportObservation } from "./antigravity-observation.js";
 const authCookiesByUrl = new Map<string, string>();
 const inFlightLoginsByUrl = new Map<string, Promise<string | null>>();
 
@@ -203,17 +197,12 @@ async function buildHeaders(
   throw new Error("9Router password or API key is required");
 }
 
-function isReportedTransportFailure(body: Record<string, unknown>): boolean {
-  return body.failureKind === "transport";
-}
-
 async function request<T>(
   path: string,
   options: RequestInit & { timeoutMs?: number } = {},
   retry = true,
   overrides?: NineRouterRequestOverrides,
   cookieRef?: { value: string | null },
-  clientOptions?: { acceptStructuredError?: boolean },
 ): Promise<T> {
   const config = readConfig(overrides);
   const timeoutMs = options.timeoutMs ?? overrides?.timeoutMs ?? 10_000;
@@ -260,12 +249,9 @@ async function request<T>(
       timeoutMs,
       signal: options.signal,
     });
-    return request<T>(path, options, false, overrides, effectiveCookieRef, clientOptions);
+    return request<T>(path, options, false, overrides, effectiveCookieRef);
   }
   if (!response.ok) {
-    if (clientOptions?.acceptStructuredError && typeof body.ok === "boolean") {
-      return (isReportedTransportFailure(body) ? { ...body, failureKind: "transport" } : body) as T;
-    }
     const message =
       (body.error as string) || (body.message as string) || `9Router API ${response.status}`;
     const error = new Error(message) as Error & { status?: number };
@@ -295,7 +281,7 @@ export function nineRouterAuthMode(
 export interface EndpointConnectionResult {
   url: string;
   ok: boolean;
-  poolCount?: number;
+  accountCount?: number;
   error?: string;
 }
 
@@ -303,7 +289,13 @@ export async function testNineRouterConnection(overrides?: {
   url?: string;
   password?: string;
   apiKey?: string;
-}) {
+}): Promise<{
+  ok: boolean;
+  error?: string;
+  accountCount?: number;
+  partial?: boolean;
+  endpoints?: EndpointConnectionResult[];
+}> {
   const config = readConfig(overrides);
   const targetUrls = config.urls.length > 0 ? config.urls : config.url ? [config.url] : [];
   if (targetUrls.length === 0) {
@@ -312,18 +304,12 @@ export async function testNineRouterConnection(overrides?: {
   if (targetUrls.length === 1) {
     const singleUrl = targetUrls[0];
     try {
-      const body = await request<{ proxyPools?: unknown[] }>(
-        "/api/proxy-pools?includeUsage=true",
-        {},
-        true,
-        { ...overrides, url: singleUrl },
-        { value: null },
-      );
-      const poolCount = body.proxyPools?.length ?? 0;
+      const accounts = await listConnectionPages({ ...overrides, url: singleUrl }, { value: null });
+      const accountCount = accounts.length;
       return {
         ok: true as const,
-        poolCount,
-        endpoints: [{ url: singleUrl, ok: true, poolCount }],
+        accountCount,
+        endpoints: [{ url: singleUrl, ok: true, accountCount }],
       };
     } catch (error) {
       const message = (error as Error).message;
@@ -338,14 +324,8 @@ export async function testNineRouterConnection(overrides?: {
   // Multiple URLs: test all in parallel
   const results = await Promise.allSettled(
     targetUrls.map(async (url) => {
-      const body = await request<{ proxyPools?: unknown[] }>(
-        "/api/proxy-pools?includeUsage=true",
-        {},
-        true,
-        { ...overrides, url },
-        { value: null },
-      );
-      return { url, ok: true, poolCount: body.proxyPools?.length ?? 0 };
+      const accounts = await listConnectionPages({ ...overrides, url }, { value: null });
+      return { url, ok: true, accountCount: accounts.length };
     }),
   );
 
@@ -366,153 +346,13 @@ export async function testNineRouterConnection(overrides?: {
     };
   }
 
-  const totalPoolCount = successful.reduce((sum, e) => sum + (e.poolCount ?? 0), 0);
+  const totalAccountCount = successful.reduce((sum, e) => sum + (e.accountCount ?? 0), 0);
   return {
     ok: true as const,
-    poolCount: totalPoolCount,
+    accountCount: totalAccountCount,
     partial: successful.length < endpoints.length,
     endpoints,
   };
-}
-
-export interface NineRouterPool {
-  id: string;
-  name: string;
-  proxyUrl: string;
-  type?: string;
-  isActive?: boolean;
-  testStatus?: string | null;
-  lastError?: string | null;
-  lastTestedAt?: string | null;
-  poolRevision?: number;
-}
-
-export async function listPools(overrides?: NineRouterRequestOverrides): Promise<NineRouterPool[]> {
-  const body = await request<{ proxyPools?: NineRouterPool[] }>(
-    "/api/proxy-pools?includeUsage=true",
-    {},
-    true,
-    overrides,
-  );
-  return body.proxyPools ?? [];
-}
-export interface NineRouterTestResult {
-  ok: boolean;
-  failureKind?: "transport";
-  status?: number;
-  statusText?: string | null;
-  error?: string | null;
-  elapsedMs?: number;
-  testedAt?: string;
-}
-
-export async function testPool(
-  id: string,
-  overrides?: NineRouterRequestOverrides,
-): Promise<NineRouterTestResult> {
-  const body = await request<NineRouterTestResult>(
-    `/api/proxy-pools/${encodeURIComponent(id)}/test`,
-    {
-      method: "POST",
-    },
-    true,
-    overrides,
-    undefined,
-    { acceptStructuredError: true },
-  );
-  return !body.ok && isReportedTransportFailure(body as unknown as Record<string, unknown>)
-    ? { ...body, failureKind: "transport" }
-    : body;
-}
-
-export async function setPoolActive(
-  id: string,
-  isActive: boolean,
-  overrides?: NineRouterRequestOverrides,
-) {
-  const body = await request<{ proxyPool: unknown }>(
-    `/api/proxy-pools/${encodeURIComponent(id)}`,
-    {
-      method: "PUT",
-      body: JSON.stringify({ isActive: isActive === true }),
-    },
-    true,
-    overrides,
-  );
-  return body.proxyPool;
-}
-
-export async function bulkSetActive(
-  updates: Array<{ id: string; isActive: boolean }>,
-  delayMs = 80,
-  overrides?: NineRouterRequestOverrides,
-) {
-  const results: Array<{ id: string; isActive: boolean; ok: boolean; error?: string }> = [];
-  for (const { id, isActive } of updates) {
-    try {
-      await setPoolActive(id, isActive, overrides);
-      results.push({ id, isActive, ok: true });
-    } catch (error) {
-      results.push({ id, isActive, ok: false, error: (error as Error).message });
-    }
-    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
-  }
-  return results;
-}
-
-export async function updatePool(
-  id: string,
-  patch: { name?: string; isActive?: boolean },
-  overrides?: NineRouterRequestOverrides,
-) {
-  const body = await request<{ proxyPool?: unknown }>(
-    `/api/proxy-pools/${encodeURIComponent(id)}`,
-    {
-      method: "PUT",
-      body: JSON.stringify(patch),
-    },
-    true,
-    overrides,
-  );
-  return body.proxyPool ?? body;
-}
-
-export async function renamePool(id: string, name: string, overrides?: NineRouterRequestOverrides) {
-  return updatePool(id, { name }, overrides);
-}
-
-export async function deletePool(id: string, overrides?: NineRouterRequestOverrides) {
-  await request<unknown>(
-    `/api/proxy-pools/${encodeURIComponent(id)}`,
-    {
-      method: "DELETE",
-    },
-    true,
-    overrides,
-  );
-}
-
-export async function createPool(
-  input: {
-    name: string;
-    proxyUrl: string;
-    type: string;
-    isActive: false;
-  },
-  overrides?: NineRouterRequestOverrides,
-): Promise<{ id: string; name: string; proxyUrl: string; type?: string }> {
-  const body = await request<{
-    proxyPool: { id: string; name: string; proxyUrl: string; type?: string };
-  }>(
-    "/api/proxy-pools",
-    {
-      method: "POST",
-      body: JSON.stringify(input),
-    },
-    true,
-    overrides,
-  );
-  return body.proxyPool;
 }
 
 export interface NineRouterConnectionItem {
@@ -526,29 +366,82 @@ export interface NineRouterConnectionItem {
   errorCode?: number | null;
   expiresAt?: string;
   lastUsedAt?: string;
-  providerSpecificData?: {
-    proxyPoolId?: string;
-    [key: string]: unknown;
-  };
+  providerSpecificData?: Record<string, unknown>;
+}
+
+type ConnectionListOptions = NineRouterRequestOverrides & { page?: number; pageSize?: number };
+
+async function listConnectionPages(
+  overrides?: ConnectionListOptions,
+  cookieRef?: { value: string | null },
+): Promise<NineRouterConnectionItem[]> {
+  const pageSize = overrides?.pageSize ?? 50;
+  if (
+    !Number.isSafeInteger(pageSize) ||
+    pageSize < 1 ||
+    pageSize > 500 ||
+    (overrides?.page !== undefined && (!Number.isSafeInteger(overrides.page) || overrides.page < 1))
+  ) {
+    throw new Error("Invalid 9Router pagination options");
+  }
+  const accounts: NineRouterConnectionItem[] = [];
+  const seen = new Set<string>();
+  for (let page = overrides?.page ?? 1; ; page++) {
+    const pageParam = page === 1 && overrides?.page === undefined ? "" : `&page=${page}`;
+    const body = await request<{
+      connections?: NineRouterConnectionItem[];
+      pagination?: { page: number; total: number; totalPages: number };
+    }>(
+      `/api/providers/client?pageSize=${pageSize}${pageParam}&provider=antigravity`,
+      {},
+      true,
+      overrides,
+      cookieRef,
+    );
+    if (!Array.isArray(body.connections)) throw new Error("Invalid 9Router connections response");
+    for (const account of body.connections) {
+      if (typeof account.id !== "string" || !account.id || seen.has(account.id)) {
+        throw new Error("Invalid or duplicate 9Router account in paginated response");
+      }
+      seen.add(account.id);
+      accounts.push(account);
+    }
+    if (body.pagination) {
+      const { page: currentPage, total, totalPages } = body.pagination;
+      if (
+        page === 1 &&
+        currentPage === 1 &&
+        total === 0 &&
+        totalPages === 0 &&
+        accounts.length === 0
+      ) {
+        return accounts;
+      }
+      if (
+        currentPage !== page ||
+        !Number.isSafeInteger(totalPages) ||
+        totalPages < page ||
+        !Number.isSafeInteger(total) ||
+        total < 0
+      )
+        throw new Error("Invalid 9Router pagination response");
+      if (overrides?.page !== undefined) return accounts;
+      if (page === totalPages) {
+        if (accounts.length !== total) throw new Error("Incomplete 9Router account pagination");
+        return accounts;
+      }
+      if (body.connections.length === 0) throw new Error("Incomplete 9Router account pagination");
+    } else if (overrides?.page !== undefined || body.connections.length < pageSize) {
+      return accounts;
+    }
+  }
 }
 
 export async function listAntigravityConnections(
-  overrides?: NineRouterRequestOverrides & {
-    page?: number;
-    pageSize?: number;
-  },
+  overrides?: ConnectionListOptions,
 ): Promise<NineRouterConnectionItem[]> {
-  const pageSize = overrides?.pageSize ?? 50;
-  const pageParam = overrides?.page !== undefined ? `&page=${overrides.page}` : "";
-  const body = await request<{ connections?: NineRouterConnectionItem[] }>(
-    `/api/providers/client?pageSize=${pageSize}${pageParam}&provider=antigravity`,
-    {},
-    true,
-    overrides,
-  );
-  return body.connections ?? [];
+  return listConnectionPages(overrides);
 }
-
 export async function getAccountUsage(
   id: string,
   overrides?: NineRouterRequestOverrides,
@@ -563,7 +456,7 @@ export async function getAccountUsage(
 
 export async function updateConnection(
   id: string,
-  patch: { isActive?: boolean; providerSpecificData?: Record<string, unknown> },
+  patch: { isActive?: boolean; providerSpecificData?: Record<string, unknown>; proxyPoolId?: null },
   overrides?: NineRouterRequestOverrides,
 ): Promise<{ connection?: unknown }> {
   return await request<{ connection?: unknown }>(
@@ -572,91 +465,6 @@ export async function updateConnection(
       method: "PUT",
       body: JSON.stringify(patch),
     },
-    true,
-    overrides,
-  );
-}
-
-export async function getSafetyCapabilities(overrides?: NineRouterRequestOverrides) {
-  return request<{
-    protocolVersion: number;
-    strictTls: boolean;
-    conditionalBinding: boolean;
-    nodeLocalAudit: boolean;
-    ownershipConfigured: boolean;
-  }>("/api/antigravity/safety-capabilities", {}, true, overrides);
-}
-export async function getConnectionBinding(id: string, overrides?: NineRouterRequestOverrides) {
-  return request<RouterBindingRevision>(
-    `/api/providers/${encodeURIComponent(id)}/binding`,
-    {},
-    true,
-    overrides,
-  );
-}
-export async function updateConnectionConditional(
-  id: string,
-  input: BindingUpdate,
-  overrides?: NineRouterRequestOverrides,
-): Promise<ConditionalUpdateResult> {
-  try {
-    return await request<ConditionalUpdateResult>(
-      `/api/providers/${encodeURIComponent(id)}/binding`,
-      { method: "PUT", body: JSON.stringify(input) },
-      true,
-      overrides,
-    );
-  } catch (error) {
-    const status = (error as Error & { status?: number }).status;
-    if (status === 404 || status === 503)
-      return { status: "unsupported", reason: "Router conditional binding unavailable" };
-    if (status === 409) return { status: "conflict", reason: "Binding or ownership changed" };
-    throw error;
-  }
-}
-export async function verifyConnectionQuota(
-  id: string,
-  input: { expectedRevision: number; expectedPoolId: string; expectedPoolRevision: number },
-  overrides?: NineRouterRequestOverrides,
-  signal?: AbortSignal,
-) {
-  return request<Record<string, unknown>>(
-    `/api/providers/${encodeURIComponent(id)}/quota-verification`,
-    { method: "POST", body: JSON.stringify(input), signal },
-    true,
-    overrides,
-  );
-}
-export async function auditRouterGooglePool(
-  poolId: string,
-  expectedPoolRevision: number,
-  overrides: NineRouterRequestOverrides,
-) {
-  const result = await request<{
-    poolId: string;
-    poolRevision: number;
-    observations: Omit<TransportObservation, "routerUrl">[];
-    complete: boolean;
-  }>(
-    `/api/proxy-pools/${encodeURIComponent(poolId)}/google-audit`,
-    { method: "POST", body: JSON.stringify({ expectedPoolRevision }) },
-    true,
-    overrides,
-  );
-  return {
-    ...result,
-    observations: result.observations.map((o) => ({ ...o, routerUrl: overrides.url || "" })),
-  };
-}
-
-export async function drainConnectionRoute(
-  id: string,
-  input: { operationId: string; expectedRevision: number; epoch: number },
-  overrides: NineRouterRequestOverrides,
-) {
-  return request<{ drained: boolean; epoch: number; revision: number }>(
-    `/api/providers/${encodeURIComponent(id)}/route-drain`,
-    { method: "POST", body: JSON.stringify(input) },
     true,
     overrides,
   );

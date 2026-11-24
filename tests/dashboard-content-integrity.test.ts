@@ -36,43 +36,9 @@ test("C4: Streamgraph does not display fake 00:00 and 12:00 timeline timestamps 
   );
 });
 
-test("C6, C7, C8, C9: Overview exposes labeled account status and truthful copy", () => {
-  const code = fs.readFileSync("src/app/(dashboard)/page.tsx", "utf8");
-  const status = fs.readFileSync("src/components/account-proxy-status-card.tsx", "utf8");
+test("C6, C7: Overview exposes labeled account status", () => {
+  const status = fs.readFileSync("src/components/account-status-card.tsx", "utf8");
   assert.ok(status.includes("Identity / Account"), "Table must label the account column");
   assert.ok(status.includes("Gemini Session Quota"), "Table must label session quota");
-  assert.ok(status.includes("Assigned Proxy"), "Table must label the assigned proxy");
-  assert.ok(!code.includes("instant failover"), "Must not claim instant failover");
-  assert.ok(
-    !code.includes('"9Router Core Live"'),
-    "Must not claim 9Router Core Live based solely on local config",
-  );
-  assert.ok(
-    !code.includes("Last Successful Sync"),
-    "Must label sync timestamp as Last Sync rather than Last Successful Sync",
-  );
-});
-
-test("C11: CobeGlobe decoration without telemetry markers is removed from Overview page", () => {
-  const code = fs.readFileSync("src/app/(dashboard)/page.tsx", "utf8");
-  assert.ok(
-    !code.includes("<CobeGlobe"),
-    "Empty CobeGlobe without telemetry coordinates should not be rendered on Overview",
-  );
-  assert.ok(
-    !code.includes("Global Egress Telemetry"),
-    "Must not claim Global Egress Telemetry when no telemetry coordinate data exists",
-  );
-});
-
-test("C12: Traffic chart reflects actual active route count history rather than traffic/capacity", () => {
-  const code = fs.readFileSync("src/components/traffic-chart.tsx", "utf8");
-  assert.ok(
-    !code.includes("Pool Traffic & Capacity"),
-    "Must not claim Traffic & Capacity when only charting active proxy counts",
-  );
-  assert.ok(
-    code.includes("Active Proxy History") || code.includes("Active Route History"),
-    "Must accurately label history of active proxies",
-  );
+  assert.ok(!status.includes("Assigned Proxy"), "Table must not contain proxy column");
 });

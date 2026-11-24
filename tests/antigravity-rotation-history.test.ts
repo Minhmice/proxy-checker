@@ -1,66 +1,19 @@
 import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import path from "node:path";
 import os from "node:os";
-import type { AntigravityRotatorSnapshot } from "../src/lib/types.js";
+import path from "node:path";
+import Database from "better-sqlite3";
 import {
-  computeRotationPlan,
   createAntigravityRotator,
   extractAntigravityUsage,
-  type AntigravityAccountInput,
 } from "../src/server/antigravity-rotator.js";
 import { openAntigravityRotationHistory } from "../src/server/antigravity-rotation-history.js";
 import { getSettingsSecrets } from "../src/server/app-config.js";
 import type { NineRouterConnectionItem } from "../src/server/nine-router-client.js";
 
-const account = (
-  id: string,
-  patch: Partial<AntigravityAccountInput> = {},
-): AntigravityAccountInput => ({
-  id,
-  isActive: false,
-  sessionPercentage: 100,
-  weeklyPercentage: 80,
-  resetAt: null,
-  proxyPoolId: `px-${id}`,
-  ...patch,
-});
-const proxies = ["a", "b", "c", "d"].map((id) => ({ remoteId: `px-${id}` }));
-
-test("rotation ignores weekly quota and uses strict session threshold", () => {
-  const plan = computeRotationPlan(
-    [
-      account("a", { isActive: true, weeklyPercentage: 0, sessionPercentage: 80 }),
-      account("b", { weeklyPercentage: 0, sessionPercentage: 20.01 }),
-      account("c", { isActive: true, sessionPercentage: 20 }),
-      account("d", { sessionPercentage: 20 }),
-    ],
-    proxies,
-    { activeLimit: 3 },
-  );
-  assert.deepEqual(plan.deactivations, ["c"]);
-  assert.deepEqual(plan.activeIds, ["a", "b"]);
-});
-
-test("session quota is available without weekly but malformed session stays unknown", () => {
-  const parsed = extractAntigravityUsage({
-    quotas: { gemini_session: { remainingPercentage: 80 } },
-  });
-  assert.equal(parsed.quotaAvailable, true);
-  assert.deepEqual(computeRotationPlan([account("a", parsed)], proxies).activations, ["a"]);
-  for (const session of [{}, { remainingPercentage: NaN }, { total: Infinity, used: 0 }]) {
-    const unknown = extractAntigravityUsage({ quotas: { gemini_session: session } });
-    assert.equal(unknown.quotaAvailable, false);
-    const plan = computeRotationPlan(
-      [account("a", { isActive: true, ...unknown }), account("b", unknown)],
-      proxies,
-      { activeLimit: 2 },
-    );
-    assert.deepEqual(plan.activeIds, ["a"]);
-    assert.deepEqual(plan.deactivations, []);
-  }
-});
+const url = "https://router.test";
+const key = (id: string, endpoint = url) => `${endpoint}:::${id}`;
 
 function fixture(t: TestContext) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "antigravity-turns-"));
@@ -69,256 +22,386 @@ function fixture(t: TestContext) {
     history.close();
     fs.rmSync(dataDir, { recursive: true, force: true });
   });
-  const connections = ["a", "b", "c"].map((id) => ({
-    id,
-    provider: "antigravity",
-    email: `${id}@example.test`,
-    isActive: false,
-    providerSpecificData: { proxyPoolId: `px-${id}` },
-  })) as NineRouterConnectionItem[];
-  const quota = new Map(connections.map((c) => [c.id, { session: 100, weekly: 80 }]));
-  const failures = new Set<string>();
+  const endpoints = new Map<string, NineRouterConnectionItem[]>([
+    [
+      url,
+      [
+        { id: "a", provider: "antigravity", isActive: true },
+        { id: "b", provider: "antigravity", isActive: false },
+        { id: "c", provider: "antigravity", isActive: false },
+      ],
+    ],
+  ]);
+  const quotas = new Map<string, number>([
+    [key("a"), 100],
+    [key("b"), 100],
+    [key("c"), 100],
+  ]);
+  const resets = new Map<string, string>();
+  const events: string[] = [];
+  const unread = new Set<string>();
   const unavailable = new Set<string>();
+  const accountErrors = new Map<string, string>();
+  const failedWrites = new Set<string>();
+  const uncertainWrites = new Set<string>();
+  const samples = [15, 20, 10, 15];
+  let sampleCount = 0;
   const deps = {
     dataDir,
     history,
-    getSettings: () => ({
-      ...getSettingsSecrets(),
-      antigravityActiveLimit: 1,
-      antigravitySessionThreshold: 20,
-    }),
-    getRouterUrls: () => [],
-    getUsableProxies: () => proxies,
-    listConnections: async () => structuredClone(connections),
-    getUsage: async (id: string): Promise<Record<string, unknown>> => {
-      if (unavailable.has(id)) throw new Error("quota transport unavailable");
-      const q = quota.get(id)!;
-      return {
-        quotas: {
-          gemini_session: { remainingPercentage: q.session },
-          gemini_weekly: { remainingPercentage: q.weekly },
-        },
-      };
+    getSettings: getSettingsSecrets,
+    getRouterUrls: () => [...endpoints.keys()],
+    sampleThreshold: () => samples[sampleCount++] ?? 15,
+    listConnections: async (overrides?: { url?: string }) => {
+      const endpoint = overrides?.url ?? url;
+      events.push(`read:${endpoint}`);
+      if (unread.has(endpoint)) throw new Error("endpoint unavailable");
+      return structuredClone(endpoints.get(endpoint) ?? []);
+    },
+    getUsage: async (
+      id: string,
+      overrides?: { url?: string },
+    ): Promise<Record<string, unknown>> => {
+      const idKey = key(id, overrides?.url);
+      if (unavailable.has(idKey)) throw new Error("usage transport unavailable");
+      const error = accountErrors.get(idKey);
+      return error
+        ? { error, quotas: {} }
+        : {
+            quotas: {
+              gemini_session: {
+                remainingPercentage: quotas.get(idKey),
+                resetAt: resets.get(idKey),
+              },
+            },
+          };
     },
     updateConnection: async (
       id: string,
-      patch: { isActive?: boolean; providerSpecificData?: Record<string, unknown> },
+      patch: { isActive?: boolean },
+      overrides?: { url?: string },
     ) => {
-      if (failures.has(id)) throw new Error("upstream rejected update");
-      const conn = connections.find((c) => c.id === id)!;
-      Object.assign(conn, patch);
-      return { connection: structuredClone(conn) };
+      const endpoint = overrides?.url ?? url;
+      const mutation = `${patch.isActive ? "on" : "off"}:${key(id, endpoint)}`;
+      events.push(mutation);
+      if (failedWrites.has(mutation)) throw new Error("write rejected");
+      const connection = endpoints.get(endpoint)!.find((item) => item.id === id)!;
+      connection.isActive = patch.isActive;
+      if (uncertainWrites.has(mutation)) throw new Error("write outcome unknown");
+      return { connection: structuredClone(connection) };
     },
   };
-  return { deps, connections, quota, failures, unavailable };
+  return {
+    dataDir,
+    history,
+    endpoints,
+    quotas,
+    resets,
+    events,
+    unread,
+    unavailable,
+    accountErrors,
+    failedWrites,
+    uncertainWrites,
+    deps,
+    sampleCount: () => sampleCount,
+  };
 }
 
-function getActiveAccountIds(snapshot: AntigravityRotatorSnapshot): string[] {
-  return snapshot.accounts.filter((a) => a.isActive).map((a) => a.id);
-}
+const active = (f: { endpoints: Map<string, NineRouterConnectionItem[]> }, endpoint = url) =>
+  f.endpoints
+    .get(endpoint)!
+    .filter((connection) => connection.isActive)
+    .map((connection) => connection.id);
 
-test("reserve priority follows reset time instead of activation history", () => {
-  const plan = computeRotationPlan(
-    [
-      account("a", { resetAt: null, lastActivatedAt: null }),
-      account("b", { resetAt: "2099-10-11T12:00:00Z", lastActivatedAt: 999, turnCount: 20 }),
-      account("c", { resetAt: "2099-10-11T13:00:00Z", lastActivatedAt: 1, turnCount: 1 }),
-      account("d", { resetAt: "not-a-date", lastActivatedAt: null }),
-    ],
-    proxies,
-    { activeLimit: 3 },
-  );
-  assert.deepEqual(plan.activations, ["b", "c", "a"]);
-});
-
-test("failed OFF keeps its slot and cannot produce a false activation", async (t) => {
-  const f = fixture(t);
-  f.connections[0].isActive = true;
-  f.quota.get("a")!.session = 20;
-  f.failures.add("a");
-  const snapshot = await createAntigravityRotator(f.deps).runRotation({ force: true });
-  assert.deepEqual(getActiveAccountIds(snapshot), ["a"]);
-  assert.equal(snapshot.activeCount, 1);
-  assert.equal(f.connections[1].isActive, false);
-});
-
-test("failed ON does not count as a turn or appear active", async (t) => {
-  const f = fixture(t);
-  f.failures.add("a");
-  const first = await createAntigravityRotator(f.deps).runRotation({ force: true });
-  assert.equal(first.accounts.find((a) => a.id === "a")!.isActive, false);
-  f.failures.clear();
-  for (const c of f.connections) c.isActive = false;
-  assert.deepEqual(
-    getActiveAccountIds(await createAntigravityRotator(f.deps).runRotation({ force: true })),
-    ["a"],
-  );
-});
-
-test("temporary quota failure preserves running account and consumes its slot", async (t) => {
-  const f = fixture(t);
-  f.connections[0].isActive = true;
-  f.unavailable.add("a");
-  assert.deepEqual(
-    getActiveAccountIds(await createAntigravityRotator(f.deps).runRotation({ force: true })),
-    ["a"],
-  );
-});
-
-test("unreachable router reports failure without activating an account", async (t) => {
-  const f = fixture(t);
-  let updates = 0;
-  f.deps.listConnections = async () => {
-    throw new Error("Connection refused (ECONNREFUSED)");
-  };
-  const update = f.deps.updateConnection;
-  f.deps.updateConnection = async (id, patch) => {
-    updates += 1;
-    return update(id, patch);
-  };
-
-  const snapshot = await createAntigravityRotator(f.deps).runRotation({ force: true });
-  assert.equal(snapshot.endpoints?.length, 1);
-  assert.equal(snapshot.endpoints?.[0].ok, false);
-  assert.match(snapshot.endpoints?.[0].error ?? "", /ECONNREFUSED/);
-  assert.equal(snapshot.activeCount, 0);
-  assert.deepEqual(snapshot.accounts, []);
-  assert.equal(updates, 0);
-});
-
-test("overlapping cycle does not activate a second account", async (t) => {
-  const f = fixture(t);
-  const rotator = createAntigravityRotator(f.deps);
-  await Promise.all([rotator.runRotation({ force: true }), rotator.runRotation({ force: true })]);
-  assert.deepEqual(getActiveAccountIds(rotator.getSnapshot()), ["a"]);
-});
-
-test("failed proxy replacement keeps confirmed assignment and does not activate reserve", async (t) => {
-  const f = fixture(t);
-  f.connections[0].providerSpecificData!.proxyPoolId = "dead-proxy";
-  f.failures.add("a");
-  const snapshot = await createAntigravityRotator(f.deps).runRotation({ force: true });
-  const state = snapshot.accounts.find((a) => a.id === "a")!;
-  assert.equal(state.proxyPoolId, "dead-proxy");
-  assert.equal(state.proxyHealthy, false);
-  assert.equal(state.isActive, false);
-  assert.equal(state.lastError, "upstream rejected update");
-});
-test("rotation does not activate reserve without a usable proxy", () => {
-  const plan = computeRotationPlan([account("reserve", { proxyPoolId: "missing" })], [], {
-    activeLimit: 1,
+test("history persists pending threshold across reopen and confirms activation once", (t) => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "antigravity-history-"));
+  const first = openAntigravityRotationHistory(dataDir);
+  assert.equal(first.prepareActivation(key("a"), 10).thresholdPercentage, 10);
+  assert.equal(first.prepareActivation(key("a"), 20).thresholdPercentage, 10);
+  first.close();
+  const second = openAntigravityRotationHistory(dataDir);
+  t.after(() => {
+    second.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
   });
-  assert.deepEqual(plan.activations, []);
-  assert.deepEqual(plan.activeIds, []);
-  assert.deepEqual(plan.proxyReassignments, {});
+  assert.equal(second.get(key("a"))?.thresholdPercentage, 10);
+  assert.equal(second.confirmActivation(key("a"), 123).turnCount, 1);
+  assert.equal(second.confirmActivation(key("a"), 456).turnCount, 1);
+  assert.equal(second.get(key("a"))?.lastActivatedAt, 123);
+  second.confirmDeactivation(key("a"));
+  assert.equal(second.get(key("a"))?.thresholdPercentage, null);
+  assert.equal(second.prepareActivation(key("a"), 20).thresholdPercentage, 20);
+  assert.equal(second.confirmActivation(key("a"), 789).turnCount, 2);
 });
 
-test("failed active proxy replacement updates snapshot after successful OFF", async (t) => {
+test("legacy rows upgrade additively and invalid thresholds normalize once", (t) => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "antigravity-legacy-"));
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  const databasePath = path.join(dataDir, "antigravity-rotation.sqlite3");
+  const legacy = new Database(databasePath);
+  legacy.exec(
+    "CREATE TABLE antigravity_account_turns (account_id TEXT PRIMARY KEY, turn_count INTEGER NOT NULL DEFAULT 0, last_activated_at INTEGER); INSERT INTO antigravity_account_turns VALUES ('legacy', 4, 123)",
+  );
+  legacy.close();
+  const history = openAntigravityRotationHistory(dataDir);
+  const upgraded = history.get("legacy")!;
+  assert.equal(upgraded.turnCount, 4);
+  assert.equal(upgraded.lastActivatedAt, 123);
+  assert.equal(upgraded.thresholdPercentage, null);
+  history.adoptActive("legacy", 10);
+  history.close();
+  const db = new Database(databasePath);
+  db.prepare(
+    "UPDATE antigravity_account_turns SET threshold_percentage = 25 WHERE account_id = ?",
+  ).run("legacy");
+  db.close();
+  const reopened = openAntigravityRotationHistory(dataDir);
+  try {
+    assert.equal(reopened.adoptActive("legacy", 20).thresholdPercentage, 20);
+    assert.equal(reopened.adoptActive("legacy", 10).thresholdPercentage, 20);
+    assert.equal(reopened.get("legacy")?.turnCount, 4);
+  } finally {
+    reopened.close();
+  }
+});
+
+test("threshold persistence failure prevents activation", async (t) => {
   const f = fixture(t);
-  f.connections[0].isActive = true;
-  f.connections[0].providerSpecificData!.proxyPoolId = "dead-proxy";
-  const update = f.deps.updateConnection;
-  f.deps.updateConnection = async (id, patch) => {
-    if (id === "a" && patch.providerSpecificData) throw new Error("proxy update failed");
-    return update(id, patch);
+  f.quotas.set(key("a"), 10);
+  const history = {
+    ...f.history,
+    prepareActivation: () => {
+      throw new Error("disk full");
+    },
   };
-
-  const snapshot = await createAntigravityRotator(f.deps).runRotation({ force: true });
-  assert.equal(f.connections[0].isActive, false);
-  assert.equal(snapshot.accounts.find((item) => item.id === "a")?.isActive, false);
-  assert.equal(snapshot.accounts.find((item) => item.id === "a")?.proxyPoolId, "dead-proxy");
-  assert.ok(!getActiveAccountIds(snapshot).includes("a"));
+  const snapshot = await createAntigravityRotator({ ...f.deps, history }).runRotation({
+    force: true,
+  });
+  assert.deepEqual(active(f), ["a"]);
+  assert.ok(!f.events.some((event) => event.startsWith("on:") || event.startsWith("off:")));
+  assert.equal(snapshot.degraded, true);
+  assert.match(snapshot.error ?? "", /disk full/);
 });
 
-test("rotation reuses a live proxy only after its exhausted owner is switched off", async (t) => {
+test("failed activation confirmation does not deactivate incumbent", async (t) => {
   const f = fixture(t);
-  f.connections[0].isActive = true;
-  f.connections[0].providerSpecificData!.proxyPoolId = "shared-proxy";
-  f.connections[1].providerSpecificData!.proxyPoolId = "dead-proxy";
-  f.quota.get("a")!.session = 20;
-  f.deps.getUsableProxies = () => [{ remoteId: "shared-proxy" }];
-  const events: string[] = [];
+  f.quotas.set(key("a"), 10);
   const update = f.deps.updateConnection;
-  f.deps.updateConnection = async (id, patch) => {
-    if (id === "b" && patch.providerSpecificData?.proxyPoolId === "shared-proxy") {
-      assert.equal(f.connections[0].isActive, false, "reuse requires confirmed OFF");
-      events.push("bind-b");
-    }
-    const result = await update(id, patch);
-    if (id === "a" && patch.isActive === false) events.push("off-a");
-    if (id === "b" && patch.isActive === true) {
-      assert.equal(f.connections[0].isActive, false, "activation cannot overlap proxy owner");
-      events.push("on-b");
-    }
+  f.deps.updateConnection = async (id, patch, overrides) => {
+    const result = await update(id, patch, overrides);
+    if (id === "b" && patch.isActive) f.unread.add(url);
     return result;
   };
-
   const snapshot = await createAntigravityRotator(f.deps).runRotation({ force: true });
-  assert.deepEqual(events, ["off-a", "bind-b", "on-b"]);
-  assert.deepEqual(getActiveAccountIds(snapshot), ["b"]);
-  assert.equal(f.connections[1].providerSpecificData?.proxyPoolId, "shared-proxy");
+  assert.deepEqual(active(f), ["a", "b"]);
+  assert.ok(!f.events.includes(`off:${key("a")}`));
+  assert.equal(snapshot.degraded, true);
 });
 
-test("rotation does not reuse a proxy from an account whose deactivation failed", async (t) => {
+test("startup confirms retained active account before pruning extras", async (t) => {
   const f = fixture(t);
-  f.connections[0].isActive = true;
-  f.connections[0].providerSpecificData!.proxyPoolId = "shared-proxy";
-  f.connections[1].providerSpecificData!.proxyPoolId = "dead-proxy";
-  f.quota.get("a")!.session = 20;
-  f.deps.getUsableProxies = () => [{ remoteId: "shared-proxy" }];
-  f.failures.add("a");
-
-  const snapshot = await createAntigravityRotator(f.deps).runRotation({ force: true });
-  assert.deepEqual(getActiveAccountIds(snapshot), ["a"]);
-  assert.equal(f.connections[0].providerSpecificData?.proxyPoolId, "shared-proxy");
-  assert.equal(f.connections[1].providerSpecificData?.proxyPoolId, "dead-proxy");
-  assert.equal(f.connections[1].isActive, false);
+  f.endpoints.get(url)![1].isActive = true;
+  f.resets.set(key("a"), "2099-01-02T00:00:00Z");
+  f.resets.set(key("b"), "2099-01-01T00:00:00Z");
+  await createAntigravityRotator(f.deps).runRotation({ force: true });
+  const off = f.events.indexOf(`off:${key("a")}`);
+  assert.ok(off > 0);
+  assert.equal(f.events.slice(0, off).filter((event) => event === `read:${url}`).length, 2);
+  assert.deepEqual(active(f), ["b"]);
 });
 
-test("overlapping callers await completed rotation instead of cached snapshot", async (t) => {
+test("adopting an already active account does not invent a turn", (t) => {
   const f = fixture(t);
-  let release!: () => void;
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const turn = f.history.adoptActive(key("a"), 15);
+  assert.equal(turn.turnCount, 0);
+  assert.equal(turn.thresholdPercentage, 15);
+  assert.equal(f.history.adoptActive(key("a"), 20).thresholdPercentage, 15);
+});
+
+test("quota-only denial is unavailable telemetry, not fresh account failure", async (t) => {
+  const f = fixture(t);
+  f.accountErrors.set(key("a"), "quota API access forbidden; chat may still work");
+  const snapshot = await createAntigravityRotator(f.deps).runRotation({ force: true });
+  assert.deepEqual(active(f), ["a"]);
+  assert.equal(snapshot.accounts.find((account) => account.id === "a")?.quotaAvailable, false);
+  assert.ok(!f.events.some((event) => event.startsWith("on:") || event.startsWith("off:")));
+});
+
+test("stale connection error blocks promotion without forcing incumbent handoff", async (t) => {
+  const f = fixture(t);
+  f.endpoints.get(url)![0].lastError = "stale failure";
+  f.endpoints.get(url)![1].lastError = "stale failure";
+  let snapshot = await createAntigravityRotator(f.deps).runRotation({ force: true });
+  assert.deepEqual(active(f), ["a"]);
+  f.endpoints.get(url)![0].isActive = false;
+  f.quotas.set(key("c"), 0);
+  snapshot = await createAntigravityRotator(f.deps).runRotation({ force: true });
+  assert.deepEqual(active(f), []);
+  assert.match(snapshot.error ?? "", /No eligible account/);
+});
+
+test("zero Gemini session quota is available; missing session remains unavailable", () => {
+  const zero = extractAntigravityUsage({ quotas: { gemini_session: { remainingPercentage: 0 } } });
+  const missing = extractAntigravityUsage({ quotas: {} });
+  assert.equal(zero.sessionPercentage, 0);
+  assert.equal(zero.quotaAvailable, true);
+  assert.equal(missing.quotaAvailable, false);
+});
+
+test("keeps threshold through force, restart and no successor, resampling after confirmed off", async (t) => {
+  const f = fixture(t);
+  f.quotas.set(key("a"), 15);
+  f.quotas.set(key("b"), 20);
+  f.quotas.set(key("c"), 0);
+  const first = createAntigravityRotator(f.deps);
+  let snapshot = await first.runRotation({ force: true });
+  assert.deepEqual(active(f), ["a"]);
+  assert.equal(snapshot.accounts.find((a) => a.id === "a")?.thresholdPercentage, 15);
+  snapshot = await createAntigravityRotator(f.deps).runRotation({ force: true });
+  assert.equal(snapshot.accounts.find((a) => a.id === "a")?.thresholdPercentage, 15);
+  assert.equal(f.sampleCount(), 1);
+  f.quotas.set(key("b"), 100);
+  await first.runRotation({ force: true });
+  assert.deepEqual(active(f), ["b"]);
+  assert.equal(f.history.get(key("b"))?.thresholdPercentage, 20);
+  f.quotas.set(key("b"), 20);
+  f.quotas.set(key("a"), 100);
+  await first.runRotation({ force: true });
+  assert.deepEqual(active(f), ["a"]);
+  assert.equal(f.history.get(key("a"))?.thresholdPercentage, 10);
+  assert.equal(f.sampleCount(), 3);
+});
+
+test("confirms successor enabled before deactivating incumbent", async (t) => {
+  const f = fixture(t);
+  f.quotas.set(key("a"), 10);
+  const snapshot = await createAntigravityRotator(f.deps).runRotation({ force: true });
+  const on = f.events.indexOf(`on:${key("b")}`);
+  const off = f.events.indexOf(`off:${key("a")}`);
+  assert.ok(on >= 0 && off > on);
+  assert.ok(f.events.slice(on + 1, off).includes(`read:${url}`));
+  assert.deepEqual(active(f), ["b"]);
+  assert.equal(snapshot.degraded, false);
+});
+
+test("activation failure keeps incumbent and pending threshold", async (t) => {
+  const f = fixture(t);
+  f.quotas.set(key("a"), 10);
+  f.failedWrites.add(`on:${key("b")}`);
+  const snapshot = await createAntigravityRotator(f.deps).runRotation({ force: true });
+  assert.deepEqual(active(f), ["a"]);
+  assert.ok(!f.events.includes(`off:${key("a")}`));
+  assert.equal(f.history.get(key("b"))?.thresholdPercentage, 20);
+  assert.equal(snapshot.degraded, true);
+});
+
+test("unknown activation outcome is reconciled before another activation", async (t) => {
+  const f = fixture(t);
+  f.quotas.set(key("a"), 10);
+  f.uncertainWrites.add(`on:${key("b")}`);
+  const rotator = createAntigravityRotator(f.deps);
+  const snapshot = await rotator.runRotation({ force: true });
+  assert.deepEqual(active(f), ["a", "b"]);
+  assert.equal(snapshot.degraded, true);
+  f.uncertainWrites.clear();
+  await rotator.runRotation({ force: true });
+  assert.deepEqual(active(f), ["b"]);
+  assert.equal(f.history.get(key("b"))?.turnCount, 1);
+  assert.equal(f.events.filter((event) => event.startsWith("on:")).length, 1);
+});
+
+test("failed deactivation reports degraded and preserves both confirmed actives", async (t) => {
+  const f = fixture(t);
+  f.quotas.set(key("a"), 10);
+  f.failedWrites.add(`off:${key("a")}`);
+  const snapshot = await createAntigravityRotator(f.deps).runRotation({ force: true });
+  assert.deepEqual(active(f), ["a", "b"]);
+  assert.equal(snapshot.activeCount, 2);
+  assert.equal(snapshot.degraded, true);
+  assert.equal(f.history.get(key("a"))?.thresholdPercentage, 15);
+});
+
+test("failed usage transport retains incumbent without treating it as account error", async (t) => {
+  const f = fixture(t);
+  f.unavailable.add(key("a"));
+  const snapshot = await createAntigravityRotator(f.deps).runRotation({ force: true });
+  assert.deepEqual(active(f), ["a"]);
+  assert.equal(snapshot.accounts.find((a) => a.id === "a")?.quotaAvailable, false);
+  assert.ok(!f.events.some((event) => event.startsWith("on:") || event.startsWith("off:")));
+});
+
+test("fresh account error triggers replacement", async (t) => {
+  const f = fixture(t);
+  f.accountErrors.set(key("a"), "account disabled");
+  await createAntigravityRotator(f.deps).runRotation({ force: true });
+  assert.deepEqual(active(f), ["b"]);
+});
+
+test("unread endpoint blocks activation and reports degraded", async (t) => {
+  const f = fixture(t);
+  f.endpoints.get(url)![0].isActive = false;
+  f.endpoints.set("https://other.test", []);
+  f.unread.add("https://other.test");
+  const snapshot = await createAntigravityRotator(f.deps).runRotation({ force: true });
+  assert.deepEqual(active(f), []);
+  assert.equal(snapshot.degraded, true);
+  assert.equal(
+    snapshot.endpoints?.find((endpoint) => endpoint.url === "https://other.test")?.ok,
+    false,
+  );
+  assert.ok(!f.events.some((event) => event.startsWith("on:")));
+});
+
+test("duplicate raw IDs remain endpoint-qualified in history and updates", async (t) => {
+  const f = fixture(t);
+  f.endpoints.get(url)!.splice(1);
+  const second = "https://second.test";
+  f.endpoints.set(second, [{ id: "a", provider: "antigravity", isActive: false }]);
+  f.quotas.set(key("a"), 10);
+  f.quotas.set(key("a", second), 100);
+  await createAntigravityRotator(f.deps).runRotation({ force: true });
+  assert.deepEqual(active(f), []);
+  assert.deepEqual(active(f, second), ["a"]);
+  assert.equal(f.history.get(key("a"))?.thresholdPercentage, null);
+  assert.equal(f.history.get(key("a", second))?.thresholdPercentage, 20);
+  assert.ok(f.events.includes(`on:${key("a", second)}`));
+  assert.ok(f.events.includes(`off:${key("a")}`));
+});
+
+test("overlapping calls queue a fresh single-flight cycle", async (t) => {
+  const f = fixture(t);
+  const { promise: gate, resolve: release } = Promise.withResolvers<void>();
   const list = f.deps.listConnections;
-  f.deps.listConnections = async () => {
-    await gate;
-    return list();
+  let reads = 0;
+  f.deps.listConnections = async (overrides) => {
+    reads++;
+    if (reads === 1) await gate;
+    return list(overrides);
   };
   const rotator = createAntigravityRotator(f.deps);
   const first = rotator.runRotation({ force: true });
   const second = rotator.runRotation({ force: true });
   release();
-  const snapshots = await Promise.all([first, second]);
-  for (const snapshot of snapshots) assert.deepEqual(getActiveAccountIds(snapshot), ["a"]);
-  assert.equal(f.deps.history.get("a")!.turnCount, 1);
+  const results = await Promise.all([first, second]);
+  assert.ok(reads >= 2);
+  assert.ok(results.every((snapshot) => snapshot.activeCount === 1));
+  assert.equal(f.sampleCount(), 1);
 });
 
-test("limit change during rotation is applied before overlapping callers resolve", async (t) => {
+test("forced refresh still runs after disabled scheduled call", async (t) => {
   const f = fixture(t);
-  let limit = 1;
-  f.deps.getSettings = () => ({
-    ...getSettingsSecrets(),
-    antigravityActiveLimit: limit,
-    antigravitySessionThreshold: 20,
-  });
-  let release!: () => void;
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const usage = f.deps.getUsage;
-  f.deps.getUsage = async (id) => {
-    await gate;
-    return usage(id);
-  };
+  f.deps.getSettings = () => ({ ...getSettingsSecrets(), antigravityRotatorEnabled: false });
   const rotator = createAntigravityRotator(f.deps);
-  const first = rotator.runRotation({ force: true });
-  limit = 3;
-  const changed = rotator.runRotation({ force: true });
-  release();
-  for (const snapshot of await Promise.all([first, changed])) {
-    assert.deepEqual(getActiveAccountIds(snapshot), ["a", "b", "c"]);
-    assert.equal(snapshot.activeCount, 3);
-  }
+  await rotator.runRotation();
+  const snapshot = await rotator.runRotation({ force: true });
+  assert.equal(snapshot.activeCount, 1);
+  assert.ok(f.events.includes(`read:${url}`));
+});
+
+test("usage parser rejects nonfinite Gemini session data", () => {
+  const usage = extractAntigravityUsage({
+    quotas: { gemini_session: { remainingPercentage: Number.NaN } },
+  });
+  assert.equal(usage.quotaAvailable, false);
 });

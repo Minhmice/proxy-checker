@@ -6,7 +6,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { MockBootstrap } from "@/components/mock-bootstrap";
 export const metadata: Metadata = {
   title: "minhmiceProxy",
-  description: "9Router proxy pool control dashboard",
+  description: "Antigravity account rotation and token telemetry dashboard",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

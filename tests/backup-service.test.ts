@@ -16,11 +16,8 @@ import type { ApiDependencies } from "../src/server/api/types.js";
 function createMockDeps(): ApiDependencies {
   return {
     verifyControlPassword: (c) => c === "secret",
-    proxyIntelligenceRepo: {} as unknown as ApiDependencies["proxyIntelligenceRepo"],
-    poolRanker: {} as unknown as ApiDependencies["poolRanker"],
     antigravityRotator: {} as unknown as ApiDependencies["antigravityRotator"],
     unifiedSyncCoordinator: {} as unknown as ApiDependencies["unifiedSyncCoordinator"],
-    handleProxyCheck: async () => false,
     router: {} as unknown as ApiDependencies["router"],
     settings: {
       initAppConfig: () => {},
@@ -29,8 +26,6 @@ function createMockDeps(): ApiDependencies {
       handleNineRouter: async () => {},
       handleAntigravity: async () => {},
       handleSettings: async () => {},
-      handleIntelligence: async () => {},
-      handleProxiesUnified: async () => {},
     },
   };
 }
@@ -53,12 +48,12 @@ test("backup-service creates consistent SQLite snapshots and settings backup", (
     "utf8",
   );
 
-  // 2. Create dummy SQLite database proxies.sqlite3 with data
-  const dbPath = path.join(dataDir, "proxies.sqlite3");
+  // Snapshot the retained account rotation database.
+  const dbPath = path.join(dataDir, "antigravity-rotation.sqlite3");
   const db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
-  db.exec("CREATE TABLE proxies (key TEXT PRIMARY KEY, status TEXT);");
-  db.prepare("INSERT INTO proxies (key, status) VALUES (?, ?)").run("http://1.1.1.1:8080", "alive");
+  db.exec("CREATE TABLE account_turns (id TEXT PRIMARY KEY, turns INTEGER);");
+  db.prepare("INSERT INTO account_turns VALUES (?, ?)").run("account-1", 2);
   db.close();
 
   // 3. Create dummy state JSON
@@ -87,13 +82,14 @@ test("backup-service creates consistent SQLite snapshots and settings backup", (
     assert.equal(parsedSettings.nineRouterUrl, "http://127.0.0.1:8000");
 
     // Verify backed up database snapshot
-    const backedDbPath = path.join(backupDir, "databases", "proxies.sqlite3");
+    const backedDbPath = path.join(backupDir, "databases", "antigravity-rotation.sqlite3");
     assert.equal(fs.existsSync(backedDbPath), true);
     const backedDb = new Database(backedDbPath, { readonly: true });
-    const row = backedDb
-      .prepare("SELECT * FROM proxies WHERE key = ?")
-      .get("http://1.1.1.1:8080") as { key: string; status: string };
-    assert.equal(row.status, "alive");
+    const row = backedDb.prepare("SELECT * FROM account_turns WHERE id = ?").get("account-1") as {
+      id: string;
+      turns: number;
+    };
+    assert.equal(row.turns, 2);
     backedDb.close();
 
     // Verify state file
@@ -118,18 +114,14 @@ test("backup-service restore overwrites data and purges stale wal/shm files", ()
     "utf8",
   );
 
-  const backupDbPath = path.join(backupDir, "databases", "proxies.sqlite3");
+  const backupDbPath = path.join(backupDir, "databases", "antigravity-rotation.sqlite3");
   const bDb = new Database(backupDbPath);
-  bDb.exec(
-    "CREATE TABLE proxies (proxy_key TEXT PRIMARY KEY, endpoint TEXT NOT NULL, protocol TEXT NOT NULL);",
-  );
-  bDb
-    .prepare("INSERT INTO proxies (proxy_key, endpoint, protocol) VALUES (?, ?, ?)")
-    .run("http://backup.example:8080", "backup.example:8080", "http");
+  bDb.exec("CREATE TABLE account_turns (id TEXT PRIMARY KEY, turns INTEGER);");
+  bDb.prepare("INSERT INTO account_turns VALUES (?, ?)").run("account-1", 3);
   bDb.close();
 
   // Active data dir has stale wal and shm
-  const activeDbPath = path.join(dataDir, "proxies.sqlite3");
+  const activeDbPath = path.join(dataDir, "antigravity-rotation.sqlite3");
   fs.writeFileSync(activeDbPath, "corrupt-old-data");
   fs.writeFileSync(`${activeDbPath}-wal`, "stale-wal");
   fs.writeFileSync(`${activeDbPath}-shm`, "stale-shm");
@@ -138,7 +130,7 @@ test("backup-service restore overwrites data and purges stale wal/shm files", ()
     const res = restoreBackup({ dataDir, backupDir });
     assert.equal(res.ok, true);
     assert.ok(res.restoredFiles.includes("settings.json"));
-    assert.ok(res.restoredFiles.includes("databases/proxies.sqlite3"));
+    assert.ok(res.restoredFiles.includes("databases/antigravity-rotation.sqlite3"));
 
     // Verify wal and shm were purged
     assert.equal(fs.existsSync(`${activeDbPath}-wal`), false);
@@ -146,16 +138,8 @@ test("backup-service restore overwrites data and purges stale wal/shm files", ()
 
     // Verify database can be queried cleanly
     const restoredDb = new Database(activeDbPath, { readonly: true });
-    const row = restoredDb.prepare("SELECT * FROM proxies").get() as {
-      proxy_key: string;
-      endpoint: string;
-      protocol: string;
-    };
-    assert.deepEqual(row, {
-      proxy_key: "http://backup.example:8080",
-      endpoint: "backup.example:8080",
-      protocol: "http",
-    });
+    const row = restoredDb.prepare("SELECT * FROM account_turns").get();
+    assert.deepEqual(row, { id: "account-1", turns: 3 });
     restoredDb.close();
   } finally {
     fs.rmSync(tmpRoot, { recursive: true, force: true });

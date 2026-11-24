@@ -3,7 +3,7 @@ import {
   mockHealth,
   mockLoginSuccess,
   mockNineRouterStatus,
-  mockProxiesList,
+  mockAntigravityStatus,
   mockSessionAuthenticated,
   mockSettings,
 } from "./fixtures";
@@ -43,18 +43,23 @@ export function createHandlers(origin = "*"): RequestHandler[] {
       return HttpResponse.json(mockSettings);
     }),
 
-    http.get(`${prefix}/intelligence/proxies`, () => {
-      return HttpResponse.json(mockProxiesList);
+    http.put(`${prefix}/settings`, async ({ request }) => {
+      let body: Record<string, unknown> = {};
+      try {
+        body = (await request.json()) as Record<string, unknown>;
+      } catch {}
+      return HttpResponse.json({
+        settings: { ...mockSettings.settings, ...body },
+        meta: mockSettings.meta,
+      });
     }),
 
-    http.get(`${prefix}/proxies/unified`, () => {
-      return HttpResponse.json({
-        items: mockProxiesList.items,
-        counts: { all: 1, working: 1, regressed: 0, dead: 0 },
-        total: 1,
-        page: 1,
-        pageSize: 50,
-      });
+    http.get(`${prefix}/antigravity/status`, () => {
+      return HttpResponse.json(mockAntigravityStatus);
+    }),
+
+    http.post(`${prefix}/antigravity/refresh`, () => {
+      return HttpResponse.json({ started: true, snapshot: mockAntigravityStatus });
     }),
   ];
 }

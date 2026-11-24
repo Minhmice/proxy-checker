@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { randomInt } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { writeJsonAtomicSync } from "./fs-atomic.js";
 import type {
@@ -15,30 +16,23 @@ import {
   getNineRouterClientUrls,
   type NineRouterConnectionItem,
 } from "./nine-router-client.js";
-import { logActivity, logScoped } from "./activity-log.js";
+import { logScoped } from "./activity-log.js";
 import {
   openAntigravityRotationHistory,
   type AntigravityRotationHistory,
 } from "./antigravity-rotation-history.js";
-import type { RepairResult } from "./antigravity-repair.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 export interface AntigravityAccountInput {
   id: string;
-  email?: string;
-  name?: string;
   isActive: boolean;
   sessionPercentage: number;
   weeklyPercentage: number;
   resetAt: string | null;
-  proxyPoolId: string | null;
-  proxyName?: string | null;
+  thresholdPercentage: number;
   lastError?: string | null;
   quotaAvailable?: boolean;
-  turnCount?: number;
-  lastActivatedAt?: number | null;
-  routerUrl?: string;
 }
 
 export interface AntigravityUsage {
@@ -49,44 +43,15 @@ export interface AntigravityUsage {
   lastError?: string | null;
 }
 
-export interface UsableProxyInput {
-  remoteId: string;
-  name?: string;
-}
-
 export interface RotationPlan {
   activations: string[];
   deactivations: string[];
   activeIds: string[];
-  proxyReassignments: Record<string, string>; // accountId -> newProxyPoolId
-}
-
-export interface ResetProxiesResult {
-  ok: boolean;
-  totalAccounts: number;
-  reassignedCount: number;
-  forbiddenAccounts: number;
-  repairedCount: number;
-  reassigned: Array<{
-    accountId: string;
-    email?: string;
-    oldProxyId: string | null;
-    newProxyId: string;
-    routerUrl?: string;
-  }>;
-  failedEndpoints?: Array<{ url: string; error: string }>;
+  degraded: boolean;
 }
 
 export interface AntigravityRotator {
-  runRotation(options?: {
-    force?: boolean;
-    reassignForbidden?: boolean;
-  }): Promise<AntigravityRotatorSnapshot>;
-  resetProxies(options?: { forceAll?: boolean }): Promise<ResetProxiesResult>;
-  optimizeSpeed(): Promise<{
-    updated: number;
-    accounts: Array<{ id: string; proxyPoolId: string }>;
-  }>;
+  runRotation(options?: { force?: boolean }): Promise<AntigravityRotatorSnapshot>;
   getSnapshot(): AntigravityRotatorSnapshot;
   readonly isRunning: boolean;
 }
@@ -98,7 +63,6 @@ export function extractAntigravityUsage(rawUsage: Record<string, unknown>): Anti
       weeklyPercentage: 0,
       resetAt: null,
       quotaAvailable: false,
-      lastError: "Invalid response",
     };
   }
 
@@ -130,11 +94,11 @@ export function extractAntigravityUsage(rawUsage: Record<string, unknown>): Anti
       Number.isFinite(geminiSession.used) &&
       geminiSession.total > 0
     ) {
-      sessionPercentage = Math.max(
-        0,
-        ((geminiSession.total - geminiSession.used) / geminiSession.total) * 100,
-      );
-      quotaAvailable = true;
+      const remaining = ((geminiSession.total - geminiSession.used) / geminiSession.total) * 100;
+      if (Number.isFinite(remaining)) {
+        sessionPercentage = Math.max(0, remaining);
+        quotaAvailable = true;
+      }
     }
     if (typeof geminiSession.resetAt === "string") {
       resetAt = geminiSession.resetAt;
@@ -150,7 +114,9 @@ export function extractAntigravityUsage(rawUsage: Record<string, unknown>): Anti
       weeklyPercentage = geminiWeekly.remainingPercentage;
     } else if (
       typeof geminiWeekly.total === "number" &&
+      Number.isFinite(geminiWeekly.total) &&
       typeof geminiWeekly.used === "number" &&
+      Number.isFinite(geminiWeekly.used) &&
       geminiWeekly.total > 0
     ) {
       weeklyPercentage = Math.max(
@@ -160,7 +126,8 @@ export function extractAntigravityUsage(rawUsage: Record<string, unknown>): Anti
     }
   }
 
-  const lastError = message;
+  const quotaOnlyError = message && /quota api access forbidden|chat may still work/i.test(message);
+  const lastError = quotaOnlyError ? null : message;
   if (message) quotaAvailable = false;
 
   return {
@@ -171,291 +138,141 @@ export function extractAntigravityUsage(rawUsage: Record<string, unknown>): Anti
     lastError,
   };
 }
-export function isAccountForbidden(
-  account:
-    | {
-        lastError?: string | null | unknown;
-        sessionPercentage?: number;
-        quotaAvailable?: boolean;
-      }
-    | null
-    | undefined,
-): boolean {
-  if (!account || !account.lastError) return false;
-  let msg = "";
-  if (typeof account.lastError === "string") {
-    msg = account.lastError;
-  } else if (account.lastError instanceof Error) {
-    msg = account.lastError.message;
-  } else if (typeof account.lastError === "object") {
-    const obj = account.lastError as Record<string, unknown>;
-    msg =
-      typeof obj.message === "string"
-        ? obj.message
-        : typeof obj.error === "string"
-          ? obj.error
-          : JSON.stringify(obj);
-  } else {
-    msg = String(account.lastError);
-  }
-  msg = msg.toLowerCase();
 
-  // Quota scraper denial or warning is non-fatal; chat may still work
-  if (msg.includes("quota api access forbidden") || msg.includes("chat may still work")) {
-    return false;
-  }
+const quotaAvailable = (account: AntigravityAccountInput) =>
+  account.quotaAvailable !== false && Number.isFinite(account.sessionPercentage);
 
-  // HTTP 403 status (exclude IP octets e.g. 10.0.403.1 or port 4030)
-  const sanitizedMsg = msg
-    .replace(/\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b/g, "")
-    .replace(/(?:^|\s)[a-z0-9_.-]+:403\b/gi, "");
-  const isHttp403 =
-    /\[403\]|\bhttp\s*403\b|\berror\s*403\b|\bstatus\s*403\b|\b403\s+forbidden\b|\b403\s*(?:unauthorized|service)/i.test(
-      msg,
-    ) || /(?:^|[^0-9.])403(?:[^0-9.]|$)/.test(sanitizedMsg);
+const byResetThenId = (a: AntigravityAccountInput, b: AntigravityAccountInput) => {
+  const left = a.resetAt ? Date.parse(a.resetAt) : NaN;
+  const right = b.resetAt ? Date.parse(b.resetAt) : NaN;
+  const aTime = Number.isFinite(left) ? left : Infinity;
+  const bTime = Number.isFinite(right) ? right : Infinity;
+  return (aTime === bTime ? 0 : aTime - bTime) || a.id.localeCompare(b.id);
+};
 
-  return (
-    isHttp403 ||
-    msg.includes("forbidden") ||
-    msg.includes("self_signed_cert_in_chain") ||
-    msg.includes("permission_denied") ||
-    msg.includes("service_disabled") ||
-    msg.includes("account_suspended") ||
-    msg.includes("account_disabled") ||
-    msg.includes("user_project_denied") ||
-    msg.includes("billing_disabled") ||
-    msg.includes("access_token_scope_insufficient") ||
-    msg.includes("consumer_invalid") ||
-    msg.includes("model_locked") ||
-    msg.includes("modellock")
+function retainedAccount(accounts: AntigravityAccountInput[]) {
+  const active = accounts.filter((account) => account.isActive);
+  const healthy = active.filter(
+    (account) =>
+      quotaAvailable(account) &&
+      !account.lastError &&
+      account.sessionPercentage > account.thresholdPercentage,
   );
+  return healthy.sort(byResetThenId)[0] ?? active.sort((a, b) => a.id.localeCompare(b.id))[0];
 }
 
 export function computeRotationPlan(
   accounts: AntigravityAccountInput[],
-  usableProxies: UsableProxyInput[],
-  options: {
-    activeLimit?: number;
-    sessionThreshold?: number;
-    reassignForbidden?: boolean;
-  } = {},
+  options: { allEndpointsReadable: boolean },
 ): RotationPlan {
-  const activeLimit = Math.max(1, options.activeLimit ?? 3);
-  const sessionThreshold = Math.max(5, options.sessionThreshold ?? 20);
-
   const plan: RotationPlan = {
     activations: [],
     deactivations: [],
     activeIds: [],
-    proxyReassignments: {},
+    degraded: !options.allEndpointsReadable,
   };
-
-  if (accounts.length === 0) return plan;
-
-  // Step A: Proxy health validation & multiplexing (max 2 accounts per proxy)
-  const usableProxyMap = new Map<string, UsableProxyInput>();
-  for (const p of usableProxies) {
-    if (p.remoteId) usableProxyMap.set(p.remoteId, p);
-  }
-
-  // Count current assignments to usable proxies. Live accounts reserve their proxies;
-  // replacements must not move another account onto one during the same cycle.
-  const proxyAssignmentCounts = new Map<string, number>();
-  const liveProxyIds = new Set<string>();
-  for (const p of usableProxies) {
-    proxyAssignmentCounts.set(p.remoteId, 0);
-  }
-
-  // Pre-count existing valid proxies (excluding forbidden proxies when reassignForbidden is enabled)
-  const effectiveProxyMap = new Map<string, string | null>();
-  for (const acc of accounts) {
-    const isExhausted = acc.quotaAvailable !== false && acc.sessionPercentage <= sessionThreshold;
-    const isForbidden = Boolean(options.reassignForbidden && isAccountForbidden(acc));
-    if (
-      acc.isActive &&
-      !isExhausted &&
-      !isForbidden &&
-      acc.proxyPoolId &&
-      usableProxyMap.has(acc.proxyPoolId)
-    ) {
-      liveProxyIds.add(acc.proxyPoolId);
-    }
-    if (!isForbidden && acc.proxyPoolId && usableProxyMap.has(acc.proxyPoolId)) {
-      effectiveProxyMap.set(acc.id, acc.proxyPoolId);
-      proxyAssignmentCounts.set(
-        acc.proxyPoolId,
-        (proxyAssignmentCounts.get(acc.proxyPoolId) ?? 0) + 1,
-      );
-    } else {
-      effectiveProxyMap.set(acc.id, null);
-    }
-  }
-
-  // For accounts with dead, missing, or forbidden proxies, reassign from clean usable proxies
-  const candidatePool = usableProxies;
-
-  for (const acc of accounts) {
-    const isForbidden = Boolean(options.reassignForbidden && isAccountForbidden(acc));
-    if (!effectiveProxyMap.get(acc.id) && candidatePool.length > 0) {
-      // Find usable proxy with < 2 assignments (prefer 0 first, then 1), excluding live proxies.
-      const sortedCandidates = [...candidatePool]
-        .filter(
-          (p) => (p.remoteId !== acc.proxyPoolId || !isForbidden) && !liveProxyIds.has(p.remoteId),
-        )
-        .sort((a, b) => {
-          const countA = proxyAssignmentCounts.get(a.remoteId) ?? 0;
-          const countB = proxyAssignmentCounts.get(b.remoteId) ?? 0;
-          return countA - countB;
-        });
-
-      const chosen = sortedCandidates.find((p) => (proxyAssignmentCounts.get(p.remoteId) ?? 0) < 2);
-      if (chosen) {
-        effectiveProxyMap.set(acc.id, chosen.remoteId);
-        plan.proxyReassignments[acc.id] = chosen.remoteId;
-        proxyAssignmentCounts.set(
-          chosen.remoteId,
-          (proxyAssignmentCounts.get(chosen.remoteId) ?? 0) + 1,
-        );
-      }
-    }
-  }
-
-  // Step B: Keep active accounts unless fresh quota proves exhaustion.
-  const survivingActive: AntigravityAccountInput[] = [];
-  for (const acc of accounts) {
-    if (!acc.isActive) continue;
-    if (!effectiveProxyMap.get(acc.id)) {
-      plan.deactivations.push(acc.id);
-      continue;
-    }
-    const isExhausted = acc.quotaAvailable !== false && acc.sessionPercentage <= sessionThreshold;
-    if (isExhausted) plan.deactivations.push(acc.id);
-    else survivingActive.push(acc);
-  }
-
-  // Deduplicate surviving active accounts sharing the same proxy (no two active accounts can share the same proxy)
-  survivingActive.sort((a, b) => {
-    if (b.sessionPercentage !== a.sessionPercentage) {
-      return b.sessionPercentage - a.sessionPercentage;
-    }
-    const timeA = a.resetAt ? new Date(a.resetAt).getTime() : Number.MAX_SAFE_INTEGER;
-    const timeB = b.resetAt ? new Date(b.resetAt).getTime() : Number.MAX_SAFE_INTEGER;
-    return timeA - timeB;
-  });
-
-  const dedupedActive: AntigravityAccountInput[] = [];
-  const occupiedProxies = new Set<string>();
-
-  for (const acc of survivingActive) {
-    const proxyId = effectiveProxyMap.get(acc.id);
-    if (proxyId && occupiedProxies.has(proxyId)) {
-      plan.deactivations.push(acc.id);
-    } else {
-      dedupedActive.push(acc);
-      if (proxyId) occupiedProxies.add(proxyId);
-    }
-  }
-
-  // If dedupedActive exceeds activeLimit, trim excess based on lowest quota
-  if (dedupedActive.length > activeLimit) {
-    dedupedActive.sort((a, b) => b.sessionPercentage - a.sessionPercentage);
-    const excess = dedupedActive.splice(activeLimit);
-    for (const ex of excess) {
-      plan.deactivations.push(ex.id);
-    }
-  }
-
-  // Step C: Prefer the earliest known session reset, not activation history.
-  let availableSlots = activeLimit - dedupedActive.length;
-  if (availableSlots > 0) {
-    const candidates = accounts.filter(
-      (acc) =>
-        !acc.isActive &&
-        !plan.deactivations.includes(acc.id) &&
-        acc.quotaAvailable !== false &&
-        acc.sessionPercentage > sessionThreshold &&
-        !acc.lastError,
+  const retained = retainedAccount(accounts);
+  if (retained) {
+    plan.activeIds.push(retained.id);
+    plan.deactivations.push(
+      ...accounts
+        .filter((account) => account.isActive && account.id !== retained.id)
+        .map((account) => account.id),
     );
-    candidates.sort((a, b) => {
-      const timeA = a.resetAt ? Date.parse(a.resetAt) : NaN;
-      const timeB = b.resetAt ? Date.parse(b.resetAt) : NaN;
-      const resetA = Number.isFinite(timeA) ? timeA : Infinity;
-      const resetB = Number.isFinite(timeB) ? timeB : Infinity;
-      return (resetA === resetB ? 0 : resetA - resetB) || a.id.localeCompare(b.id);
-    });
-    for (const cand of candidates) {
-      if (availableSlots <= 0) break;
-      const candProxy = effectiveProxyMap.get(cand.id);
-      if (!candProxy || occupiedProxies.has(candProxy)) continue;
-      plan.activations.push(cand.id);
-      occupiedProxies.add(candProxy);
-      availableSlots -= 1;
-    }
   }
-
-  plan.activeIds = [...dedupedActive.map((a) => a.id), ...plan.activations];
+  const needsReplacement =
+    !retained ||
+    Boolean(retained.lastError) ||
+    (quotaAvailable(retained) && retained.sessionPercentage <= retained.thresholdPercentage);
+  if (!options.allEndpointsReadable || !needsReplacement) return plan;
+  const successor = accounts
+    .filter(
+      (account) =>
+        !account.isActive &&
+        quotaAvailable(account) &&
+        account.sessionPercentage > 20 &&
+        !account.lastError,
+    )
+    .sort(byResetThenId)[0];
+  if (!successor) return plan;
+  if (retained) plan.deactivations.push(retained.id);
+  plan.activations.push(successor.id);
+  plan.activeIds = [successor.id];
   return plan;
-}
-
-export function optimizeAccountsBySpeed(
-  accounts: AntigravityAccountInput[],
-  rankedProxies: UsableProxyInput[],
-): Array<{ id: string; proxyPoolId: string }> {
-  const activeAccounts = accounts.filter((a) => a.isActive);
-  const reassignments: Array<{ id: string; proxyPoolId: string }> = [];
-  if (rankedProxies.length === 0 || activeAccounts.length === 0) return reassignments;
-
-  for (let i = 0; i < activeAccounts.length; i++) {
-    const acc = activeAccounts[i];
-    const proxy = rankedProxies[i % rankedProxies.length];
-    if (proxy && proxy.remoteId) {
-      reassignments.push({ id: acc.id, proxyPoolId: proxy.remoteId });
-    }
-  }
-  return reassignments;
 }
 
 export interface AntigravityRotatorDeps {
   listConnections?: typeof listAntigravityConnections;
   getUsage?: typeof getAccountUsage;
   updateConnection?: typeof updateConnection;
-  getUsableProxies?: () => Array<{ remoteId: string; name?: string }>;
   getSettings?: typeof getSettingsSecrets;
   getRouterUrls?: () => string[];
   dataDir?: string;
   history?: AntigravityRotationHistory;
   endpointTimeoutMs?: number;
-  /** Verified route repair (antigravity-repair). Runs before any proxy swap on reset. */
-  repairRoute?: (accountId: string, routerUrl: string | undefined) => Promise<RepairResult>;
+  sampleThreshold?: () => number;
 }
 
-export function createAntigravityRotator(deps?: AntigravityRotatorDeps) {
+export function createAntigravityRotator(deps?: AntigravityRotatorDeps): AntigravityRotator {
   const listConnections = deps?.listConnections ?? listAntigravityConnections;
   const getUsage = deps?.getUsage ?? getAccountUsage;
   const updateConn = deps?.updateConnection ?? updateConnection;
   const getSettings = deps?.getSettings ?? getSettingsSecrets;
-  const getRouterUrls = deps?.getRouterUrls ?? (() => getNineRouterClientUrls());
+  const getRouterUrls = deps?.getRouterUrls ?? getNineRouterClientUrls;
   const dataDir = deps?.dataDir ?? path.join(root, "data");
   const snapshotFile = path.join(dataDir, "antigravity-rotator.json");
   const history = deps?.history ?? openAntigravityRotationHistory(dataDir);
-
+  const sampleThreshold = deps?.sampleThreshold ?? (() => randomInt(10, 21));
   let running = false;
-  let cachedSnapshot: AntigravityRotatorSnapshot | null = null;
   let activeRunPromise: Promise<AntigravityRotatorSnapshot> | null = null;
   let rerunQueued = false;
   let queuedForce = false;
-  let queuedReassignForbidden = false;
-  let activeResetPromise: Promise<ResetProxiesResult> | null = null;
+  let cachedSnapshot: AntigravityRotatorSnapshot | null = null;
+
   function loadSnapshot(): AntigravityRotatorSnapshot {
     if (cachedSnapshot) return cachedSnapshot;
     try {
       if (fs.existsSync(snapshotFile)) {
-        cachedSnapshot = JSON.parse(
+        const saved = JSON.parse(
           fs.readFileSync(snapshotFile, "utf8"),
         ) as AntigravityRotatorSnapshot;
+        cachedSnapshot = {
+          lastRunAt: saved.lastRunAt,
+          running: false,
+          totalAccounts: saved.totalAccounts,
+          activeCount: saved.activeCount,
+          totalSessionQuotaPercentage: saved.totalSessionQuotaPercentage,
+          maxPossiblePercentage: saved.maxPossiblePercentage,
+          accounts: saved.accounts.map((account) => ({
+            id: account.id,
+            email: account.email,
+            name: account.name,
+            isActive: account.isActive,
+            sessionPercentage: account.sessionPercentage,
+            weeklyPercentage: account.weeklyPercentage,
+            resetAt: account.resetAt,
+            thresholdPercentage: account.thresholdPercentage ?? null,
+            quotaAvailable: account.quotaAvailable ?? false,
+            lastError: account.lastError,
+            lastCheckedAt: account.lastCheckedAt,
+            turnCount: account.turnCount,
+            lastActivatedAt: account.lastActivatedAt,
+            routerUrl: account.routerUrl,
+          })),
+          endpoints: saved.endpoints,
+          degraded: true,
+          error: "Cached state has not been reconciled since startup",
+        };
         return cachedSnapshot;
       }
-    } catch {}
+    } catch (error) {
+      logScoped(
+        "Antigravity",
+        "loadSnapshot",
+        "warn",
+        `Failed to load rotation snapshot: ${String(error)}`,
+      );
+    }
     cachedSnapshot = {
       lastRunAt: null,
       running: false,
@@ -464,889 +281,295 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps) {
       totalSessionQuotaPercentage: 0,
       maxPossiblePercentage: 0,
       accounts: [],
+      degraded: true,
+      error: "Rotation has not run",
     };
     return cachedSnapshot;
   }
 
-  function saveSnapshot(snapshot: AntigravityRotatorSnapshot) {
-    cachedSnapshot = snapshot;
-    try {
-      writeJsonAtomicSync(snapshotFile, snapshot);
-    } catch (err) {
-      console.error("[antigravity-rotator] Failed to save snapshot:", (err as Error).message);
-    }
+  interface AccountMeta {
+    originalId: string;
+    routerUrl?: string;
+    input: AntigravityAccountInput;
+    state: AntigravityAccountState;
   }
-
-  interface EndpointCollectionResult {
-    url: string;
-    rawConnections: NineRouterConnectionItem[];
-    accountInputs: AntigravityAccountInput[];
-    accountStates: AntigravityAccountState[];
-  }
-
-  async function fetchEndpointAccounts(targetUrl?: string): Promise<EndpointCollectionResult> {
-    const urlLabel = targetUrl ? ` [${targetUrl}]` : "";
+  const overridesFor = (url?: string) => {
     const overrides = {
-      ...(targetUrl ? { url: targetUrl } : {}),
+      ...(url ? { url } : {}),
       ...(deps?.endpointTimeoutMs ? { timeoutMs: deps.endpointTimeoutMs } : {}),
     };
-    const effectiveOverrides = Object.keys(overrides).length > 0 ? overrides : undefined;
+    return Object.keys(overrides).length ? overrides : undefined;
+  };
+  const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
+  const isValidThreshold = (value: number | null | undefined): value is number =>
+    typeof value === "number" && Number.isInteger(value) && value >= 10 && value <= 20;
 
-    logScoped("Antigravity", "fetchAccounts", "info", `Fetching accounts and usage${urlLabel}`, {
-      endpoint: targetUrl || "default",
-    });
-    const rawConnections = await listConnections(effectiveOverrides);
-    if (!rawConnections || rawConnections.length === 0) {
-      logScoped(
-        "Antigravity",
-        "fetchAccounts",
-        "info",
-        `No Antigravity accounts found on 9Router${urlLabel}`,
-        { endpoint: targetUrl || "default", count: 0 },
-      );
-      return {
-        url: targetUrl || "",
-        rawConnections: [],
-        accountInputs: [],
-        accountStates: [],
-      };
+  async function collectEndpoint(routerUrl?: string) {
+    const overrides = overridesFor(routerUrl);
+    const connections = await listConnections(overrides);
+    if (connections.some((connection) => typeof connection.isActive !== "boolean")) {
+      throw new Error("Endpoint returned an account without a readable active state");
     }
+    const accounts = await Promise.all(
+      connections.map(async (connection: NineRouterConnectionItem) => {
+        let usage: AntigravityUsage;
+        let telemetryError: string | null = null;
+        try {
+          usage = extractAntigravityUsage(await getUsage(connection.id, overrides));
+        } catch (error) {
+          telemetryError = message(error);
+          usage = {
+            sessionPercentage: 0,
+            weeklyPercentage: 0,
+            resetAt: null,
+            quotaAvailable: false,
+          };
+        }
+        const accountId = `${routerUrl ?? ""}:::${connection.id}`;
+        const accountError = telemetryError ? null : usage.lastError || null;
+        const connectionError = connection.lastError || null;
+        const input: AntigravityAccountInput = {
+          id: accountId,
+          isActive: Boolean(connection.isActive),
+          sessionPercentage: usage.sessionPercentage,
+          weeklyPercentage: usage.weeklyPercentage,
+          resetAt: usage.resetAt,
+          quotaAvailable: usage.quotaAvailable && !connectionError,
+          thresholdPercentage: 0,
+          lastError: accountError,
+        };
+        const state: AntigravityAccountState = {
+          id: connection.id,
+          email: connection.email || connection.name || connection.id,
+          name: connection.name || connection.email || connection.id,
+          isActive: input.isActive,
+          sessionPercentage: input.sessionPercentage,
+          weeklyPercentage: input.weeklyPercentage,
+          resetAt: input.resetAt,
+          thresholdPercentage: null,
+          quotaAvailable: input.quotaAvailable !== false,
+          lastError: telemetryError || accountError || connectionError,
+          lastCheckedAt: Date.now(),
+          routerUrl,
+        };
+        return { originalId: connection.id, routerUrl, input, state } satisfies AccountMeta;
+      }),
+    );
+    return { routerUrl, accounts };
+  }
 
-    const accountStates: AntigravityAccountState[] = [];
-    const accountInputs: AntigravityAccountInput[] = [];
-
-    for (const conn of rawConnections) {
-      const proxyPoolId = conn.providerSpecificData?.proxyPoolId ?? null;
-      const turn = history.get(conn.id);
+  async function runCycle(): Promise<AntigravityRotatorSnapshot> {
+    const configured = getRouterUrls();
+    const targets: Array<string | undefined> = configured.length ? configured : [undefined];
+    const results = await Promise.allSettled(targets.map((url) => collectEndpoint(url)));
+    const endpoints: AntigravityRotatorEndpointSummary[] = [];
+    const allAccounts: AccountMeta[] = [];
+    const errors: string[] = [];
+    let degraded = false;
+    let persistenceFailed = false;
+    const recordError = (reason: string) => {
+      degraded = true;
+      errors.push(reason);
+      logScoped("Antigravity", "rotate", "warn", reason);
+    };
+    for (let index = 0; index < results.length; index++) {
+      const result = results[index];
+      const url = targets[index] ?? "";
+      if (result.status === "rejected") {
+        const reason = message(result.reason);
+        endpoints.push({ url, ok: false, error: reason });
+        recordError(`Endpoint ${url || "default"} unavailable: ${reason}`);
+      } else {
+        allAccounts.push(...result.value.accounts);
+        endpoints.push({ url, ok: true });
+      }
+    }
+    const allEndpointsReadable = results.every((result) => result.status === "fulfilled");
+    const byId = new Map(allAccounts.map((meta) => [meta.input.id, meta]));
+    for (const meta of allAccounts) {
       try {
-        const usage = await getUsage(conn.id, effectiveOverrides);
-        const parsed = extractAntigravityUsage(usage);
-        accountInputs.push({
-          id: conn.id,
-          email: conn.email || conn.name || conn.id,
-          name: conn.name || conn.email || conn.id,
-          isActive: Boolean(conn.isActive),
-          sessionPercentage: parsed.sessionPercentage,
-          weeklyPercentage: parsed.weeklyPercentage,
-          resetAt: parsed.resetAt,
-          proxyPoolId,
-          lastError: parsed.lastError || conn.lastError || null,
-          quotaAvailable: parsed.quotaAvailable,
-          turnCount: turn?.turnCount ?? 0,
-          lastActivatedAt: turn?.lastActivatedAt ?? null,
-          routerUrl: targetUrl,
-        });
-
-        accountStates.push({
-          id: conn.id,
-          email: conn.email || conn.name || conn.id,
-          name: conn.name || conn.email || conn.id,
-          isActive: Boolean(conn.isActive),
-          sessionPercentage: parsed.sessionPercentage,
-          weeklyPercentage: parsed.weeklyPercentage,
-          resetAt: parsed.resetAt,
-          proxyPoolId,
-          proxyName: null,
-          proxyHealthy: true,
-          lastError: parsed.lastError || conn.lastError || null,
-          lastCheckedAt: Date.now(),
-          turnCount: turn?.turnCount ?? 0,
-          lastActivatedAt: turn?.lastActivatedAt ?? null,
-          routerUrl: targetUrl,
-        });
-
-        const resetMinRemaining = parsed.resetAt
-          ? Math.max(0, Math.round((new Date(parsed.resetAt).getTime() - Date.now()) / 60000))
-          : null;
-        logScoped(
-          "Antigravity",
-          "evaluateQuota",
-          "info",
-          `Account ${conn.email || conn.name || conn.id} quota evaluated`,
-          {
-            id: conn.id,
-            active: Boolean(conn.isActive),
-            sessionQuota: `${parsed.sessionPercentage}%`,
-            resetInMinutes: resetMinRemaining ?? "none",
-            proxyPoolId: proxyPoolId || "none",
-          },
-        );
-      } catch (err) {
-        logScoped(
-          "Antigravity",
-          "evaluateQuota",
-          "warn",
-          `Failed to evaluate quota for ${conn.email || conn.name || conn.id}: ${(err as Error).message}`,
-          { id: conn.id, error: (err as Error).message },
-        );
-        accountInputs.push({
-          id: conn.id,
-          email: conn.email || conn.name || conn.id,
-          name: conn.name || conn.email || conn.id,
-          isActive: Boolean(conn.isActive),
-          sessionPercentage: 0,
-          weeklyPercentage: 0,
-          resetAt: null,
-          proxyPoolId,
-          lastError: (err as Error).message,
-          quotaAvailable: false,
-          turnCount: turn?.turnCount ?? 0,
-          lastActivatedAt: turn?.lastActivatedAt ?? null,
-          routerUrl: targetUrl,
-        });
-        accountStates.push({
-          id: conn.id,
-          email: conn.email || conn.name || conn.id,
-          name: conn.name || conn.email || conn.id,
-          isActive: Boolean(conn.isActive),
-          sessionPercentage: 0,
-          weeklyPercentage: 0,
-          resetAt: null,
-          proxyPoolId,
-          proxyHealthy: false,
-          lastError: (err as Error).message,
-          lastCheckedAt: Date.now(),
-          turnCount: turn?.turnCount ?? 0,
-          lastActivatedAt: turn?.lastActivatedAt ?? null,
-          routerUrl: targetUrl,
-        });
+        let turn = history.get(meta.input.id);
+        if (meta.input.isActive) {
+          const threshold =
+            turn?.tenureState !== "inactive" && isValidThreshold(turn?.thresholdPercentage)
+              ? turn.thresholdPercentage
+              : sampleThreshold();
+          turn = history.adoptActive(meta.input.id, threshold);
+          meta.input.thresholdPercentage = turn.thresholdPercentage!;
+        } else if (turn?.tenureState === "active") {
+          history.confirmDeactivation(meta.input.id);
+          turn = history.get(meta.input.id);
+        }
+        meta.state.thresholdPercentage = turn?.thresholdPercentage ?? null;
+        meta.state.turnCount = turn?.turnCount ?? 0;
+        meta.state.lastActivatedAt = turn?.lastActivatedAt ?? null;
+      } catch (error) {
+        persistenceFailed = true;
+        recordError(`History failed for ${meta.input.id}: ${message(error)}`);
+      }
+      if (!meta.state.quotaAvailable && !meta.input.lastError) {
+        recordError(`Quota unavailable for ${meta.input.id}`);
       }
     }
 
-    logScoped(
-      "Antigravity",
-      "fetchAccounts",
-      "info",
-      `Fetched ${rawConnections.length} accounts${urlLabel}`,
-      { endpoint: targetUrl || "default", total: rawConnections.length },
-    );
-    return {
-      url: targetUrl || "",
-      rawConnections,
-      accountInputs,
-      accountStates,
+    async function confirmState(meta: AccountMeta, expected: boolean) {
+      const connections = await listConnections(overridesFor(meta.routerUrl));
+      const connection = connections.find((item) => item.id === meta.originalId);
+      if (
+        !connection ||
+        typeof connection.isActive !== "boolean" ||
+        connection.isActive !== expected
+      ) {
+        throw new Error(
+          `Account ${meta.input.id} ${expected ? "not confirmed active" : "not confirmed inactive"}`,
+        );
+      }
+      return connection;
+    }
+
+    async function deactivate(meta: AccountMeta) {
+      try {
+        await updateConn(meta.originalId, { isActive: false }, overridesFor(meta.routerUrl));
+        await confirmState(meta, false);
+        meta.input.isActive = false;
+        meta.state.isActive = false;
+        history.confirmDeactivation(meta.input.id);
+        meta.state.thresholdPercentage = null;
+        logScoped("Antigravity", "rotate", "info", `Deactivated ${meta.input.id}`);
+        return true;
+      } catch (error) {
+        recordError(`Failed to deactivate ${meta.input.id}: ${message(error)}`);
+        return false;
+      }
+    }
+
+    let canActivate = !persistenceFailed;
+    const inputs = allAccounts.map((meta) => meta.input);
+    const retained = retainedAccount(inputs);
+    const extras = inputs.filter((account) => account.isActive && account.id !== retained?.id);
+    if (retained && extras.length && !persistenceFailed) {
+      try {
+        await confirmState(byId.get(retained.id)!, true);
+        for (const extra of extras) {
+          if (!(await deactivate(byId.get(extra.id)!))) canActivate = false;
+        }
+      } catch (error) {
+        canActivate = false;
+        recordError(`Failed to confirm retained account ${retained.id}: ${message(error)}`);
+      }
+    }
+
+    const plan = computeRotationPlan(inputs, { allEndpointsReadable });
+    const successor = plan.activations[0] && byId.get(plan.activations[0]);
+    if (successor && canActivate) {
+      try {
+        const previous = history.get(successor.input.id);
+        const threshold =
+          previous?.tenureState !== "inactive" && isValidThreshold(previous?.thresholdPercentage)
+            ? previous.thresholdPercentage
+            : sampleThreshold();
+        const pending = history.prepareActivation(successor.input.id, threshold);
+        successor.state.thresholdPercentage = pending.thresholdPercentage;
+        await updateConn(
+          successor.originalId,
+          { isActive: true },
+          overridesFor(successor.routerUrl),
+        );
+        await confirmState(successor, true);
+        successor.input.isActive = true;
+        successor.state.isActive = true;
+        const turn = history.confirmActivation(successor.input.id, Date.now());
+        successor.state.turnCount = turn.turnCount;
+        successor.state.lastActivatedAt = turn.lastActivatedAt;
+        logScoped("Antigravity", "rotate", "info", `Activated ${successor.input.id}`, {
+          thresholdPercentage: turn.thresholdPercentage,
+          turnCount: turn.turnCount,
+        });
+        for (const id of plan.deactivations) {
+          const old = byId.get(id);
+          if (old?.input.isActive && !(await deactivate(old))) break;
+        }
+      } catch (error) {
+        recordError(`Failed to activate ${successor.input.id}: ${message(error)}`);
+      }
+    } else if (
+      !successor &&
+      allEndpointsReadable &&
+      (!retained ||
+        retained.lastError ||
+        (quotaAvailable(retained) && retained.sessionPercentage <= retained.thresholdPercentage))
+    ) {
+      recordError("No eligible account available");
+    }
+
+    const accounts = allAccounts.map((meta) => meta.state);
+    for (const endpoint of endpoints) {
+      if (!endpoint.ok) continue;
+      const states = allAccounts.filter((meta) => (meta.routerUrl ?? "") === endpoint.url);
+      endpoint.totalAccounts = states.length;
+      endpoint.activeCount = states.filter((meta) => meta.state.isActive).length;
+    }
+    const activeCount = accounts.filter((account) => account.isActive).length;
+    if (activeCount > 1) recordError("Multiple active accounts remain");
+    const snapshot: AntigravityRotatorSnapshot = {
+      lastRunAt: Date.now(),
+      running: false,
+      totalAccounts: accounts.length,
+      activeCount,
+      totalSessionQuotaPercentage: Math.round(
+        accounts.reduce((sum, account) => sum + account.sessionPercentage, 0),
+      ),
+      maxPossiblePercentage: accounts.length * 100,
+      accounts,
+      endpoints,
+      degraded,
+      error: errors.length ? errors.join("; ") : null,
     };
+    cachedSnapshot = snapshot;
+    try {
+      writeJsonAtomicSync(snapshotFile, snapshot);
+    } catch (error) {
+      logScoped(
+        "Antigravity",
+        "saveSnapshot",
+        "warn",
+        `Failed to save rotation snapshot: ${message(error)}`,
+      );
+    }
+    return snapshot;
   }
 
-  async function runRotation(
-    options: { force?: boolean; reassignForbidden?: boolean } = {},
-  ): Promise<AntigravityRotatorSnapshot> {
+  function runRotation(options: { force?: boolean } = {}): Promise<AntigravityRotatorSnapshot> {
     if (options.force) queuedForce = true;
-    if (options.reassignForbidden) queuedReassignForbidden = true;
     if (activeRunPromise) {
       rerunQueued = true;
       return activeRunPromise;
     }
-
+    if (!queuedForce && getSettings().antigravityRotatorEnabled === false) {
+      return Promise.resolve(loadSnapshot());
+    }
     activeRunPromise = (async () => {
       try {
-        while (true) {
+        do {
           const force = queuedForce;
-          const reassignForbidden = queuedReassignForbidden;
           queuedForce = false;
-          queuedReassignForbidden = false;
           rerunQueued = false;
-          const settings = getSettings();
-          if (!force && settings.antigravityRotatorEnabled === false) {
-            return loadSnapshot();
-          }
-
+          if (!force && getSettings().antigravityRotatorEnabled === false) break;
           running = true;
-          try {
-            const configuredUrls = getRouterUrls();
-            const targetUrls =
-              configuredUrls.length > 0 ? configuredUrls : [undefined as unknown as string];
-
-            // 1. Fetch accounts and usage from all targetUrls in parallel
-            const endpointResults = await Promise.allSettled(
-              targetUrls.map((url) => fetchEndpointAccounts(url)),
-            );
-
-            const healthyEndpoints: EndpointCollectionResult[] = [];
-            const endpointsSummary: AntigravityRotatorEndpointSummary[] = [];
-
-            for (let i = 0; i < targetUrls.length; i++) {
-              const url = targetUrls[i] || "";
-              const res = endpointResults[i];
-              if (res.status === "fulfilled") {
-                healthyEndpoints.push(res.value);
-              } else {
-                const errMessage = (res.reason as Error).message || "Connection failed";
-                logScoped(
-                  "Antigravity",
-                  "fetchAccounts",
-                  "warn",
-                  `Router connection failed: ${errMessage}`,
-                  { endpoint: url || "default", error: errMessage },
-                );
-                endpointsSummary.push({
-                  url,
-                  ok: false,
-                  error: errMessage,
-                });
-              }
-            }
-
-            // 2. Gather all accounts globally into unified inputs with router tracking
-            interface GlobalAccountMeta {
-              account: AntigravityAccountInput;
-              rawConnection?: NineRouterConnectionItem;
-              state: AntigravityAccountState;
-              routerUrl?: string;
-              originalId: string;
-            }
-            const accountMetaByKey = new Map<string, GlobalAccountMeta>();
-            const globalInputs: AntigravityAccountInput[] = [];
-
-            for (const ep of healthyEndpoints) {
-              const connMap = new Map(ep.rawConnections.map((c) => [c.id, c]));
-              for (let i = 0; i < ep.accountInputs.length; i++) {
-                const input = ep.accountInputs[i];
-                const state = ep.accountStates[i];
-                const globalKey = ep.url ? `${ep.url}:::${input.id}` : input.id;
-                accountMetaByKey.set(globalKey, {
-                  account: input,
-                  rawConnection: connMap.get(input.id),
-                  state,
-                  routerUrl: ep.url || undefined,
-                  originalId: input.id,
-                });
-                globalInputs.push({
-                  ...input,
-                  id: globalKey,
-                });
-              }
-            }
-
-            // 3. Run computeRotationPlan ONCE globally across all accounts
-            const usableProxies = deps?.getUsableProxies ? deps.getUsableProxies() : [];
-            const usableMap = new Map(usableProxies.map((p) => [p.remoteId, p]));
-            const plan = computeRotationPlan(globalInputs, usableProxies, {
-              activeLimit: settings.antigravityActiveLimit,
-              sessionThreshold: settings.antigravitySessionThreshold,
-              reassignForbidden: reassignForbidden || options.reassignForbidden || force === true,
-            });
-            const liveProxyIds = new Set(
-              globalInputs
-                .filter(
-                  (account) =>
-                    account.isActive &&
-                    !isAccountForbidden(account) &&
-                    account.quotaAvailable !== false &&
-                    account.sessionPercentage > settings.antigravitySessionThreshold &&
-                    account.proxyPoolId,
-                )
-                .map((account) => account.proxyPoolId as string),
-            );
-            logScoped(
-              "Antigravity",
-              "runRotation",
-              "info",
-              `Computed rotation plan: ${plan.activations.length} to activate, ${plan.deactivations.length} to deactivate, ${Object.keys(plan.proxyReassignments).length} proxy reassignments`,
-              {
-                activeLimit: settings.antigravityActiveLimit,
-                sessionThreshold: settings.antigravitySessionThreshold,
-                activations: plan.activations,
-                deactivations: plan.deactivations,
-              },
-            );
-
-            const successfulProxyReassignments = new Map<string, string>();
-            const failedProxyReassignments = new Set<string>();
-            // 5. Apply plan: deactivations in parallel
-            const failedDeactivations = new Set<string>();
-            const deactivatedAccounts = new Set<string>();
-            const deactivationTasks = plan.deactivations.map(async (globalKey) => {
-              const meta = accountMetaByKey.get(globalKey);
-              if (!meta) return;
-              const urlLabel = meta.routerUrl ? ` [${meta.routerUrl}]` : "";
-              const overrides = {
-                ...(meta.routerUrl ? { url: meta.routerUrl } : {}),
-                ...(deps?.endpointTimeoutMs ? { timeoutMs: deps.endpointTimeoutMs } : {}),
-              };
-              const effectiveOverrides = Object.keys(overrides).length > 0 ? overrides : undefined;
-              try {
-                await updateConn(meta.originalId, { isActive: false }, effectiveOverrides);
-                deactivatedAccounts.add(globalKey);
-                if (meta.account.proxyPoolId) liveProxyIds.delete(meta.account.proxyPoolId);
-                const reason =
-                  meta.account.sessionPercentage <= (settings.antigravitySessionThreshold ?? 20)
-                    ? `quota <= ${settings.antigravitySessionThreshold ?? 20}%`
-                    : "demoted or proxy conflict";
-                logScoped(
-                  "Antigravity",
-                  "rotate",
-                  "info",
-                  `Turned OFF ${meta.account.email || meta.originalId} (${reason})${urlLabel}`,
-                  {
-                    accountId: meta.originalId,
-                    sessionQuota: `${meta.account.sessionPercentage}%`,
-                    reason,
-                  },
-                );
-              } catch (err) {
-                failedDeactivations.add(globalKey);
-                logScoped(
-                  "Antigravity",
-                  "rotate",
-                  "warn",
-                  `Failed to deactivate ${meta.account.email || meta.originalId}: ${(err as Error).message}${urlLabel}`,
-                  { accountId: meta.originalId, error: (err as Error).message },
-                );
-              }
-            });
-            await Promise.allSettled(deactivationTasks);
-            liveProxyIds.clear();
-            for (const account of globalInputs) {
-              if (
-                account.isActive &&
-                !isAccountForbidden(account) &&
-                !deactivatedAccounts.has(account.id) &&
-                account.proxyPoolId
-              ) {
-                liveProxyIds.add(account.proxyPoolId);
-              }
-            }
-            for (const failedKey of failedDeactivations) {
-              const failedMeta = accountMetaByKey.get(failedKey);
-              if (failedMeta?.account.proxyPoolId) liveProxyIds.add(failedMeta.account.proxyPoolId);
-            }
-            for (const [globalKey, newProxyId] of Object.entries(plan.proxyReassignments)) {
-              const meta = accountMetaByKey.get(globalKey);
-              if (!meta) {
-                failedProxyReassignments.add(globalKey);
-                continue;
-              }
-              const currentPsData =
-                (meta.rawConnection?.providerSpecificData as Record<string, unknown>) || {};
-              const urlLabel = meta.routerUrl ? ` [${meta.routerUrl}]` : "";
-              const overrides = {
-                ...(meta.routerUrl ? { url: meta.routerUrl } : {}),
-                ...(deps?.endpointTimeoutMs ? { timeoutMs: deps.endpointTimeoutMs } : {}),
-              };
-              const effectiveOverrides = Object.keys(overrides).length > 0 ? overrides : undefined;
-              if (liveProxyIds.has(newProxyId)) {
-                const conflictingOwner = globalInputs.find(
-                  (account) =>
-                    account.id !== globalKey &&
-                    (account.isActive || successfulProxyReassignments.has(account.id)) &&
-                    (account.proxyPoolId === newProxyId ||
-                      successfulProxyReassignments.get(account.id) === newProxyId) &&
-                    !deactivatedAccounts.has(account.id),
-                );
-                const error = conflictingOwner
-                  ? `Proxy reassignment collision: ${newProxyId} is reserved by active account ${conflictingOwner.id}`
-                  : `Proxy reassignment collision: ${newProxyId} is reserved by another assignment`;
-                failedProxyReassignments.add(globalKey);
-                meta.state.lastError = error;
-                meta.state.proxyHealthy = false;
-                if (meta.account.isActive) {
-                  try {
-                    await updateConn(meta.originalId, { isActive: false }, effectiveOverrides);
-                    deactivatedAccounts.add(globalKey);
-                    failedDeactivations.delete(globalKey);
-                  } catch {
-                    failedDeactivations.add(globalKey);
-                  }
-                }
-                logScoped(
-                  "Antigravity",
-                  "reassignProxy",
-                  "warn",
-                  `Failed to update proxy for ${meta.account.email || meta.originalId}: ${error}${urlLabel}`,
-                  {
-                    accountId: meta.originalId,
-                    proxyPoolId: newProxyId,
-                    conflictingAccountId: conflictingOwner?.id,
-                    error,
-                  },
-                );
-                continue;
-              }
-              try {
-                await updateConn(
-                  meta.originalId,
-                  {
-                    providerSpecificData: {
-                      ...currentPsData,
-                      proxyPoolId: newProxyId,
-                    },
-                  },
-                  effectiveOverrides,
-                );
-                successfulProxyReassignments.set(globalKey, newProxyId);
-                liveProxyIds.add(newProxyId);
-              } catch (err) {
-                failedProxyReassignments.add(globalKey);
-                meta.state.lastError = (err as Error).message;
-                meta.state.proxyHealthy = false;
-                if (meta.account.isActive) {
-                  try {
-                    await updateConn(meta.originalId, { isActive: false }, effectiveOverrides);
-                    deactivatedAccounts.add(globalKey);
-                    failedDeactivations.delete(globalKey);
-                    if (meta.account.proxyPoolId) liveProxyIds.delete(meta.account.proxyPoolId);
-                  } catch {
-                    failedDeactivations.add(globalKey);
-                  }
-                }
-                logScoped(
-                  "Antigravity",
-                  "reassignProxy",
-                  "warn",
-                  `Failed to update proxy for ${meta.account.email || meta.originalId}: ${(err as Error).message}${urlLabel}`,
-                  { accountId: meta.originalId, error: (err as Error).message },
-                );
-              }
-            }
-
-            // 6. Apply plan: activations in parallel (only if all deactivations succeeded)
-            const successfulActivations = new Set<string>();
-            if (failedDeactivations.size === 0) {
-              const activationTasks = plan.activations.map(async (globalKey) => {
-                if (failedProxyReassignments.has(globalKey)) return;
-                const meta = accountMetaByKey.get(globalKey);
-                if (!meta) return;
-                const urlLabel = meta.routerUrl ? ` [${meta.routerUrl}]` : "";
-                const overrides = {
-                  ...(meta.routerUrl ? { url: meta.routerUrl } : {}),
-                  ...(deps?.endpointTimeoutMs ? { timeoutMs: deps.endpointTimeoutMs } : {}),
-                };
-                const effectiveOverrides =
-                  Object.keys(overrides).length > 0 ? overrides : undefined;
-                try {
-                  await updateConn(meta.originalId, { isActive: true }, effectiveOverrides);
-                  const turn = history.recordActivation(meta.originalId, Date.now());
-                  successfulActivations.add(globalKey);
-                  const resetMins = meta.account.resetAt
-                    ? Math.max(
-                        0,
-                        Math.round((new Date(meta.account.resetAt).getTime() - Date.now()) / 60000),
-                      )
-                    : null;
-                  logScoped(
-                    "Antigravity",
-                    "rotate",
-                    "info",
-                    `Turned ON ${meta.account.email || meta.originalId} (turn ${turn.turnCount}, quota ${meta.account.sessionPercentage}%, reset in ${resetMins ?? "?"}m)${urlLabel}`,
-                    {
-                      accountId: meta.originalId,
-                      turnCount: turn.turnCount,
-                      sessionQuota: `${meta.account.sessionPercentage}%`,
-                      resetInMinutes: resetMins,
-                    },
-                  );
-                } catch (err) {
-                  meta.state.lastError = (err as Error).message;
-                  logScoped(
-                    "Antigravity",
-                    "rotate",
-                    "warn",
-                    `Failed to activate ${meta.account.email || meta.originalId}: ${(err as Error).message}${urlLabel}`,
-                    { accountId: meta.originalId, error: (err as Error).message },
-                  );
-                }
-              });
-              await Promise.allSettled(activationTasks);
-            }
-
-            // 7. Update states
-            const activeSet = new Set(
-              plan.activeIds.filter((globalKey) => {
-                if (deactivatedAccounts.has(globalKey)) return false;
-                if (failedDeactivations.has(globalKey)) return true;
-                if (failedProxyReassignments.has(globalKey)) return false;
-                const meta = accountMetaByKey.get(globalKey);
-                return Boolean(meta?.account.isActive) || successfulActivations.has(globalKey);
-              }),
-            );
-            for (const key of failedDeactivations) activeSet.add(key);
-
-            for (const [globalKey, meta] of accountMetaByKey.entries()) {
-              const state = meta.state;
-              state.isActive = activeSet.has(globalKey);
-              if (successfulActivations.has(globalKey)) {
-                const turn = history.get(meta.originalId);
-                state.turnCount = turn?.turnCount;
-                state.lastActivatedAt = turn?.lastActivatedAt;
-              }
-              const confirmedProxyId = successfulProxyReassignments.get(globalKey);
-              if (confirmedProxyId) state.proxyPoolId = confirmedProxyId;
-              if (state.proxyPoolId && usableMap.has(state.proxyPoolId)) {
-                state.proxyHealthy = true;
-                state.proxyName =
-                  usableMap.get(state.proxyPoolId)?.name || state.proxyPoolId.slice(0, 8);
-              } else {
-                state.proxyHealthy = false;
-              }
-            }
-
-            // 8. Build endpoints summary & aggregate snapshot
-            const allAccounts: AntigravityAccountState[] = [];
-            let totalSession = 0;
-            let totalPossible = 0;
-
-            for (const ep of healthyEndpoints) {
-              allAccounts.push(...ep.accountStates);
-              const epActiveCount = ep.accountStates.filter((s) => s.isActive).length;
-              const epSession = ep.accountStates.reduce((sum, s) => sum + s.sessionPercentage, 0);
-              endpointsSummary.push({
-                url: ep.url,
-                ok: true,
-                totalAccounts: ep.accountStates.length,
-                activeCount: epActiveCount,
-              });
-              totalSession += epSession;
-              totalPossible += ep.accountStates.length * 100;
-            }
-
-            const totalActive = allAccounts.filter((s) => s.isActive).length;
-
-            const snapshot: AntigravityRotatorSnapshot = {
-              lastRunAt: Date.now(),
-              running: false,
-              totalAccounts: allAccounts.length,
-              activeCount: totalActive,
-              totalSessionQuotaPercentage: Math.round(totalSession),
-              maxPossiblePercentage: totalPossible,
-              accounts: allAccounts,
-              endpoints: endpointsSummary,
-            };
-
-            saveSnapshot(snapshot);
-            logScoped(
-              "Antigravity",
-              "runRotation",
-              "info",
-              `Cycle complete (${totalActive}/${allAccounts.length} active, total ${snapshot.totalSessionQuotaPercentage}% / ${snapshot.maxPossiblePercentage}%) across ${endpointsSummary.length} router(s)`,
-              {
-                activeCount: totalActive,
-                totalAccounts: allAccounts.length,
-                sessionQuota: `${snapshot.totalSessionQuotaPercentage}%`,
-                maxPossible: `${snapshot.maxPossiblePercentage}%`,
-                routers: endpointsSummary.length,
-              },
-            );
-            if (!rerunQueued) return snapshot;
-          } finally {
-            running = false;
-          }
-        }
+          await runCycle();
+        } while (rerunQueued);
+        return loadSnapshot();
       } finally {
+        running = false;
         activeRunPromise = null;
       }
     })();
-
     return activeRunPromise;
   }
-  async function optimizeSpeed(): Promise<{
-    updated: number;
-    accounts: Array<{ id: string; proxyPoolId: string }>;
-  }> {
-    const configuredUrls = getRouterUrls();
-    const targetUrls =
-      configuredUrls.length > 0 ? configuredUrls : [undefined as unknown as string];
-    const usable = deps?.getUsableProxies ? deps.getUsableProxies() : [];
-    if (usable.length === 0) return { updated: 0, accounts: [] };
 
-    const endpointResults = await Promise.allSettled(
-      targetUrls.map(async (targetUrl) => {
-        const overrides = {
-          ...(targetUrl ? { url: targetUrl } : {}),
-          ...(deps?.endpointTimeoutMs ? { timeoutMs: deps.endpointTimeoutMs } : {}),
-        };
-        const effectiveOverrides = Object.keys(overrides).length > 0 ? overrides : undefined;
-        const rawConnections = await listConnections(effectiveOverrides);
-        return { targetUrl, rawConnections: rawConnections || [] };
-      }),
-    );
-
-    interface GlobalActiveItem {
-      globalKey: string;
-      originalId: string;
-      routerUrl?: string;
-      rawConnection: NineRouterConnectionItem;
-      input: AntigravityAccountInput;
-    }
-    const allActiveItems: GlobalActiveItem[] = [];
-
-    for (const res of endpointResults) {
-      if (res.status !== "fulfilled") continue;
-      const { targetUrl, rawConnections } = res.value;
-      for (const c of rawConnections) {
-        if (!c.isActive) continue;
-        const globalKey = targetUrl ? `${targetUrl}:::${c.id}` : c.id;
-        const input: AntigravityAccountInput = {
-          id: globalKey,
-          email: c.email || c.name || c.id,
-          name: c.name || c.email || c.id,
-          isActive: true,
-          sessionPercentage: 100,
-          weeklyPercentage: 100,
-          resetAt: null,
-          proxyPoolId: (c.providerSpecificData?.proxyPoolId as string | undefined) ?? null,
-        };
-        allActiveItems.push({
-          globalKey,
-          originalId: c.id,
-          routerUrl: targetUrl,
-          rawConnection: c,
-          input,
-        });
-      }
-    }
-
-    if (allActiveItems.length === 0) return { updated: 0, accounts: [] };
-
-    const reassignments = optimizeAccountsBySpeed(
-      allActiveItems.map((item) => item.input),
-      usable,
-    );
-
-    let totalUpdated = 0;
-    const allReassignments: Array<{ id: string; proxyPoolId: string }> = [];
-    const itemMap = new Map(allActiveItems.map((item) => [item.globalKey, item]));
-
-    const updateTasks = reassignments.map(async (reassign) => {
-      const item = itemMap.get(reassign.id);
-      if (!item) return;
-      const currentPsData = (
-        item.rawConnection.providerSpecificData &&
-        typeof item.rawConnection.providerSpecificData === "object"
-          ? item.rawConnection.providerSpecificData
-          : {}
-      ) as Record<string, unknown>;
-      const overrides = {
-        ...(item.routerUrl ? { url: item.routerUrl } : {}),
-        ...(deps?.endpointTimeoutMs ? { timeoutMs: deps.endpointTimeoutMs } : {}),
-      };
-      const effectiveOverrides = Object.keys(overrides).length > 0 ? overrides : undefined;
-      try {
-        await updateConn(
-          item.originalId,
-          {
-            providerSpecificData: {
-              ...currentPsData,
-              proxyPoolId: reassign.proxyPoolId,
-            },
-          },
-          effectiveOverrides,
-        );
-        totalUpdated++;
-        allReassignments.push({ id: item.originalId, proxyPoolId: reassign.proxyPoolId });
-      } catch (err) {
-        logScoped(
-          "Antigravity",
-          "optimizeSpeed",
-          "warn",
-          `Failed to optimize proxy for account ${item.originalId} on ${item.routerUrl || "default"}: ${(err as Error).message}`,
-          { accountId: item.originalId, error: (err as Error).message },
-        );
-      }
-    });
-
-    await Promise.allSettled(updateTasks);
-    logScoped(
-      "Antigravity",
-      "optimizeSpeed",
-      "info",
-      `Antigravity speed optimization complete: updated ${totalUpdated} account(s)`,
-      { updated: totalUpdated },
-    );
-    return { updated: totalUpdated, accounts: allReassignments };
-  }
-  async function resetProxies(options: { forceAll?: boolean } = {}): Promise<ResetProxiesResult> {
-    if (activeResetPromise) return activeResetPromise;
-
-    activeResetPromise = (async (): Promise<ResetProxiesResult> => {
-      const configuredUrls = getRouterUrls();
-      const targetUrls =
-        configuredUrls.length > 0 ? configuredUrls : [undefined as unknown as string];
-      const usable = deps?.getUsableProxies ? deps.getUsableProxies() : [];
-      if (usable.length === 0) {
-        return {
-          ok: false,
-          totalAccounts: 0,
-          reassignedCount: 0,
-          forbiddenAccounts: 0,
-          repairedCount: 0,
-          reassigned: [],
-        };
-      }
-
-      const endpointResults = await Promise.allSettled(
-        targetUrls.map((url) => fetchEndpointAccounts(url)),
-      );
-
-      const reassigned: ResetProxiesResult["reassigned"] = [];
-      const failedEndpoints: Array<{ url: string; error: string }> = [];
-      let totalAccounts = 0;
-      let forbiddenCount = 0;
-
-      interface GlobalAccountMeta {
-        account: AntigravityAccountInput;
-        rawConnection?: NineRouterConnectionItem;
-        routerUrl?: string;
-        originalId: string;
-      }
-      const accountMetaByKey = new Map<string, GlobalAccountMeta>();
-      const globalInputs: AntigravityAccountInput[] = [];
-
-      for (let i = 0; i < targetUrls.length; i++) {
-        const epRes = endpointResults[i];
-        const url = targetUrls[i] || "";
-        if (epRes.status !== "fulfilled") {
-          const errMessage = (epRes.reason as Error).message || "Connection failed";
-          failedEndpoints.push({ url, error: errMessage });
-          continue;
-        }
-
-        const { rawConnections, accountInputs } = epRes.value;
-        totalAccounts += accountInputs.length;
-        const connMap = new Map(rawConnections.map((c) => [c.id, c]));
-
-        for (const acc of accountInputs) {
-          if (isAccountForbidden(acc)) {
-            forbiddenCount++;
-          }
-          const globalKey = url ? `${url}:::${acc.id}` : acc.id;
-          accountMetaByKey.set(globalKey, {
-            account: acc,
-            rawConnection: connMap.get(acc.id),
-            routerUrl: url || undefined,
-            originalId: acc.id,
-          });
-          globalInputs.push({
-            ...acc,
-            id: globalKey,
-          });
-        }
-      }
-
-      // Repair forbidden routes first; only accounts repair could not fix fall through to swap.
-      let repairedCount = 0;
-      if (deps?.repairRoute) {
-        for (const input of globalInputs) {
-          if (!isAccountForbidden(input)) continue;
-          const meta = accountMetaByKey.get(input.id);
-          if (!meta) continue;
-          const result = await deps.repairRoute(meta.originalId, meta.routerUrl).catch(
-            (err: unknown): RepairResult => ({
-              status: "verification_failed",
-              reason: err instanceof Error ? err.message : String(err),
-            }),
-          );
-          logScoped("Antigravity", "resetProxies", "info", `Route repair: ${result.status}`, {
-            accountId: meta.originalId,
-            endpoint: meta.routerUrl || "default",
-            reason: result.reason,
-          });
-          if (result.status !== "repaired" || !result.binding) continue;
-          repairedCount++;
-          input.proxyPoolId = result.binding.poolId;
-          input.lastError = null;
-          meta.rawConnection = meta.rawConnection && {
-            ...meta.rawConnection,
-            providerSpecificData: {
-              ...meta.rawConnection.providerSpecificData,
-              proxyPoolId: result.binding.poolId ?? undefined,
-            },
-          };
-        }
-      }
-
-      const settings = getSettings();
-      const plan = computeRotationPlan(globalInputs, usable, {
-        activeLimit: settings.antigravityActiveLimit,
-        sessionThreshold: settings.antigravitySessionThreshold,
-        reassignForbidden: true,
-      });
-
-      for (const [globalKey, newProxyId] of Object.entries(plan.proxyReassignments)) {
-        const meta = accountMetaByKey.get(globalKey);
-        if (!meta || !meta.rawConnection) continue;
-        const oldProxyId =
-          (meta.rawConnection.providerSpecificData?.proxyPoolId as string | undefined) ?? null;
-        if (oldProxyId === newProxyId && !options.forceAll) continue;
-
-        const currentPsData =
-          (meta.rawConnection.providerSpecificData as Record<string, unknown> | undefined) || {};
-        const url = meta.routerUrl;
-        const urlLabel = url ? ` [${url}]` : "";
-        const overrides = {
-          ...(url ? { url } : {}),
-          ...(deps?.endpointTimeoutMs ? { timeoutMs: deps.endpointTimeoutMs } : {}),
-        };
-        const effectiveOverrides = Object.keys(overrides).length > 0 ? overrides : undefined;
-
-        try {
-          await updateConn(
-            meta.originalId,
-            {
-              providerSpecificData: {
-                ...currentPsData,
-                proxyPoolId: newProxyId,
-              },
-            },
-            effectiveOverrides,
-          );
-          reassigned.push({
-            accountId: meta.originalId,
-            email: meta.rawConnection.email || meta.rawConnection.name || meta.originalId,
-            oldProxyId,
-            newProxyId,
-            routerUrl: url,
-          });
-          logScoped(
-            "Antigravity",
-            "resetProxies",
-            "info",
-            `Reset Proxies${urlLabel}: Re-assigned proxy for ${meta.rawConnection.email || meta.originalId} -> ${newProxyId}`,
-            { accountId: meta.originalId, oldProxyId, newProxyId, endpoint: url || "default" },
-          );
-        } catch (err) {
-          logScoped(
-            "Antigravity",
-            "resetProxies",
-            "warn",
-            `Reset Proxies${urlLabel}: Failed to reassign proxy for ${meta.rawConnection.email || meta.originalId}: ${(err as Error).message}`,
-            {
-              accountId: meta.originalId,
-              error: (err as Error).message,
-              endpoint: url || "default",
-            },
-          );
-        }
-      }
-
-      await runRotation({ force: true, reassignForbidden: true }).catch(() => null);
-
-      return {
-        ok: true,
-        totalAccounts,
-        reassignedCount: reassigned.length,
-        forbiddenAccounts: forbiddenCount,
-        repairedCount,
-        reassigned,
-        ...(failedEndpoints.length > 0 ? { failedEndpoints } : {}),
-      };
-    })().finally(() => {
-      activeResetPromise = null;
-    });
-
-    return activeResetPromise;
-  }
-
-  function getSnapshot(): AntigravityRotatorSnapshot {
-    const snap = loadSnapshot();
-    snap.running = running;
-    return snap;
-  }
   return {
     runRotation,
-    resetProxies,
-    optimizeSpeed,
-    getSnapshot,
+    getSnapshot: () => ({ ...loadSnapshot(), running }),
     get isRunning() {
       return running;
     },

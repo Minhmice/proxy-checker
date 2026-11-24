@@ -410,7 +410,7 @@ export function AntigravityQuotaWidget() {
                             )}
                             title="Session Quota"
                           >
-                            {Number.isFinite(acc.sessionPercentage)
+                            {acc.quotaAvailable !== false && Number.isFinite(acc.sessionPercentage)
                               ? `${acc.sessionPercentage.toFixed(0)}%`
                               : "—"}
                           </span>
@@ -426,16 +426,19 @@ export function AntigravityQuotaWidget() {
                         </div>
 
                         <div
-                          className="flex items-center gap-1 px-1 py-0.5 leading-none rounded bg-surface-raised border border-border/50 text-[9px] font-mono text-muted-foreground truncate max-w-[90px]"
-                          title={acc.proxyName ? `Proxy: ${acc.proxyName}` : "Direct connection"}
+                          className="flex items-center gap-1 px-1 py-0.5 leading-none rounded bg-surface-raised border border-border/50 text-[9px] font-mono text-muted-foreground truncate"
+                          title={
+                            acc.thresholdPercentage != null
+                              ? `Threshold: ${acc.thresholdPercentage}%`
+                              : "Active account"
+                          }
                         >
-                          <span
-                            className={cn(
-                              "size-1.5 rounded-full shrink-0",
-                              acc.proxyHealthy ? "bg-emerald-500" : "bg-rose-500",
-                            )}
-                          />
-                          <span className="truncate">{acc.proxyName || "Direct"}</span>
+                          <span className="size-1.5 rounded-full shrink-0 bg-emerald-500" />
+                          <span className="truncate">
+                            {acc.thresholdPercentage != null
+                              ? `T: ${acc.thresholdPercentage}%`
+                              : "Active"}
+                          </span>
                         </div>
                       </div>
                     </div>

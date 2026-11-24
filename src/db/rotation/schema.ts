@@ -4,4 +4,6 @@ export const accountTurns = sqliteTable("antigravity_account_turns", {
   accountId: text("account_id").primaryKey(),
   turnCount: integer("turn_count").notNull().default(0),
   lastActivatedAt: integer("last_activated_at"),
+  thresholdPercentage: integer("threshold_percentage"),
+  tenureState: text("tenure_state").notNull().default("inactive"),
 });

@@ -11,43 +11,59 @@ import {
   updateSettings,
 } from "../src/server/app-config.js";
 
-test("app-config enforces 1 to 1440 minutes for nineRouterSyncMinutes and supports nineRouterAutoSync toggle", () => {
+test("app-config drops legacy proxy settings while retaining account rotation and credentials", () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "app-config-test-"));
   const originalPath = process.env.APP_CONFIG_PATH;
   const originalControlPass = process.env.CONTROL_PASSWORD;
-  process.env.APP_CONFIG_PATH = path.join(tmpDir, "settings.json");
+  const settingsPath = path.join(tmpDir, "settings.json");
+  process.env.APP_CONFIG_PATH = settingsPath;
   process.env.CONTROL_PASSWORD = "test-control-password";
+  const legacy = {
+    nineRouterAutoSync: true,
+    activePoolLimit: 50,
+    nineRouterSyncMinutes: 60,
+    checkConcurrency: 10,
+    checkTimeoutMs: 6000,
+    proxyTtlMinutes: 15,
+    antigravityActiveLimit: 3,
+    antigravitySessionThreshold: 20,
+  };
 
   try {
+    fs.writeFileSync(
+      settingsPath,
+      JSON.stringify({
+        controlPassword: "stored-control",
+        nineRouterUrl: "https://router.example",
+        nineRouterPassword: "stored-router-password",
+        nineRouterApiKey: "stored-api-key",
+        antigravityRotatorEnabled: true,
+        antigravityRotateMinutes: 10,
+        ...legacy,
+      }),
+    );
     initAppConfig();
-    updateSettings({ nineRouterSyncMinutes: 0 });
-    assert.equal(getSettingsSecrets().nineRouterSyncMinutes, 1);
+    assert.equal(getSettingsSecrets().nineRouterPassword, "stored-router-password");
+    assert.equal(getSettingsSecrets().nineRouterApiKey, "stored-api-key");
+    for (const key of Object.keys(legacy)) {
+      assert.equal(Object.hasOwn(getSettingsSecrets(), key), false);
+      assert.equal(Object.hasOwn(getSettingsPublic().settings, key), false);
+    }
 
-    updateSettings({ nineRouterSyncMinutes: 15 });
-    assert.equal(getSettingsSecrets().nineRouterSyncMinutes, 15);
-
-    updateSettings({ nineRouterSyncMinutes: 720 });
-    assert.equal(getSettingsSecrets().nineRouterSyncMinutes, 720);
-
-    updateSettings({ nineRouterAutoSync: false });
-    assert.equal(getSettingsSecrets().nineRouterAutoSync, false);
-
-    updateSettings({ nineRouterAutoSync: true });
-    assert.equal(getSettingsSecrets().nineRouterAutoSync, true);
+    updateSettings({ antigravityRotatorEnabled: false, antigravityRotateMinutes: 15 });
+    const saved = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+    for (const key of Object.keys(legacy)) assert.equal(Object.hasOwn(saved, key), false);
+    assert.equal(saved.controlPassword, "stored-control");
+    assert.equal(saved.nineRouterPassword, "stored-router-password");
+    assert.equal(saved.nineRouterApiKey, "stored-api-key");
+    assert.equal(saved.antigravityRotatorEnabled, false);
+    assert.equal(saved.antigravityRotateMinutes, 15);
   } finally {
-    if (originalPath !== undefined) {
-      process.env.APP_CONFIG_PATH = originalPath;
-    } else {
-      delete process.env.APP_CONFIG_PATH;
-    }
-    if (originalControlPass !== undefined) {
-      process.env.CONTROL_PASSWORD = originalControlPass;
-    } else {
-      delete process.env.CONTROL_PASSWORD;
-    }
-    try {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    } catch {}
+    if (originalPath !== undefined) process.env.APP_CONFIG_PATH = originalPath;
+    else delete process.env.APP_CONFIG_PATH;
+    if (originalControlPass !== undefined) process.env.CONTROL_PASSWORD = originalControlPass;
+    else delete process.env.CONTROL_PASSWORD;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
 

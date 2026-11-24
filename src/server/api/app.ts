@@ -6,8 +6,6 @@ import { createAuthRoutes } from "./routes/auth.js";
 import { createNineRouterRoutes } from "./routes/ninerouter.js";
 import { createAntigravityRoutes } from "./routes/antigravity.js";
 import { createSettingsRoutes } from "./routes/settings.js";
-import { createIntelligenceRoutes } from "./routes/intelligence.js";
-import { createProxiesRoutes } from "./routes/proxies.js";
 import { createBackupRoutes } from "./routes/backup.js";
 
 export function createAlreadySentResponse(): Response {
@@ -57,8 +55,6 @@ export function createApiApp(deps: ApiDependencies): Hono<ApiEnv> {
   app.route("/api/ninerouter", createNineRouterRoutes(deps));
   app.route("/api/antigravity", createAntigravityRoutes(deps));
   app.route("/api/settings", createSettingsRoutes(deps));
-  app.route("/api/intelligence", createIntelligenceRoutes(deps));
-  app.route("/api/proxies", createProxiesRoutes(deps));
   app.route("/api/backup", createBackupRoutes(deps));
 
   // Catch-all 404 for unknown /api routes

@@ -3,25 +3,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
-  Activity,
   AlertCircle,
   CheckCircle2,
-  Database,
   Cpu,
+  Database,
   Download,
   HelpCircle,
   KeyRound,
   Loader2,
   Lock,
-  Network,
   RefreshCw,
   Server,
-  ShieldAlert,
   ShieldCheck,
-  Sliders,
 } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -31,18 +27,15 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { motion, useReducedMotion } from "motion/react";
 import {
-  downloadProxyExport,
   fetchSettings,
   testNineRouterConnection,
   fetchBackupStatus,
@@ -64,16 +57,8 @@ type FormState = {
   nineRouterUrl: string;
   nineRouterPassword: string;
   nineRouterApiKey: string;
-  nineRouterAutoSync: boolean;
-  activePoolLimit: string;
-  nineRouterSyncMinutes: string;
-  checkConcurrency: string;
-  checkTimeoutMs: string;
-  proxyTtlMinutes: string;
   antigravityRotatorEnabled: boolean;
-  antigravityActiveLimit: string;
   antigravityRotateMinutes: string;
-  antigravitySessionThreshold: string;
   currentPassword: string;
   newPassword: string;
   confirmPassword: string;
@@ -81,19 +66,11 @@ type FormState = {
 
 function toForm(settings: AppSettingsPublic): FormState {
   return {
-    nineRouterUrl: settings.nineRouterUrl,
+    nineRouterUrl: settings.nineRouterUrl || "",
     nineRouterPassword: "",
     nineRouterApiKey: "",
-    nineRouterAutoSync: settings.nineRouterAutoSync !== false,
-    activePoolLimit: String(settings.activePoolLimit),
-    nineRouterSyncMinutes: String(settings.nineRouterSyncMinutes),
-    checkConcurrency: String(settings.checkConcurrency),
-    checkTimeoutMs: String(settings.checkTimeoutMs),
-    proxyTtlMinutes: String(settings.proxyTtlMinutes),
     antigravityRotatorEnabled: settings.antigravityRotatorEnabled !== false,
-    antigravityActiveLimit: String(settings.antigravityActiveLimit ?? 3),
     antigravityRotateMinutes: String(settings.antigravityRotateMinutes ?? 10),
-    antigravitySessionThreshold: String(settings.antigravitySessionThreshold ?? 20),
     currentPassword: "",
     newPassword: "",
     confirmPassword: "",
@@ -138,22 +115,19 @@ export default function SettingsPage() {
   const [selectedTab, setSelectedTab] = useState("ninerouter");
   const isReduced = useReducedMotion();
   const [savingSection, setSavingSection] = useState<
-    "access" | "ninerouter" | "sync" | "antigravity" | null
+    "access" | "ninerouter" | "antigravity" | null
   >(null);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<NineRouterTestResult | null>(null);
-  const [exporting, setExporting] = useState<"txt" | "csv" | null>(null);
-  const [includeCredentials, setIncludeCredentials] = useState(false);
   const [backupStatus, setBackupStatus] = useState<BackupStatusResponse["status"] | null>(null);
   const [backupLoading, setBackupLoading] = useState(false);
   const [restoreLoading, setRestoreLoading] = useState(false);
 
   const isSaving = savingSection !== null;
-  const isActionPending =
-    isSaving || testing || exporting !== null || backupLoading || restoreLoading;
+  const isActionPending = isSaving || testing || backupLoading || restoreLoading;
 
   const isSectionDirty = useCallback(
-    (section: "ninerouter" | "sync" | "antigravity" | "access"): boolean => {
+    (section: "ninerouter" | "antigravity" | "access"): boolean => {
       if (!form || !baselineForm) return false;
       switch (section) {
         case "ninerouter":
@@ -162,21 +136,10 @@ export default function SettingsPage() {
             Boolean(form.nineRouterPassword) ||
             Boolean(form.nineRouterApiKey)
           );
-        case "sync":
-          return (
-            form.activePoolLimit !== baselineForm.activePoolLimit ||
-            form.nineRouterAutoSync !== baselineForm.nineRouterAutoSync ||
-            form.nineRouterSyncMinutes !== baselineForm.nineRouterSyncMinutes ||
-            form.checkConcurrency !== baselineForm.checkConcurrency ||
-            form.checkTimeoutMs !== baselineForm.checkTimeoutMs ||
-            form.proxyTtlMinutes !== baselineForm.proxyTtlMinutes
-          );
         case "antigravity":
           return (
             form.antigravityRotatorEnabled !== baselineForm.antigravityRotatorEnabled ||
-            form.antigravityActiveLimit !== baselineForm.antigravityActiveLimit ||
-            form.antigravityRotateMinutes !== baselineForm.antigravityRotateMinutes ||
-            form.antigravitySessionThreshold !== baselineForm.antigravitySessionThreshold
+            form.antigravityRotateMinutes !== baselineForm.antigravityRotateMinutes
           );
         case "access":
           return Boolean(form.currentPassword || form.newPassword || form.confirmPassword);
@@ -188,10 +151,7 @@ export default function SettingsPage() {
   );
 
   const isAnyDirty =
-    isSectionDirty("ninerouter") ||
-    isSectionDirty("sync") ||
-    isSectionDirty("antigravity") ||
-    isSectionDirty("access");
+    isSectionDirty("ninerouter") || isSectionDirty("antigravity") || isSectionDirty("access");
 
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -203,38 +163,6 @@ export default function SettingsPage() {
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [isAnyDirty]);
-
-  async function handleExport(format: "txt" | "csv") {
-    if ((!password && !authenticated) || isActionPending) {
-      if (!password && !authenticated) toast.error("Not authenticated");
-      return;
-    }
-    if (includeCredentials) {
-      const confirmed = window.confirm(
-        "CRITICAL SECURITY RISK: Exporting plaintext credentials writes unmasked usernames and passwords to disk. Anyone with read access to this file can consume your proxy bandwidth and exhaust quotas.\n\nProceed with unencrypted export?",
-      );
-      if (!confirmed) return;
-    }
-    setExporting(format);
-    try {
-      const { blob, filename } = password
-        ? await downloadProxyExport(password, format, includeCredentials)
-        : await downloadProxyExport(format, includeCredentials);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      toast.success(`Exported ${filename}`);
-    } catch (err) {
-      toast.error((err as Error).message);
-    } finally {
-      setExporting(null);
-    }
-  }
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -299,7 +227,7 @@ export default function SettingsPage() {
   }, [password]);
 
   useEffect(() => {
-    if (selectedTab === "sync") {
+    if (selectedTab === "backup") {
       void loadBackupStatus();
     }
   }, [selectedTab, loadBackupStatus]);
@@ -326,7 +254,7 @@ export default function SettingsPage() {
   async function handleRestoreNow() {
     if ((!password && !authenticated) || isActionPending) return;
     const confirmed = window.confirm(
-      "CRITICAL ACTION: Restoring settings and database from Git backups will overwrite settings.json and proxy registries. Any uncommitted data will be permanently lost.\n\nAre you sure you want to proceed with restore?",
+      "CRITICAL ACTION: Restoring settings and database from Git backups will overwrite settings.json and application registries. Any uncommitted data will be permanently lost.\n\nAre you sure you want to proceed with restore?",
     );
     if (!confirmed) return;
     setRestoreLoading(true);
@@ -349,7 +277,39 @@ export default function SettingsPage() {
     }
     setForm((current) => (current ? { ...current, [key]: value } : current));
   }
-  async function handleSave(section: "access" | "ninerouter" | "sync" | "antigravity") {
+
+  async function handleTestConnection() {
+    if (!form || testing) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const payload: {
+        nineRouterUrl?: string;
+        nineRouterPassword?: string;
+        nineRouterApiKey?: string;
+      } = {
+        nineRouterUrl: form.nineRouterUrl.trim(),
+      };
+      if (form.nineRouterPassword) payload.nineRouterPassword = form.nineRouterPassword;
+      if (form.nineRouterApiKey) payload.nineRouterApiKey = form.nineRouterApiKey.trim();
+
+      const result = await testNineRouterConnection(password || undefined, payload);
+      setTestResult(result);
+      if (result.ok) {
+        toast.success("9Router connection successful");
+      } else {
+        toast.error(result.error || "Connection failed");
+      }
+    } catch (err) {
+      const message = (err as Error).message || "Failed to test connection";
+      setTestResult({ ok: false, error: message });
+      toast.error(message);
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  async function handleSave(section: "access" | "ninerouter" | "antigravity") {
     if ((!password && !authenticated) || !form || isActionPending) return;
     setSavingSection(section);
     try {
@@ -377,66 +337,7 @@ export default function SettingsPage() {
         if (form.nineRouterApiKey.trim()) payload.nineRouterApiKey = form.nineRouterApiKey.trim();
       }
 
-      if (section === "sync") {
-        const activePoolLimit = Number(form.activePoolLimit);
-        if (
-          Number.isNaN(activePoolLimit) ||
-          !Number.isInteger(activePoolLimit) ||
-          activePoolLimit < 1 ||
-          activePoolLimit > 200
-        ) {
-          throw new Error("Active pool limit must be an integer between 1 and 200");
-        }
-        const syncMinutes = Number(form.nineRouterSyncMinutes);
-        if (
-          Number.isNaN(syncMinutes) ||
-          !Number.isInteger(syncMinutes) ||
-          syncMinutes < 1 ||
-          syncMinutes > 1440
-        ) {
-          throw new Error("Sync interval must be an integer between 1 and 1440 minutes");
-        }
-        const checkConcurrency = Number(form.checkConcurrency);
-        if (
-          Number.isNaN(checkConcurrency) ||
-          !Number.isInteger(checkConcurrency) ||
-          checkConcurrency < 1 ||
-          checkConcurrency > 50
-        ) {
-          throw new Error("Check concurrency must be an integer between 1 and 50");
-        }
-        const checkTimeoutMs = Number(form.checkTimeoutMs);
-        if (Number.isNaN(checkTimeoutMs) || checkTimeoutMs < 2000 || checkTimeoutMs > 30000) {
-          throw new Error("Check timeout must be between 2000ms and 30000ms");
-        }
-        const proxyTtlMinutes = Number(form.proxyTtlMinutes);
-        if (
-          Number.isNaN(proxyTtlMinutes) ||
-          !Number.isInteger(proxyTtlMinutes) ||
-          proxyTtlMinutes < 1 ||
-          proxyTtlMinutes > 1440
-        ) {
-          throw new Error("Legacy input recheck TTL must be an integer between 1 and 1440 minutes");
-        }
-
-        payload.activePoolLimit = activePoolLimit;
-        payload.nineRouterAutoSync = form.nineRouterAutoSync;
-        payload.nineRouterSyncMinutes = syncMinutes;
-        payload.checkConcurrency = checkConcurrency;
-        payload.checkTimeoutMs = checkTimeoutMs;
-        payload.proxyTtlMinutes = proxyTtlMinutes;
-      }
-
       if (section === "antigravity") {
-        const activeLimit = Number(form.antigravityActiveLimit);
-        if (
-          Number.isNaN(activeLimit) ||
-          !Number.isInteger(activeLimit) ||
-          activeLimit < 1 ||
-          activeLimit > 50
-        ) {
-          throw new Error("Active accounts limit must be an integer between 1 and 50");
-        }
         const rotateMinutes = Number(form.antigravityRotateMinutes);
         if (
           Number.isNaN(rotateMinutes) ||
@@ -446,15 +347,10 @@ export default function SettingsPage() {
         ) {
           throw new Error("Rotation interval must be an integer between 1 and 60 minutes");
         }
-        const sessionThreshold = Number(form.antigravitySessionThreshold);
-        if (Number.isNaN(sessionThreshold) || sessionThreshold < 5 || sessionThreshold > 50) {
-          throw new Error("Session quota threshold must be between 5% and 50%");
-        }
         payload.antigravityRotatorEnabled = form.antigravityRotatorEnabled;
-        payload.antigravityActiveLimit = activeLimit;
         payload.antigravityRotateMinutes = rotateMinutes;
-        payload.antigravitySessionThreshold = sessionThreshold;
       }
+
       const data = await updateSettings(password, payload);
       setMeta(data.meta);
       setFlags({
@@ -462,6 +358,11 @@ export default function SettingsPage() {
         nineRouterPasswordSet: data.settings.nineRouterPasswordSet,
         nineRouterApiKeySet: data.settings.nineRouterApiKeySet,
       });
+
+      if (section === "access" && payload.controlPassword) {
+        setPassword(payload.controlPassword);
+      }
+
       // Surgical section merge to avoid clobbering dirty edits in other tabs
       setForm((current) => {
         if (!current) return current;
@@ -470,20 +371,9 @@ export default function SettingsPage() {
           next.nineRouterUrl = data.settings.nineRouterUrl;
           next.nineRouterPassword = "";
           next.nineRouterApiKey = "";
-        } else if (section === "sync") {
-          next.activePoolLimit = String(data.settings.activePoolLimit);
-          next.nineRouterAutoSync = data.settings.nineRouterAutoSync !== false;
-          next.nineRouterSyncMinutes = String(data.settings.nineRouterSyncMinutes);
-          next.checkConcurrency = String(data.settings.checkConcurrency);
-          next.checkTimeoutMs = String(data.settings.checkTimeoutMs);
-          next.proxyTtlMinutes = String(data.settings.proxyTtlMinutes);
         } else if (section === "antigravity") {
           next.antigravityRotatorEnabled = data.settings.antigravityRotatorEnabled !== false;
-          next.antigravityActiveLimit = String(data.settings.antigravityActiveLimit ?? 3);
           next.antigravityRotateMinutes = String(data.settings.antigravityRotateMinutes ?? 10);
-          next.antigravitySessionThreshold = String(
-            data.settings.antigravitySessionThreshold ?? 20,
-          );
         } else if (section === "access") {
           next.currentPassword = "";
           next.newPassword = "";
@@ -499,20 +389,9 @@ export default function SettingsPage() {
           next.nineRouterUrl = data.settings.nineRouterUrl;
           next.nineRouterPassword = "";
           next.nineRouterApiKey = "";
-        } else if (section === "sync") {
-          next.activePoolLimit = String(data.settings.activePoolLimit);
-          next.nineRouterAutoSync = data.settings.nineRouterAutoSync !== false;
-          next.nineRouterSyncMinutes = String(data.settings.nineRouterSyncMinutes);
-          next.checkConcurrency = String(data.settings.checkConcurrency);
-          next.checkTimeoutMs = String(data.settings.checkTimeoutMs);
-          next.proxyTtlMinutes = String(data.settings.proxyTtlMinutes);
         } else if (section === "antigravity") {
           next.antigravityRotatorEnabled = data.settings.antigravityRotatorEnabled !== false;
-          next.antigravityActiveLimit = String(data.settings.antigravityActiveLimit ?? 3);
           next.antigravityRotateMinutes = String(data.settings.antigravityRotateMinutes ?? 10);
-          next.antigravitySessionThreshold = String(
-            data.settings.antigravitySessionThreshold ?? 20,
-          );
         } else if (section === "access") {
           next.currentPassword = "";
           next.newPassword = "";
@@ -521,165 +400,47 @@ export default function SettingsPage() {
         return next;
       });
 
-      if (payload.controlPassword) {
-        setPassword(payload.controlPassword);
-        toast.success("Control password updated and session synchronized");
-      } else {
-        toast.success("Settings saved");
-      }
+      toast.success(
+        section === "access"
+          ? "Control password updated"
+          : section === "ninerouter"
+            ? "9Router connection saved"
+            : "Rotator settings saved",
+      );
     } catch (error) {
-      toast.error((error as Error).message);
+      toast.error((error as Error).message || "Save failed");
     } finally {
       setSavingSection(null);
     }
   }
 
-  async function handleTestConnection() {
-    if ((!password && !authenticated) || !form || isActionPending) return;
-    setTesting(true);
-    setTestResult(null);
-    try {
-      const trimmedUrl = form.nineRouterUrl.trim();
-      if (!trimmedUrl) throw new Error("Enter 9Router URL to test connection");
-      const result = await testNineRouterConnection(password, {
-        nineRouterUrl: trimmedUrl,
-        nineRouterPassword: form.nineRouterPassword.trim() || undefined,
-        nineRouterApiKey: form.nineRouterApiKey.trim() || undefined,
-      });
-      setTestResult(result);
-      if (result.ok) toast.success(`Connected (${result.poolCount} pools)`);
-      else toast.error(result.error || "Connection failed");
-    } catch (error) {
-      toast.error((error as Error).message);
-    } finally {
-      setTesting(false);
-    }
-  }
-
   if (loading && !form) {
     return (
-      <div className="space-y-6 max-w-5xl">
-        <div className="space-y-2">
-          <Skeleton className="h-8 w-44 rounded-md" />
-          <Skeleton className="h-4 w-72 rounded-md" />
-        </div>
-        <Skeleton className="h-12 w-full rounded-xl" />
-        <Card>
-          <CardHeader className="space-y-2">
-            <Skeleton className="h-6 w-40 rounded-md" />
-            <Skeleton className="h-4 w-64 rounded-md" />
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Skeleton className="h-9 w-full rounded-md" />
-            <Skeleton className="h-9 w-full rounded-md" />
-          </CardContent>
-          <CardFooter className="border-t py-3">
-            <Skeleton className="h-9 w-28 rounded-md" />
-          </CardFooter>
-        </Card>
-      </div>
-    );
-  }
-
-  if (loadError && !form) {
-    return (
-      <div className="space-y-6 max-w-3xl">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">Settings</h1>
-          <p className="text-sm text-muted-foreground mt-1">Runtime configuration</p>
-        </div>
-        <Alert variant="destructive">
-          <AlertCircle className="size-4" />
-          <AlertTitle>Failed to load configuration</AlertTitle>
-          <AlertDescription className="space-y-3 pt-2">
-            <p className="text-xs">{loadError}</p>
-            <Button type="button" variant="outline" size="sm" onClick={() => void load()}>
-              <RefreshCw className="size-3.5 mr-1.5" />
-              Retry loading
-            </Button>
-          </AlertDescription>
-        </Alert>
-      </div>
-    );
-  }
-
-  if (!form) {
-    return (
-      <div className="max-w-2xl">
-        <Card>
-          <CardHeader>
-            <div className="flex items-center gap-2">
-              <Lock className="size-5 text-muted-foreground" />
-              <CardTitle>Settings Restricted</CardTitle>
-            </div>
-            <CardDescription>
-              Sign in with your control password to access configuration.
-            </CardDescription>
-          </CardHeader>
-        </Card>
+      <div className="space-y-6 max-w-5xl mx-auto p-4 sm:p-6">
+        <Skeleton className="h-10 w-48 bg-[#181820]" />
+        <Skeleton className="h-64 w-full bg-[#181820]" />
       </div>
     );
   }
 
   return (
-    <TooltipProvider delayDuration={150}>
-      <div className="space-y-6 w-full max-w-none 3xl:max-w-none 4xl:max-w-[3400px]">
+    <TooltipProvider delayDuration={200}>
+      <div className="space-y-6 max-w-5xl mx-auto pb-16 text-foreground">
         {/* Page Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">Settings</h1>
-            <p className="text-xs text-muted-foreground mt-1">
-              Runtime controls for 9Router pools, daemon rotations, health verification, and network
-              mesh.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Badge variant="outline" className="font-mono text-xs py-1 px-2.5 cursor-help">
-                  Source: {meta?.source === "settings" ? "database" : ".env"}
-                </Badge>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" className="text-xs">
-                Active config loaded from{" "}
-                {meta?.source === "settings" ? "data/settings.json" : ".env bootstrap"}
-              </TooltipContent>
-            </Tooltip>
-
-            {flags.controlPasswordSet ? (
-              <Badge
-                variant="secondary"
-                className="text-xs py-1 px-2.5 text-emerald-400 bg-emerald-500/10 border border-emerald-500/20"
-              >
-                <ShieldCheck className="size-3.5 mr-1 text-emerald-400" />
-                Protected
-              </Badge>
-            ) : (
-              <Badge variant="destructive" className="text-xs py-1 px-2.5">
-                <AlertCircle className="size-3.5 mr-1" />
-                No Password
-              </Badge>
-            )}
-          </div>
+        <div className="border-b border-[#23232C] pb-4">
+          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-zinc-100">
+            Settings &amp; Configuration
+          </h1>
+          <p className="text-xs sm:text-sm text-zinc-400 mt-1">
+            Configure 9Router endpoints, autonomous Antigravity account rotation, Git backups, and
+            access security.
+          </p>
         </div>
 
         {loadError && (
           <Alert variant="destructive">
             <AlertCircle className="size-4" />
-            <AlertTitle>Refresh failed</AlertTitle>
-            <AlertDescription className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
-              <span className="text-xs">{loadError}</span>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="shrink-0 w-full sm:w-auto"
-                onClick={() => void load()}
-              >
-                <RefreshCw className="size-3.5 mr-1.5" />
-                Retry
-              </Button>
-            </AlertDescription>
+            <AlertDescription className="text-xs">{loadError}</AlertDescription>
           </Alert>
         )}
 
@@ -708,27 +469,6 @@ export default function SettingsPage() {
             </TabsTrigger>
 
             <TabsTrigger
-              value="sync"
-              className="relative flex-1 min-w-[130px] flex items-center justify-center gap-2 py-2.5 px-3 text-xs sm:text-sm font-semibold rounded-lg border border-transparent transition-all text-[#9E9EA8] hover:text-white z-10 data-[state=active]:bg-[#FF5B22] data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:shadow-[#FF5B22]/25"
-            >
-              {selectedTab === "sync" && (
-                <motion.span
-                  layoutId={isReduced ? undefined : "settings-active-pill"}
-                  className="absolute inset-0 rounded-lg bg-[#FF5B22] shadow-md shadow-[#FF5B22]/25 -z-10"
-                  transition={{ type: "spring", stiffness: 450, damping: 35 }}
-                />
-              )}
-              <RefreshCw className="size-4 shrink-0" />
-              <span>Sync & Health</span>
-              {isSectionDirty("sync") && (
-                <span
-                  className="size-1.5 rounded-full bg-amber-400 ring-2 ring-background animate-pulse"
-                  title="Unsaved changes in Sync & Health"
-                />
-              )}
-            </TabsTrigger>
-
-            <TabsTrigger
               value="antigravity"
               className="relative flex-1 min-w-[130px] flex items-center justify-center gap-2 py-2.5 px-3 text-xs sm:text-sm font-semibold rounded-lg border border-transparent transition-all text-[#9E9EA8] hover:text-white z-10 data-[state=active]:bg-[#FF5B22] data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:shadow-[#FF5B22]/25"
             >
@@ -750,18 +490,33 @@ export default function SettingsPage() {
             </TabsTrigger>
 
             <TabsTrigger
-              value="security"
+              value="backup"
               className="relative flex-1 min-w-[130px] flex items-center justify-center gap-2 py-2.5 px-3 text-xs sm:text-sm font-semibold rounded-lg border border-transparent transition-all text-[#9E9EA8] hover:text-white z-10 data-[state=active]:bg-[#FF5B22] data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:shadow-[#FF5B22]/25"
             >
-              {selectedTab === "security" && (
+              {selectedTab === "backup" && (
                 <motion.span
                   layoutId={isReduced ? undefined : "settings-active-pill"}
                   className="absolute inset-0 rounded-lg bg-[#FF5B22] shadow-md shadow-[#FF5B22]/25 -z-10"
                   transition={{ type: "spring", stiffness: 450, damping: 35 }}
                 />
               )}
-              <ShieldCheck className="size-4 shrink-0" />
-              <span>Security & Export</span>
+              <Database className="size-4 shrink-0" />
+              <span>Backup &amp; Git</span>
+            </TabsTrigger>
+
+            <TabsTrigger
+              value="access"
+              className="relative flex-1 min-w-[130px] flex items-center justify-center gap-2 py-2.5 px-3 text-xs sm:text-sm font-semibold rounded-lg border border-transparent transition-all text-[#9E9EA8] hover:text-white z-10 data-[state=active]:bg-[#FF5B22] data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:shadow-[#FF5B22]/25"
+            >
+              {selectedTab === "access" && (
+                <motion.span
+                  layoutId={isReduced ? undefined : "settings-active-pill"}
+                  className="absolute inset-0 rounded-lg bg-[#FF5B22] shadow-md shadow-[#FF5B22]/25 -z-10"
+                  transition={{ type: "spring", stiffness: 450, damping: 35 }}
+                />
+              )}
+              <KeyRound className="size-4 shrink-0" />
+              <span>Access &amp; Security</span>
               {isSectionDirty("access") && (
                 <span
                   className="size-1.5 rounded-full bg-amber-400 ring-2 ring-background animate-pulse"
@@ -784,144 +539,130 @@ export default function SettingsPage() {
                     <Server className="size-4" />
                   </div>
                   <div>
-                    <CardTitle className="text-base">9Router Connection</CardTitle>
+                    <CardTitle className="text-base">9Router Endpoint</CardTitle>
                     <CardDescription>
-                      Endpoint and credentials for syncing proxy pools.
+                      Configure the upstream 9Router service endpoint and authentication
+                      credentials.
                     </CardDescription>
                   </div>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 3xl:grid-cols-12 gap-6 items-start">
-                  <div className="3xl:col-span-8 space-y-4">
-                    <div className="space-y-1.5">
-                      <div className="flex items-center gap-1.5">
-                        <Label htmlFor="ninerouter-url" className="text-xs font-semibold">
-                          Endpoint URL <span className="text-destructive">*</span>
-                        </Label>
-                        <FieldInfo content="Host and port of your 9Router service. Pi LAN (192.168.1.54:20128), Tailscale (100.74.116.125:20128), and domain (https://9router.minhmice.com) are network aliases for the same Pi, not independent masters." />
-                      </div>
-                      <Input
-                        id="ninerouter-url"
-                        type="text"
-                        inputMode="url"
-                        placeholder="http://192.168.1.54:20128"
-                        value={form.nineRouterUrl}
-                        onChange={(event) => patchForm("nineRouterUrl", event.target.value)}
-                        className="font-mono text-xs"
-                      />
-                      <p className="text-[11px] text-muted-foreground">
-                        Single Raspberry Pi topology: LAN (
-                        <code className="font-mono text-zinc-300">192.168.1.54:20128</code>),
-                        Tailscale (
-                        <code className="font-mono text-zinc-300">100.74.116.125:20128</code>), and
-                        domain (
-                        <code className="font-mono text-zinc-300">
-                          https://9router.minhmice.com
-                        </code>
-                        ) are transport routes to the same instance. Do not configure them as
-                        separate active-active masters.
-                      </p>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="space-y-1.5">
-                        <div className="flex items-center gap-1.5">
-                          <Label htmlFor="ninerouter-password" className="text-xs font-semibold">
-                            Dashboard Password
-                          </Label>
-                          <FieldInfo content="Used to authenticate against 9Router sync endpoints. Leave blank to keep existing password." />
-                        </div>
-                        <Input
-                          id="ninerouter-password"
-                          type="password"
-                          placeholder={
-                            flags.nineRouterPasswordSet ? "•••••••• (saved)" : "Enter password"
-                          }
-                          value={form.nineRouterPassword}
-                          onChange={(event) => patchForm("nineRouterPassword", event.target.value)}
-                          className="text-xs"
-                        />
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <div className="flex items-center gap-1.5">
-                          <Label htmlFor="ninerouter-api-key" className="text-xs font-semibold">
-                            API Key (Optional)
-                          </Label>
-                          <FieldInfo content="Optional header token if your 9Router deployment enforces bearer/token authentication." />
-                        </div>
-                        <Input
-                          id="ninerouter-api-key"
-                          type="password"
-                          placeholder={flags.nineRouterApiKeySet ? "•••••••• (saved)" : "Optional"}
-                          value={form.nineRouterApiKey}
-                          onChange={(event) => patchForm("nineRouterApiKey", event.target.value)}
-                          className="text-xs"
-                        />
-                      </div>
-                    </div>
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <Label htmlFor="ninerouter-url" className="text-xs font-semibold">
+                      9Router URL
+                    </Label>
+                    <FieldInfo content="HTTP or HTTPS base URL of the 9Router instance (e.g. http://127.0.0.1:20128 or https://9router.example.com)." />
                   </div>
+                  <Input
+                    id="ninerouter-url"
+                    type="url"
+                    placeholder="http://127.0.0.1:20128"
+                    value={form?.nineRouterUrl || ""}
+                    onChange={(e) => patchForm("nineRouterUrl", e.target.value)}
+                    className="text-xs font-mono"
+                  />
+                </div>
 
-                  <div className="3xl:col-span-4 rounded-xl border border-border/70 bg-muted/20 p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                        <Activity className="size-3.5 text-primary" /> Connection Diagnostic
-                      </span>
-                      {testResult?.ok && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <Label htmlFor="ninerouter-password" className="text-xs font-semibold">
+                        9Router Dashboard Password
+                      </Label>
+                      {flags.nineRouterPasswordSet && (
                         <Badge
                           variant="outline"
-                          className="border-emerald-500/40 bg-emerald-500/10 text-emerald-300 text-[10px] py-0"
+                          className="text-[10px] py-0 px-1 border-emerald-500/30 text-emerald-400"
                         >
-                          Live
+                          Configured
                         </Badge>
                       )}
+                      <FieldInfo content="Password used for /api/auth/login on 9Router." />
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      Verifies endpoint latency, 9Router protocol handshake, and active pools.
-                    </p>
+                    <Input
+                      id="ninerouter-password"
+                      type="password"
+                      autoComplete="new-password"
+                      placeholder={
+                        flags.nineRouterPasswordSet ? "•••••••• (unchanged)" : "Enter password"
+                      }
+                      value={form?.nineRouterPassword || ""}
+                      onChange={(e) => patchForm("nineRouterPassword", e.target.value)}
+                      className="text-xs font-mono"
+                    />
+                  </div>
 
-                    {testResult ? (
-                      <Alert
-                        variant={testResult.ok ? "default" : "destructive"}
-                        className={cn(
-                          "py-2",
-                          testResult.ok &&
-                            "border-emerald-500/30 bg-emerald-500/10 text-emerald-300 [&>svg]:text-emerald-400",
-                        )}
-                      >
-                        {testResult.ok ? (
-                          <CheckCircle2 className="size-4" />
-                        ) : (
-                          <AlertCircle className="size-4" />
-                        )}
-                        <AlertTitle className="text-xs font-semibold">
-                          {testResult.ok ? "Connected" : "Connection Failed"}
-                        </AlertTitle>
-                        <AlertDescription className="text-xs mt-0.5">
-                          {testResult.ok
-                            ? `Available pools: ${testResult.poolCount}`
-                            : testResult.error || "Unable to reach 9Router endpoint"}
-                        </AlertDescription>
-                      </Alert>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <Label htmlFor="ninerouter-apikey" className="text-xs font-semibold">
+                        9Router API Key (Optional)
+                      </Label>
+                      {flags.nineRouterApiKeySet && (
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] py-0 px-1 border-emerald-500/30 text-emerald-400"
+                        >
+                          Configured
+                        </Badge>
+                      )}
+                      <FieldInfo content="Optional bearer token or API key if configured on 9Router." />
+                    </div>
+                    <Input
+                      id="ninerouter-apikey"
+                      type="password"
+                      autoComplete="off"
+                      placeholder={
+                        flags.nineRouterApiKeySet ? "•••••••• (unchanged)" : "Optional bearer key"
+                      }
+                      value={form?.nineRouterApiKey || ""}
+                      onChange={(e) => patchForm("nineRouterApiKey", e.target.value)}
+                      className="text-xs font-mono"
+                    />
+                  </div>
+                </div>
+
+                {testResult && (
+                  <div
+                    className={cn(
+                      "text-xs p-3 rounded-lg border",
+                      testResult.ok
+                        ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                        : "bg-rose-500/10 border-rose-500/20 text-rose-400",
+                    )}
+                  >
+                    {testResult.ok ? (
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="size-4 shrink-0" />
+                        <span>
+                          Connected to 9Router successfully. Found{" "}
+                          {"accountCount" in testResult &&
+                          typeof testResult.accountCount === "number"
+                            ? testResult.accountCount
+                            : (testResult.poolCount ?? 0)}{" "}
+                          accounts.
+                        </span>
+                      </div>
                     ) : (
-                      <div className="text-xs text-muted-foreground font-mono p-2.5 rounded-lg border border-border/50 bg-background/50">
-                        Ready for test check. Click &quot;Test 9Router Connection&quot; below.
+                      <div className="flex items-center gap-2">
+                        <AlertCircle className="size-4 shrink-0" />
+                        <span>{testResult.error || "Failed to connect to 9Router"}</span>
                       </div>
                     )}
                   </div>
-                </div>
+                )}
               </CardContent>
               <CardFooter className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 border-t bg-muted/10 px-6 py-4">
                 <span className="text-xs text-muted-foreground order-2 sm:order-1">
-                  Updates endpoint and credentials immediately.
+                  Changes take effect immediately on next connection attempt.
                 </span>
                 <div className="flex items-center gap-2 order-1 sm:order-2">
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    disabled={(!password && !authenticated) || isActionPending}
+                    disabled={isActionPending}
                     onClick={handleTestConnection}
                   >
                     {testing ? (
@@ -953,172 +694,112 @@ export default function SettingsPage() {
             </Card>
           </TabsContent>
 
-          {/* 2. SYNC & HEALTH TAB */}
-          <TabsContent value="sync" forceMount className="data-[state=inactive]:hidden space-y-6">
+          {/* 2. ANTIGRAVITY TAB */}
+          <TabsContent
+            value="antigravity"
+            forceMount
+            className="data-[state=inactive]:hidden space-y-6"
+          >
             <Card className="shadow-sm">
               <CardHeader>
-                <div className="flex items-center gap-2.5">
-                  <div className="p-2 rounded-lg bg-primary/10 text-primary border border-primary/20">
-                    <RefreshCw className="size-4" />
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-lg bg-primary/10 text-primary border border-primary/20">
+                      <Cpu className="size-4" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-base">Antigravity Account Rotator</CardTitle>
+                      <CardDescription>
+                        Autonomous single-account rotation based strictly on Gemini session quota.
+                      </CardDescription>
+                    </div>
                   </div>
-                  <div>
-                    <CardTitle className="text-base">Sync and Health Checks</CardTitle>
-                    <CardDescription>
-                      Background cadence, concurrent checks, and verification timeouts.
-                    </CardDescription>
-                  </div>
+                  {form?.antigravityRotatorEnabled ? (
+                    <Badge
+                      variant="secondary"
+                      className="text-xs text-emerald-400 bg-emerald-500/10 border-emerald-500/20"
+                    >
+                      Daemon Running
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-xs text-muted-foreground">
+                      Daemon Paused
+                    </Badge>
+                  )}
                 </div>
               </CardHeader>
               <CardContent className="space-y-6">
-                <div className="grid grid-cols-1 3xl:grid-cols-2 gap-6 items-start">
-                  {/* Left Column: Auto Sync Toggle + Pool Schedules */}
-                  <div className="space-y-6">
-                    {/* Auto Sync Toggle */}
+                <div className="grid grid-cols-1 3xl:grid-cols-12 gap-6 items-start">
+                  <div className="3xl:col-span-8 space-y-6">
+                    {/* Rotator Toggle */}
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-lg border bg-muted/20 p-4 transition-colors">
                       <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <Label
-                            htmlFor="auto-sync"
-                            className="text-sm font-semibold cursor-pointer"
-                          >
-                            Automatic Background Sync
-                          </Label>
-                          {form.nineRouterAutoSync ? (
-                            <Badge
-                              variant="secondary"
-                              className="text-[10px] py-0 px-1.5 text-emerald-400 bg-emerald-500/10 border-emerald-500/20"
-                            >
-                              Active
-                            </Badge>
-                          ) : (
-                            <Badge
-                              variant="outline"
-                              className="text-[10px] py-0 px-1.5 text-muted-foreground"
-                            >
-                              Paused
-                            </Badge>
-                          )}
-                        </div>
+                        <Label
+                          htmlFor="ag-rotator-toggle"
+                          className="text-sm font-semibold cursor-pointer"
+                        >
+                          Automatic Account Rotation
+                        </Label>
                         <p className="text-xs text-muted-foreground">
-                          Periodically synchronizes and refreshes stale pools from 9Router.
+                          Rotate the active account when Gemini session quota reaches sampled
+                          threshold (10–20%) or an account error occurs.
                         </p>
                       </div>
                       <Switch
-                        id="auto-sync"
-                        checked={form.nineRouterAutoSync}
-                        onCheckedChange={(checked) => patchForm("nineRouterAutoSync", checked)}
+                        id="ag-rotator-toggle"
+                        checked={form?.antigravityRotatorEnabled ?? true}
+                        onCheckedChange={(checked) =>
+                          patchForm("antigravityRotatorEnabled", checked)
+                        }
                       />
                     </div>
 
-                    {/* Pool Schedules */}
-                    <div className="space-y-3">
-                      <div className="flex items-center gap-2 text-xs font-semibold text-foreground uppercase tracking-wider">
-                        <Sliders className="size-3.5 text-primary" />
-                        Pool Schedules
+                    <div className="space-y-1.5 max-w-xs">
+                      <div className="flex items-center gap-1.5">
+                        <Label htmlFor="ag-rotate-minutes" className="text-xs font-semibold">
+                          Check Interval (Minutes)
+                        </Label>
+                        <FieldInfo content="Frequency in minutes that the background daemon evaluates Gemini session quota (default: 10m, range: 1 - 60m)." />
                       </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-1.5">
-                          <div className="flex items-center gap-1.5">
-                            <Label htmlFor="active-limit" className="text-xs font-semibold">
-                              Active Pool Limit
-                            </Label>
-                            <FieldInfo content="Maximum number of active proxy pools kept in 9Router concurrently (1 - 200)." />
-                          </div>
-                          <Input
-                            id="active-limit"
-                            type="number"
-                            min={1}
-                            max={200}
-                            value={form.activePoolLimit}
-                            onChange={(event) => patchForm("activePoolLimit", event.target.value)}
-                            className="text-xs"
-                          />
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <div className="flex items-center gap-1.5">
-                            <Label htmlFor="sync-minutes" className="text-xs font-semibold">
-                              Sync Interval (Minutes)
-                            </Label>
-                            <FieldInfo content="Minutes between background sync executions (1 - 1440m). Disabled when auto-sync is off." />
-                          </div>
-                          <Input
-                            id="sync-minutes"
-                            type="number"
-                            min={1}
-                            max={1440}
-                            disabled={!form.nineRouterAutoSync}
-                            value={form.nineRouterSyncMinutes}
-                            onChange={(event) =>
-                              patchForm("nineRouterSyncMinutes", event.target.value)
-                            }
-                            className="text-xs"
-                          />
-                        </div>
-                      </div>
+                      <Input
+                        id="ag-rotate-minutes"
+                        type="number"
+                        min={1}
+                        max={60}
+                        disabled={!form?.antigravityRotatorEnabled}
+                        value={form?.antigravityRotateMinutes || "10"}
+                        onChange={(event) =>
+                          patchForm("antigravityRotateMinutes", event.target.value)
+                        }
+                        className="text-xs font-mono"
+                      />
                     </div>
                   </div>
 
-                  {/* Right Column: Health Verification */}
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2 text-xs font-semibold text-foreground uppercase tracking-wider">
-                      <ShieldCheck className="size-3.5 text-primary" />
-                      Health Verification
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 3xl:grid-cols-2 gap-4">
-                      <div className="space-y-1.5">
-                        <div className="flex items-center gap-1.5">
-                          <Label htmlFor="check-concurrency" className="text-xs font-semibold">
-                            Check Concurrency
-                          </Label>
-                          <FieldInfo content="Number of parallel workers testing proxy latency simultaneously (1 - 50)." />
-                        </div>
-                        <Input
-                          id="check-concurrency"
-                          type="number"
-                          min={1}
-                          max={50}
-                          value={form.checkConcurrency}
-                          onChange={(event) => patchForm("checkConcurrency", event.target.value)}
-                          className="text-xs"
-                        />
+                  <div className="3xl:col-span-4 rounded-xl border border-border/70 bg-muted/20 p-4 space-y-3">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                      <Cpu className="size-3.5 text-primary" /> Single-Account Policy
+                    </span>
+                    <p className="text-xs text-muted-foreground">
+                      Keeps exactly 1 Antigravity account active globally across configured 9Router
+                      endpoints. Evaluates Gemini session quota only.
+                    </p>
+                    <div className="text-[11px] font-mono text-slate-300 space-y-1.5 p-3 rounded-lg border border-border/50 bg-background/50">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Active tenure:</span>
+                        <span className="text-emerald-400 font-semibold">1 active account</span>
                       </div>
-
-                      <div className="space-y-1.5">
-                        <div className="flex items-center gap-1.5">
-                          <Label htmlFor="check-timeout" className="text-xs font-semibold">
-                            Timeout (ms)
-                          </Label>
-                          <FieldInfo content="Max milliseconds to wait for a proxy handshake before marking failed (2000 - 30000ms)." />
-                        </div>
-                        <Input
-                          id="check-timeout"
-                          type="number"
-                          min={2000}
-                          max={30000}
-                          step={500}
-                          value={form.checkTimeoutMs}
-                          onChange={(event) => patchForm("checkTimeoutMs", event.target.value)}
-                          className="text-xs"
-                        />
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Sampled threshold:</span>
+                        <span className="text-amber-400 font-semibold">10% – 20% (uniform)</span>
                       </div>
-
-                      <div className="space-y-1.5 sm:col-span-3 3xl:col-span-2">
-                        <div className="flex items-center gap-1.5">
-                          <Label htmlFor="proxy-ttl" className="text-xs font-semibold">
-                            Legacy Input Recheck TTL (Minutes)
-                          </Label>
-                          <FieldInfo content="Re-check interval for legacy input/ lists before re-evaluating liveliness." />
-                        </div>
-                        <Input
-                          id="proxy-ttl"
-                          type="number"
-                          min={1}
-                          max={1440}
-                          value={form.proxyTtlMinutes}
-                          onChange={(event) => patchForm("proxyTtlMinutes", event.target.value)}
-                          className="text-xs"
-                        />
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Handoff guarantee:</span>
+                        <span className="text-foreground">Activate before deactivate</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Promotion sort:</span>
+                        <span className="text-foreground">Earliest reset duration</span>
                       </div>
                     </div>
                   </div>
@@ -1126,44 +807,47 @@ export default function SettingsPage() {
               </CardContent>
               <CardFooter className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 border-t bg-muted/10 px-6 py-4">
                 <span className="text-xs text-muted-foreground order-2 sm:order-1">
-                  Changes apply to the next scheduled verification run.
+                  Rotation daemon updates instantly upon saving.
                 </span>
                 <Button
                   type="button"
                   size="sm"
                   className="order-1 sm:order-2"
                   disabled={(!password && !authenticated) || isActionPending}
-                  onClick={() => handleSave("sync")}
+                  onClick={() => handleSave("antigravity")}
                 >
-                  {savingSection === "sync" ? (
+                  {savingSection === "antigravity" ? (
                     <>
                       <Loader2 className="size-3.5 mr-1.5 animate-spin" />
                       Saving…
                     </>
                   ) : (
-                    "Save Sync & Health Settings"
+                    "Save Rotator Settings"
                   )}
                 </Button>
               </CardFooter>
             </Card>
+          </TabsContent>
 
-            {/* 9Router & Database Git Backup Card */}
+          {/* 3. BACKUP TAB */}
+          <TabsContent value="backup" forceMount className="data-[state=inactive]:hidden space-y-6">
             <Card className="shadow-sm">
               <CardHeader>
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2.5">
                     <div className="p-2 rounded-lg bg-primary/10 text-primary border border-primary/20">
                       <Database className="size-4" />
                     </div>
                     <div>
-                      <CardTitle className="text-base">9Router & Database Git Backup</CardTitle>
+                      <CardTitle className="text-base">Git Snapshot &amp; Backup</CardTitle>
                       <CardDescription>
-                        Continuous snapshot of settings.json and SQLite databases into this private
-                        repository.
+                        Automated and manual offline backup of configuration and rotation history to
+                        Git.
                       </CardDescription>
                     </div>
                   </div>
                   <Button
+                    type="button"
                     variant="outline"
                     size="sm"
                     disabled={(!password && !authenticated) || isActionPending}
@@ -1248,7 +932,7 @@ export default function SettingsPage() {
               </CardContent>
               <CardFooter className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 border-t bg-muted/10 px-6 py-4">
                 <span className="text-xs text-muted-foreground order-2 sm:order-1">
-                  Auto-sync triggers on setting changes and runs in background maintenance.
+                  Automatic backups run on maintenance intervals and setting updates.
                 </span>
                 <div className="flex items-center gap-2 order-1 sm:order-2">
                   <Button
@@ -1290,189 +974,8 @@ export default function SettingsPage() {
             </Card>
           </TabsContent>
 
-          {/* 3. ANTIGRAVITY ROTATOR TAB */}
-          <TabsContent
-            value="antigravity"
-            forceMount
-            className="data-[state=inactive]:hidden space-y-6"
-          >
-            <Card className="shadow-sm">
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-2 rounded-lg bg-primary/10 text-primary border border-primary/20">
-                      <Cpu className="size-4" />
-                    </div>
-                    <div>
-                      <CardTitle className="text-base">Antigravity Account Rotator</CardTitle>
-                      <CardDescription>
-                        Autonomous rotation based strictly on Gemini session quota.
-                      </CardDescription>
-                    </div>
-                  </div>
-                  {form.antigravityRotatorEnabled ? (
-                    <Badge
-                      variant="secondary"
-                      className="text-xs text-emerald-400 bg-emerald-500/10 border-emerald-500/20"
-                    >
-                      Daemon Running
-                    </Badge>
-                  ) : (
-                    <Badge variant="outline" className="text-xs text-muted-foreground">
-                      Daemon Paused
-                    </Badge>
-                  )}
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="grid grid-cols-1 3xl:grid-cols-12 gap-6 items-start">
-                  <div className="3xl:col-span-8 space-y-6">
-                    {/* Rotator Toggle */}
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-lg border bg-muted/20 p-4 transition-colors">
-                      <div className="space-y-1">
-                        <Label
-                          htmlFor="ag-rotator-toggle"
-                          className="text-sm font-semibold cursor-pointer"
-                        >
-                          Automatic Account Rotation
-                        </Label>
-                        <p className="text-xs text-muted-foreground">
-                          Deactivate accounts at/below quota threshold; promote standbys by earliest
-                          reset time.
-                        </p>
-                      </div>
-                      <Switch
-                        id="ag-rotator-toggle"
-                        checked={form.antigravityRotatorEnabled}
-                        onCheckedChange={(checked) =>
-                          patchForm("antigravityRotatorEnabled", checked)
-                        }
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                      <div className="space-y-1.5">
-                        <div className="flex items-center gap-1.5">
-                          <Label htmlFor="ag-active-limit" className="text-xs font-semibold">
-                            Active Accounts Limit
-                          </Label>
-                          <FieldInfo content="Maximum number of Antigravity accounts active simultaneously (default: 3, range: 1 - 50)." />
-                        </div>
-                        <Input
-                          id="ag-active-limit"
-                          type="number"
-                          min={1}
-                          max={50}
-                          value={form.antigravityActiveLimit}
-                          onChange={(event) =>
-                            patchForm("antigravityActiveLimit", event.target.value)
-                          }
-                          className="text-xs"
-                        />
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <div className="flex items-center gap-1.5">
-                          <Label htmlFor="ag-rotate-minutes" className="text-xs font-semibold">
-                            Check Interval (Minutes)
-                          </Label>
-                          <FieldInfo content="Frequency in minutes that the background daemon evaluates Gemini session quota (default: 10m)." />
-                        </div>
-                        <Input
-                          id="ag-rotate-minutes"
-                          type="number"
-                          min={1}
-                          max={60}
-                          disabled={!form.antigravityRotatorEnabled}
-                          value={form.antigravityRotateMinutes}
-                          onChange={(event) =>
-                            patchForm("antigravityRotateMinutes", event.target.value)
-                          }
-                          className="text-xs"
-                        />
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <div className="flex items-center gap-1.5">
-                          <Label htmlFor="ag-session-threshold" className="text-xs font-semibold">
-                            Quota Threshold (%)
-                          </Label>
-                          <FieldInfo content="Deactivate accounts when Gemini session quota ≤ this percentage. Standby accounts > threshold activate by earliest reset time (default: 20%)." />
-                        </div>
-                        <Input
-                          id="ag-session-threshold"
-                          type="number"
-                          min={5}
-                          max={50}
-                          value={form.antigravitySessionThreshold}
-                          onChange={(event) =>
-                            patchForm("antigravitySessionThreshold", event.target.value)
-                          }
-                          className="text-xs"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="3xl:col-span-4 rounded-xl border border-border/70 bg-muted/20 p-4 space-y-3">
-                    <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                      <Cpu className="size-3.5 text-primary" /> Session Quota Policy
-                    </span>
-                    <p className="text-xs text-muted-foreground">
-                      Evaluates Gemini session quota only. Claude, GPT, and weekly limits are
-                      ignored for rotation.
-                    </p>
-                    <div className="text-[11px] font-mono text-slate-300 space-y-1.5 p-3 rounded-lg border border-border/50 bg-background/50">
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Trigger threshold:</span>
-                        <span className="text-amber-400 font-semibold">
-                          &le; {form.antigravitySessionThreshold}%
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Max concurrent:</span>
-                        <span className="text-emerald-400 font-semibold">
-                          {form.antigravityActiveLimit} accounts
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Promotion sort:</span>
-                        <span className="text-foreground">Earliest reset</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-              <CardFooter className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 border-t bg-muted/10 px-6 py-4">
-                <span className="text-xs text-muted-foreground order-2 sm:order-1">
-                  Rotation daemon updates instantly upon saving.
-                </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  className="order-1 sm:order-2"
-                  disabled={(!password && !authenticated) || isActionPending}
-                  onClick={() => handleSave("antigravity")}
-                >
-                  {savingSection === "antigravity" ? (
-                    <>
-                      <Loader2 className="size-3.5 mr-1.5 animate-spin" />
-                      Saving…
-                    </>
-                  ) : (
-                    "Save Rotator Settings"
-                  )}
-                </Button>
-              </CardFooter>
-            </Card>
-          </TabsContent>
-
-          <TabsContent
-            value="security"
-            forceMount
-            className="data-[state=inactive]:hidden space-y-6 3xl:space-y-0 3xl:grid 3xl:grid-cols-2 3xl:gap-6 3xl:items-start"
-          >
-            {/* Dashboard Access */}
+          {/* 4. ACCESS TAB */}
+          <TabsContent value="access" forceMount className="data-[state=inactive]:hidden space-y-6">
             <Card className="shadow-sm">
               <CardHeader>
                 <div className="flex items-center gap-2.5">
@@ -1480,9 +983,9 @@ export default function SettingsPage() {
                     <KeyRound className="size-4" />
                   </div>
                   <div>
-                    <CardTitle className="text-base">Dashboard Access</CardTitle>
+                    <CardTitle className="text-base">Dashboard Access Control</CardTitle>
                     <CardDescription>
-                      Update the control password used to unlock this dashboard.
+                      Update the master control password used to authenticate dashboard changes.
                     </CardDescription>
                   </div>
                 </div>
@@ -1501,9 +1004,9 @@ export default function SettingsPage() {
                       type="password"
                       autoComplete="current-password"
                       placeholder="Current password"
-                      value={form.currentPassword}
-                      onChange={(event) => patchForm("currentPassword", event.target.value)}
-                      className="text-xs"
+                      value={form?.currentPassword || ""}
+                      onChange={(e) => patchForm("currentPassword", e.target.value)}
+                      className="text-xs font-mono"
                     />
                   </div>
 
@@ -1512,16 +1015,16 @@ export default function SettingsPage() {
                       <Label htmlFor="new-password" className="text-xs font-semibold">
                         New Password
                       </Label>
-                      <FieldInfo content="New master password (min 8 characters)." />
+                      <FieldInfo content="Enter the new desired control password." />
                     </div>
                     <Input
                       id="new-password"
                       type="password"
                       autoComplete="new-password"
                       placeholder="New password"
-                      value={form.newPassword}
-                      onChange={(event) => patchForm("newPassword", event.target.value)}
-                      className="text-xs"
+                      value={form?.newPassword || ""}
+                      onChange={(e) => patchForm("newPassword", e.target.value)}
+                      className="text-xs font-mono"
                     />
                   </div>
 
@@ -1530,23 +1033,23 @@ export default function SettingsPage() {
                       <Label htmlFor="confirm-password" className="text-xs font-semibold">
                         Confirm Password
                       </Label>
-                      <FieldInfo content="Re-enter the new password identically to confirm." />
+                      <FieldInfo content="Repeat the new password exactly to confirm." />
                     </div>
                     <Input
                       id="confirm-password"
                       type="password"
                       autoComplete="new-password"
-                      placeholder="Confirm password"
-                      value={form.confirmPassword}
-                      onChange={(event) => patchForm("confirmPassword", event.target.value)}
-                      className="text-xs"
+                      placeholder="Confirm new password"
+                      value={form?.confirmPassword || ""}
+                      onChange={(e) => patchForm("confirmPassword", e.target.value)}
+                      className="text-xs font-mono"
                     />
                   </div>
                 </div>
               </CardContent>
               <CardFooter className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 border-t bg-muted/10 px-6 py-4">
                 <span className="text-xs text-muted-foreground order-2 sm:order-1">
-                  Requires re-login immediately after updating.
+                  Updates apply immediately to the current session.
                 </span>
                 <Button
                   type="button"
@@ -1564,97 +1067,6 @@ export default function SettingsPage() {
                     "Update Control Password"
                   )}
                 </Button>
-              </CardFooter>
-            </Card>
-
-            {/* Export Working Proxies */}
-            <Card className="shadow-sm">
-              <CardHeader>
-                <div className="flex items-center gap-2.5">
-                  <div className="p-2 rounded-lg bg-primary/10 text-primary border border-primary/20">
-                    <Download className="size-4" />
-                  </div>
-                  <div>
-                    <CardTitle className="text-base">Export Working Proxies</CardTitle>
-                    <CardDescription>
-                      Export verified proxies that strictly passed safety audit (PASS, reliability ≥
-                      90%, 24h).
-                    </CardDescription>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center justify-between rounded-lg border bg-muted/20 p-3.5">
-                  <div className="flex items-center gap-2.5">
-                    <Checkbox
-                      id="include-creds-toggle"
-                      checked={includeCredentials}
-                      onCheckedChange={(checked) => setIncludeCredentials(checked === true)}
-                    />
-                    <Label
-                      htmlFor="include-creds-toggle"
-                      className="font-medium text-xs text-foreground cursor-pointer"
-                    >
-                      Include plaintext authentication credentials (user:pass)
-                    </Label>
-                  </div>
-                  <FieldInfo content="Omits user:pass credentials by default. Enable only if downstream client requires inline authentication." />
-                </div>
-
-                {includeCredentials && (
-                  <Alert
-                    variant="destructive"
-                    className="border-amber-500/40 bg-amber-500/10 text-amber-200 [&>svg]:text-amber-400 py-2.5"
-                  >
-                    <ShieldAlert className="size-4" />
-                    <AlertTitle className="text-xs font-semibold text-amber-400">
-                      Plaintext Password Exposure Warning
-                    </AlertTitle>
-                    <AlertDescription className="text-xs text-amber-300/90 mt-0.5">
-                      The exported file will contain plaintext secrets. Protect this file
-                      accordingly.
-                    </AlertDescription>
-                  </Alert>
-                )}
-              </CardContent>
-              <CardFooter className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 border-t bg-muted/10 px-6 py-4">
-                <span className="text-xs text-muted-foreground order-2 sm:order-1">
-                  Safety-audited proxies from database only.
-                </span>
-                <div className="flex items-center gap-2 order-1 sm:order-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={(!password && !authenticated) || isActionPending}
-                    onClick={() => handleExport("txt")}
-                  >
-                    {exporting === "txt" ? (
-                      <>
-                        <Loader2 className="size-3.5 mr-1.5 animate-spin" />
-                        Exporting…
-                      </>
-                    ) : (
-                      "Export Verified Proxies (.txt)"
-                    )}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={(!password && !authenticated) || isActionPending}
-                    onClick={() => handleExport("csv")}
-                  >
-                    {exporting === "csv" ? (
-                      <>
-                        <Loader2 className="size-3.5 mr-1.5 animate-spin" />
-                        Exporting…
-                      </>
-                    ) : (
-                      "Export Verified Proxies (.csv)"
-                    )}
-                  </Button>
-                </div>
               </CardFooter>
             </Card>
           </TabsContent>

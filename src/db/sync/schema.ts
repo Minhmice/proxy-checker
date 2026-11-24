@@ -147,28 +147,3 @@ export const syncPolicy = sqliteTable("sync_policy", {
   nextFullAt: integer("next_full_at").notNull().default(0),
   updatedAt: integer("updated_at").notNull(),
 });
-
-export const proxyOwnership = sqliteTable("proxy_ownership", {
-  endpointKey: text("endpoint_key").primaryKey(),
-  routerId: text("router_id").notNull(),
-  accountId: text("account_id").notNull(),
-  operationId: text("operation_id").notNull(),
-  epoch: integer("epoch").notNull(),
-  bindingRevision: integer("binding_revision").notNull(),
-  expiresAt: integer("expires_at").notNull(),
-  state: text("state").notNull(),
-});
-export const proxyOwnershipOperations = sqliteTable("proxy_ownership_operations", {
-  operationId: text("operation_id").primaryKey(),
-  payload: text("payload").notNull(),
-  result: text("result").notNull(),
-});
-export const proxyBindings = sqliteTable(
-  "proxy_bindings",
-  {
-    routerId: text("router_id").notNull(),
-    accountId: text("account_id").notNull(),
-    endpointKey: text("endpoint_key").notNull(),
-  },
-  (table) => [primaryKey({ columns: [table.routerId, table.accountId] })],
-);

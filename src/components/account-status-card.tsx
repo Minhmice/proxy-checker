@@ -1,29 +1,11 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import Link from "next/link";
-import {
-  ShieldCheck,
-  Shuffle,
-  RefreshCw,
-  Clock,
-  AlertCircle,
-  CheckCircle2,
-  AlertTriangle,
-  ArrowUpRight,
-  Server,
-  Layers,
-  Zap,
-} from "lucide-react";
+import { Shuffle, RefreshCw, Clock, AlertCircle, AlertTriangle, Layers, Cpu } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/components/auth-provider";
-import {
-  fetchAntigravityStatus,
-  fetchSettings,
-  fetchPools,
-  refreshAntigravityQuota,
-} from "@/lib/api";
-import type { AntigravityAccountState, AntigravityRotatorSnapshot, PoolRecord } from "@/lib/types";
+import { fetchAntigravityStatus, refreshAntigravityQuota } from "@/lib/api";
+import type { AntigravityAccountState, AntigravityRotatorSnapshot } from "@/lib/types";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,8 +19,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { LatencyIndicator } from "@/components/proxies/latency-indicator";
-import { cn, formatProxyAddress } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 function formatCountdown(resetAt: string | null): string {
   if (!resetAt) return "No reset info";
@@ -48,9 +29,9 @@ function formatCountdown(resetAt: string | null): string {
   const hours = Math.floor(mins / 60);
   const remMins = mins % 60;
   if (hours > 0) {
-    return `Reset in ${hours}h ${remMins}m`;
+    return `${hours}h ${remMins}m`;
   }
-  return `Reset in ${remMins}m`;
+  return `${remMins}m`;
 }
 
 function quotaColor(percentage: number): { text: string; bg: string; border: string; bar: string } {
@@ -64,10 +45,10 @@ function quotaColor(percentage: number): { text: string; bg: string; border: str
   }
   if (percentage > 20) {
     return {
-      text: "text-[#FF5B22]",
-      bg: "bg-[#FF5B22]/10",
-      border: "border-[#FF5B22]/25",
-      bar: "bg-[#FF5B22]",
+      text: "text-amber-400",
+      bg: "bg-amber-500/10",
+      border: "border-amber-500/20",
+      bar: "bg-amber-500",
     };
   }
   return {
@@ -78,18 +59,15 @@ function quotaColor(percentage: number): { text: string; bg: string; border: str
   };
 }
 
-interface AccountProxyStatusCardProps {
+interface AccountStatusCardProps {
   className?: string;
 }
 
-export function AccountProxyStatusCard({ className }: AccountProxyStatusCardProps) {
+export function AccountStatusCard({ className }: AccountStatusCardProps) {
   const { password, authenticated } = useAuth();
   const canRead = authenticated || Boolean(password);
 
   const [snapshot, setSnapshot] = useState<AntigravityRotatorSnapshot | null>(null);
-  const [pools, setPools] = useState<PoolRecord[]>([]);
-  const [activeLimit, setActiveLimit] = useState<number | null>(null);
-  const [sessionThreshold, setSessionThreshold] = useState(20);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -119,11 +97,10 @@ export function AccountProxyStatusCard({ className }: AccountProxyStatusCardProp
       setError(null);
 
       try {
-        const [snapRes, settingsRes, poolsRes] = await Promise.all([
-          fetchAntigravityStatus(password || undefined, controller.signal).catch(() => null),
-          fetchSettings(password || undefined, controller.signal).catch(() => null),
-          fetchPools(password || undefined, undefined, controller.signal).catch(() => []),
-        ]);
+        const snapRes = await fetchAntigravityStatus(
+          password || undefined,
+          controller.signal,
+        ).catch(() => null);
 
         if (controller.signal.aborted) return;
 
@@ -131,25 +108,9 @@ export function AccountProxyStatusCard({ className }: AccountProxyStatusCardProp
           setSnapshot(snapRes);
         }
         hasLoadedRef.current = true;
-        const settings = settingsRes?.settings;
-        if (settings) {
-          if (typeof settings.antigravityActiveLimit === "number") {
-            setActiveLimit(settings.antigravityActiveLimit);
-          } else if (snapRes?.activeCount) {
-            setActiveLimit(snapRes.activeCount);
-          }
-          if (typeof settings.antigravitySessionThreshold === "number") {
-            setSessionThreshold(settings.antigravitySessionThreshold);
-          }
-        } else if (snapRes?.activeCount) {
-          setActiveLimit(snapRes.activeCount);
-        }
-        if (Array.isArray(poolsRes)) {
-          setPools(poolsRes);
-        }
       } catch (err) {
         if (controller.signal.aborted) return;
-        setError(err instanceof Error ? err.message : "Failed to load account and proxy status");
+        setError(err instanceof Error ? err.message : "Failed to load account status");
       } finally {
         if (!controller.signal.aborted) {
           setLoading(false);
@@ -178,22 +139,12 @@ export function AccountProxyStatusCard({ className }: AccountProxyStatusCardProp
     try {
       await refreshAntigravityQuota(password || undefined).catch(() => null);
       await loadData(true);
-      toast.success("Account quotas & proxy telemetry refreshed");
+      toast.success("Account quotas refreshed");
     } catch (err) {
       toast.error((err as Error).message);
       setRefreshing(false);
     }
   };
-
-  const poolMap = useMemo(() => {
-    const map = new Map<string, PoolRecord>();
-    for (const pool of pools) {
-      if (pool.localId) map.set(pool.localId, pool);
-      if (pool.remoteId) map.set(pool.remoteId, pool);
-      if (pool.name) map.set(pool.name, pool);
-    }
-    return map;
-  }, [pools]);
 
   const accounts = useMemo(() => {
     const list = snapshot?.accounts ?? [];
@@ -213,6 +164,11 @@ export function AccountProxyStatusCard({ className }: AccountProxyStatusCardProp
     [snapshot],
   );
 
+  const activeAccount = useMemo(
+    () => (snapshot?.accounts ?? []).find((a) => a.isActive),
+    [snapshot],
+  );
+
   return (
     <Card
       className={cn(
@@ -224,29 +180,35 @@ export function AccountProxyStatusCard({ className }: AccountProxyStatusCardProp
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="flex size-7 items-center justify-center rounded-lg bg-[#FF5B22]/15 text-[#FF5B22] border border-[#FF5B22]/30">
-              <Shuffle className="size-3.5" />
+              <Cpu className="size-3.5" />
             </span>
-            <CardTitle className="text-base font-bold text-zinc-100">
-              Account &amp; Proxy Status
-            </CardTitle>
+            <CardTitle className="text-base font-bold text-zinc-100">Account Status</CardTitle>
             <Badge
               variant="outline"
               className="font-mono text-xs border-[#23232C] bg-[#181820] text-zinc-300"
             >
               Active:{" "}
-              <strong className="text-emerald-400 font-bold ml-1">{activeAccountsCount}</strong> /{" "}
-              {activeLimit ?? activeAccountsCount}
+              <strong className="text-emerald-400 font-bold ml-1">{activeAccountsCount}</strong> / 1
             </Badge>
-            <Badge
-              variant="outline"
-              className="font-mono text-[11px] border-[#FF5B22]/40 bg-[#FF5B22]/15 text-orange-200 font-semibold hidden sm:inline-flex"
-            >
-              Rotate threshold: &le; {sessionThreshold}%
-            </Badge>
+            {activeAccount?.thresholdPercentage != null && (
+              <Badge
+                variant="outline"
+                className="font-mono text-[11px] border-[#FF5B22]/40 bg-[#FF5B22]/15 text-orange-200 font-semibold hidden sm:inline-flex"
+              >
+                Rotate threshold: &le; {activeAccount.thresholdPercentage}%
+              </Badge>
+            )}
+            {snapshot?.degraded && (
+              <Badge
+                variant="outline"
+                className="font-mono text-[11px] border-amber-500/40 bg-amber-500/15 text-amber-300 font-semibold"
+              >
+                Degraded
+              </Badge>
+            )}
           </div>
           <CardDescription className="text-xs text-zinc-400">
-            Active Antigravity accounts running under activeLimit with linked proxy latency and
-            auto-rotation states.
+            Antigravity accounts with direct quota rotation and single-account management.
           </CardDescription>
         </div>
 
@@ -290,17 +252,6 @@ export function AccountProxyStatusCard({ className }: AccountProxyStatusCardProp
             <RefreshCw className={cn("size-3", refreshing && "animate-spin text-[#FF5B22]")} />
             <span>Refresh</span>
           </Button>
-
-          <Button
-            asChild
-            size="sm"
-            className="h-8 bg-gradient-to-r from-[#FF5B22] to-[#FF3D00] hover:brightness-110 text-white text-xs font-semibold shadow-xs shadow-[#FF5B22]/20 border-0 gap-1"
-          >
-            <Link href="/bindings">
-              <span>Manage Bindings</span>
-              <ArrowUpRight className="size-3.5" />
-            </Link>
-          </Button>
         </div>
       </CardHeader>
 
@@ -326,18 +277,8 @@ export function AccountProxyStatusCard({ className }: AccountProxyStatusCardProp
               {filterView === "active" ? "No active Antigravity accounts" : "No accounts found"}
             </p>
             <p className="text-xs text-zinc-400 max-w-md mx-auto">
-              Go to Bindings to connect Antigravity OAuth accounts and map them to proxy pools.
+              Configure Antigravity OAuth accounts in 9Router to enable autonomous rotation.
             </p>
-            <div className="pt-2">
-              <Button
-                asChild
-                size="sm"
-                variant="outline"
-                className="h-8 text-xs border-[#23232C] bg-[#181820]"
-              >
-                <Link href="/bindings">Configure in Bindings</Link>
-              </Button>
-            </div>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -351,13 +292,10 @@ export function AccountProxyStatusCard({ className }: AccountProxyStatusCardProp
                     Gemini Session Quota
                   </TableHead>
                   <TableHead className="text-xs font-semibold text-zinc-400 py-3">
-                    Assigned Proxy
+                    Weekly Quota
                   </TableHead>
                   <TableHead className="text-xs font-semibold text-zinc-400 py-3">
-                    Latency
-                  </TableHead>
-                  <TableHead className="text-xs font-semibold text-zinc-400 py-3">
-                    Proxy Health
+                    Threshold
                   </TableHead>
                   <TableHead className="text-xs font-semibold text-zinc-400 py-3 pr-5 text-right">
                     Rotation Status
@@ -366,14 +304,15 @@ export function AccountProxyStatusCard({ className }: AccountProxyStatusCardProp
               </TableHeader>
               <TableBody>
                 {accounts.map((acc) => {
-                  const colors = quotaColor(acc.sessionPercentage);
+                  const quotaIsAvailable = acc.quotaAvailable !== false;
+                  const sessionPct = acc.sessionPercentage;
+                  const colors = quotaIsAvailable ? quotaColor(sessionPct) : null;
+                  const threshold = acc.thresholdPercentage;
                   const isScheduledRotate =
-                    acc.isActive && acc.sessionPercentage <= sessionThreshold;
-                  const pool = acc.proxyPoolId ? poolMap.get(acc.proxyPoolId) : null;
-                  const latency = pool?.latency_ms ?? null;
-                  const proxyDisplay = pool?.proxyUrl
-                    ? formatProxyAddress(pool.proxyUrl)
-                    : acc.proxyName || (acc.proxyPoolId ? `Pool #${acc.proxyPoolId}` : "None");
+                    acc.isActive &&
+                    quotaIsAvailable &&
+                    threshold != null &&
+                    sessionPct <= threshold;
 
                   return (
                     <TableRow
@@ -401,91 +340,60 @@ export function AccountProxyStatusCard({ className }: AccountProxyStatusCardProp
                       <TableCell className="py-3 min-w-[180px]">
                         <div className="space-y-1.5">
                           <div className="flex items-center justify-between text-xs font-mono">
-                            <span className={cn("font-bold text-xs", colors.text)}>
-                              {acc.sessionPercentage}%
-                            </span>
+                            {quotaIsAvailable ? (
+                              <span className={cn("font-bold text-xs", colors?.text)}>
+                                {sessionPct}%
+                              </span>
+                            ) : (
+                              <span className="text-xs text-amber-400 font-semibold">
+                                Unavailable
+                              </span>
+                            )}
                             <span className="text-[10px] text-zinc-400 flex items-center gap-1">
                               <Clock className="size-2.5 text-zinc-500" />
                               {formatCountdown(acc.resetAt)}
                             </span>
                           </div>
-                          <div
-                            role="progressbar"
-                            aria-valuenow={acc.sessionPercentage}
-                            aria-valuemin={0}
-                            aria-valuemax={100}
-                            aria-label={`Gemini session quota: ${acc.sessionPercentage}% remaining`}
-                            className="h-1.5 w-full bg-[#181820] rounded-full overflow-hidden border border-[#23232C]"
-                          >
+                          {quotaIsAvailable ? (
                             <div
-                              className={cn(
-                                "h-full rounded-full transition-all duration-300",
-                                colors.bar,
-                              )}
-                              style={{
-                                width: `${Math.min(100, Math.max(0, acc.sessionPercentage))}%`,
-                              }}
-                            />
-                          </div>
+                              role="progressbar"
+                              aria-valuenow={sessionPct}
+                              aria-valuemin={0}
+                              aria-valuemax={100}
+                              aria-label={`Gemini session quota: ${sessionPct}% remaining`}
+                              className="h-1.5 w-full bg-[#181820] rounded-full overflow-hidden border border-[#23232C]"
+                            >
+                              <div
+                                className={cn(
+                                  "h-full rounded-full transition-all duration-300",
+                                  colors?.bar,
+                                )}
+                                style={{
+                                  width: `${Math.min(100, Math.max(0, sessionPct))}%`,
+                                }}
+                              />
+                            </div>
+                          ) : (
+                            <div className="h-1.5 w-full bg-[#181820] rounded-full border border-[#23232C]/60" />
+                          )}
                         </div>
                       </TableCell>
 
-                      {/* Assigned Proxy */}
+                      {/* Weekly Quota */}
                       <TableCell className="py-3">
-                        {acc.proxyPoolId ? (
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-xs font-mono text-zinc-200 font-medium truncate max-w-[160px]">
-                              {proxyDisplay}
-                            </span>
-                            {pool?.exit_ip && (
-                              <span className="text-[10px] font-mono text-zinc-400 truncate">
-                                Exit: {pool.exit_ip}
-                              </span>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-xs text-zinc-500 italic">No proxy bound</span>
-                        )}
+                        <span className="text-xs font-mono text-zinc-300">
+                          {Number.isFinite(acc.weeklyPercentage) ? `${acc.weeklyPercentage}%` : "—"}
+                        </span>
                       </TableCell>
 
-                      {/* Latency */}
+                      {/* Threshold */}
                       <TableCell className="py-3">
-                        {latency != null ? (
-                          <LatencyIndicator latencyMs={latency} showBar={false} />
-                        ) : pool ? (
-                          <span className="text-xs font-mono text-zinc-400">Measured soon</span>
+                        {threshold != null ? (
+                          <span className="text-xs font-mono font-semibold text-zinc-200">
+                            {threshold}%
+                          </span>
                         ) : (
                           <span className="text-xs font-mono text-zinc-600">—</span>
-                        )}
-                      </TableCell>
-
-                      {/* Proxy Health */}
-                      <TableCell className="py-3">
-                        {acc.proxyPoolId ? (
-                          acc.proxyHealthy ? (
-                            <Badge
-                              variant="outline"
-                              className="border-emerald-500/30 bg-emerald-500/10 text-emerald-400 text-[10px] font-mono gap-1 py-0 px-1.5"
-                            >
-                              <span className="size-1 rounded-full bg-emerald-400" />
-                              Working
-                            </Badge>
-                          ) : (
-                            <Badge
-                              variant="outline"
-                              className="border-rose-500/30 bg-rose-500/10 text-rose-400 text-[10px] font-mono gap-1 py-0 px-1.5"
-                            >
-                              <span className="size-1 rounded-full bg-rose-500" />
-                              Dead
-                            </Badge>
-                          )
-                        ) : (
-                          <Badge
-                            variant="outline"
-                            className="border-amber-500/30 bg-amber-500/10 text-amber-400 text-[10px] font-mono py-0 px-1.5"
-                          >
-                            Unbound
-                          </Badge>
                         )}
                       </TableCell>
 
@@ -498,7 +406,7 @@ export function AccountProxyStatusCard({ className }: AccountProxyStatusCardProp
                                 <button
                                   type="button"
                                   className="inline-flex cursor-help rounded-md focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5B22] p-0 bg-transparent border-0"
-                                  aria-label={`Scheduled Rotate: Quota is ${acc.sessionPercentage}%, at or below ${sessionThreshold}% threshold`}
+                                  aria-label={`Scheduled Rotate: Quota is ${sessionPct}%, at or below ${threshold}% threshold`}
                                 >
                                   <Badge
                                     variant="outline"
@@ -510,8 +418,29 @@ export function AccountProxyStatusCard({ className }: AccountProxyStatusCardProp
                                 </button>
                               </TooltipTrigger>
                               <TooltipContent className="bg-[#1C1C24] text-xs text-zinc-200 border-[#23232C]">
-                                Quota &le; {sessionThreshold}%. Will be rotated out to reserve on
-                                next maintenance cycle.
+                                Quota &le; {threshold}%. Will be rotated out to reserve on next
+                                maintenance cycle.
+                              </TooltipContent>
+                            </Tooltip>
+                          ) : acc.lastError ? (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button
+                                  type="button"
+                                  className="inline-flex cursor-help rounded-md focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-rose-500 p-0 bg-transparent border-0"
+                                  aria-label={`Active with error: ${acc.lastError}`}
+                                >
+                                  <Badge
+                                    variant="outline"
+                                    className="border-rose-500/40 bg-rose-500/15 text-rose-300 text-[10px] font-semibold gap-1 py-0.5 px-2"
+                                  >
+                                    <AlertCircle className="size-2.5 text-rose-400" />
+                                    Degraded
+                                  </Badge>
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent className="bg-[#1C1C24] text-xs text-zinc-200 border-[#23232C]">
+                                {acc.lastError}
                               </TooltipContent>
                             </Tooltip>
                           ) : (

@@ -5,13 +5,11 @@ import {
   BarChart3,
   Bell,
   CheckCircle2,
-  Globe,
   LogOut,
   PanelRightOpen,
   Search,
   Settings,
   ShieldCheck,
-  Shuffle,
 } from "lucide-react";
 import Link from "next/link";
 import { useAuth } from "./auth-provider";
@@ -62,13 +60,13 @@ export function TopBar({ onSearchClick, onOperationsClick, operationsOpen }: Top
           variant="outline"
           size="sm"
           onClick={onSearchClick}
-          aria-label={`Search proxy pools... ${shortcutKey}`}
+          aria-label={`Search navigation... ${shortcutKey}`}
           aria-keyshortcuts="Control+K"
           className="relative h-11 w-11 p-0 sm:h-8 sm:w-60 md:w-80 3xl:w-96 5xl:w-[28rem] sm:px-3 sm:justify-start rounded-md border-[#23232C] bg-[#131318]/90 text-xs text-muted-foreground font-normal shadow-none hover:bg-[#181820] hover:text-foreground hover:border-[#FF5B22]/50 hover:shadow-[0_0_15px_-3px_rgba(255,91,34,0.3)] transition-all touch-manipulation focus-visible:ring-1 focus-visible:ring-[#FF5B22]"
           data-command-trigger
         >
           <Search className="size-3.5 sm:mr-2 shrink-0 text-muted-foreground" />
-          <span className="hidden sm:inline-block truncate">Search proxy pools...</span>
+          <span className="hidden sm:inline-block truncate">Search navigation...</span>
           <kbd className="pointer-events-none absolute right-1.5 top-1.5 hidden h-5 select-none items-center gap-0.5 rounded border border-[#23232C] bg-[#09090C]/90 px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-90 md:flex">
             {shortcutKey}
           </kbd>
@@ -177,18 +175,6 @@ export function TopBar({ onSearchClick, onOperationsClick, operationsOpen }: Top
                 <Link href="/" className="flex items-center gap-2 cursor-pointer text-xs">
                   <BarChart3 className="size-3.5 text-muted-foreground" />
                   <span>Dashboard</span>
-                </Link>
-              </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <Link href="/proxies" className="flex items-center gap-2 cursor-pointer text-xs">
-                  <Globe className="size-3.5 text-muted-foreground" />
-                  <span>Proxies</span>
-                </Link>
-              </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <Link href="/bindings" className="flex items-center gap-2 cursor-pointer text-xs">
-                  <Shuffle className="size-3.5 text-muted-foreground" />
-                  <span>Bindings</span>
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuItem asChild>

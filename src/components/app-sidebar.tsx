@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
-import { Globe, Settings, LogOut, BarChart3, Shuffle, Flame } from "lucide-react";
+import { Settings, LogOut, BarChart3, Flame } from "lucide-react";
 import { useAuth } from "./auth-provider";
 import { AntigravityQuotaWidget } from "./antigravity-quota-widget";
 import { cn } from "@/lib/utils";
@@ -25,8 +25,6 @@ import {
 
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: BarChart3 },
-  { href: "/proxies", label: "Proxies", icon: Globe },
-  { href: "/bindings", label: "Bindings", icon: Shuffle },
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 function NavMenuItem({
@@ -155,7 +153,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
                   </span>
                   <span className="truncate text-[10px] text-muted-foreground/80 flex items-center gap-1 mt-0.5 font-medium">
                     <Flame className="size-3 text-[#FFAA00] animate-pulse shrink-0" />
-                    Proxy &amp; Token Control
+                    Quota &amp; Token Control
                   </span>
                 </div>
               </Link>

@@ -2,11 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
-test("AppSidebar links to the dashboard, proxies and bindings", () => {
+test("AppSidebar links to dashboard and settings without proxy or bindings navigation", () => {
   const sidebarContent = fs.readFileSync("src/components/app-sidebar.tsx", "utf8");
   assert.ok(sidebarContent.includes('href: "/", label: "Dashboard"'));
-  assert.ok(sidebarContent.includes('href: "/proxies", label: "Proxies"'));
-  assert.ok(sidebarContent.includes('href: "/bindings", label: "Bindings"'));
+  assert.ok(sidebarContent.includes('href: "/settings", label: "Settings"'));
+  assert.ok(!sidebarContent.includes('href: "/proxies"'));
+  assert.ok(!sidebarContent.includes('href: "/bindings"'));
 });
 
 test("Sidebar primitives enforce pure shadcn icon-mode centering and gap height", () => {

@@ -59,11 +59,7 @@ export function createAuthMiddleware(deps: ApiDependencies): MiddlewareHandler<A
     }
 
     // 4. Return appropriate 401 error message matching existing contract
-    if (
-      pathname.startsWith("/api/settings") ||
-      pathname.startsWith("/api/intelligence") ||
-      pathname.startsWith("/api/proxies")
-    ) {
+    if (pathname.startsWith("/api/settings")) {
       return c.json({ error: "Unauthorized" }, 401);
     }
 

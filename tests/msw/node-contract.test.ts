@@ -49,12 +49,12 @@ test("msw node contract: intercepts handled requests with fixtures", async () =>
     const settingsData = (await settingsRes.json()) as { settings: Record<string, unknown> };
     assert.ok(settingsData.settings);
 
-    // 7. Intelligence proxies
-    const intelRes = await fetch("http://localhost/api/intelligence/proxies");
-    assert.equal(intelRes.status, 200);
-    const intelData = (await intelRes.json()) as { items: unknown[]; total: number };
-    assert.equal(intelData.total, 1);
-    assert.equal(intelData.items.length, 1);
+    // 7. Antigravity status
+    const agRes = await fetch("http://localhost/api/antigravity/status");
+    assert.equal(agRes.status, 200);
+    const agData = (await agRes.json()) as { totalAccounts: number; accounts: unknown[] };
+    assert.equal(agData.totalAccounts, 2);
+    assert.equal(agData.accounts.length, 2);
 
     // 8. Handler override and reset
     server.use(

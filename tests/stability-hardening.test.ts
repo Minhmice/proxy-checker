@@ -4,70 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { acquireDataLease, LEASE_STALE_MS } from "../src/db/common/maintenance-lease.js";
-import { createAntigravityRotator } from "../src/server/antigravity-rotator.js";
-import type { AppSettings } from "../src/server/app-config.js";
 import {
   clearNineRouterSession,
-  listPools,
+  listAntigravityConnections,
   updateConnection,
 } from "../src/server/nine-router-client.js";
-
-const settings = () =>
-  ({
-    antigravityRotatorEnabled: true,
-    antigravityActiveLimit: 3,
-    antigravitySessionThreshold: 20,
-  }) as unknown as AppSettings;
-
-function rotatorWith(repairStatus: "repaired" | "no_candidate") {
-  const swaps: string[] = [];
-  const repairs: string[] = [];
-  // Fake router state: a successful repair rebinds the account and clears the error.
-  const conn = {
-    id: "bad",
-    provider: "antigravity",
-    isActive: false,
-    lastError: "403 Forbidden" as string | null,
-    providerSpecificData: { proxyPoolId: "P1" },
-  };
-  const rotator = createAntigravityRotator({
-    dataDir: fs.mkdtempSync(path.join(os.tmpdir(), "rot-")),
-    getRouterUrls: () => ["http://node1:9999"],
-    getUsableProxies: () => [{ remoteId: "P1" }, { remoteId: "P2" }],
-    listConnections: async () => [{ ...conn }],
-    updateConnection: async (id, patch) => {
-      if (patch.providerSpecificData?.proxyPoolId) swaps.push(id);
-      return { connection: {} };
-    },
-    getUsage: async () => ({ sessionPercentage: 80, quotaAvailable: true }),
-    getSettings: settings,
-    repairRoute: async (accountId) => {
-      repairs.push(accountId);
-      if (repairStatus !== "repaired") return { status: "no_candidate" };
-      conn.providerSpecificData = { proxyPoolId: "P2" };
-      conn.lastError = null;
-      const binding = { accountId, revision: 2, poolId: "P2", isActive: false };
-      return { status: "repaired", binding };
-    },
-  });
-  return { rotator, swaps, repairs };
-}
-
-test("resetProxies repairs forbidden route first and skips swap when repaired", async () => {
-  const { rotator, swaps, repairs } = rotatorWith("repaired");
-  const res = await rotator.resetProxies();
-  assert.deepEqual(repairs, ["bad"]);
-  assert.equal(res.repairedCount, 1);
-  assert.deepEqual(swaps, []);
-});
-
-test("resetProxies falls back to swap only when repair cannot fix route", async () => {
-  const { rotator, swaps, repairs } = rotatorWith("no_candidate");
-  const res = await rotator.resetProxies();
-  assert.deepEqual(repairs, ["bad"]);
-  assert.equal(res.repairedCount, 0);
-  assert.ok(swaps.includes("bad"));
-});
 
 test("9Router GET retries once on 502; mutations never replay", async (t) => {
   const original = globalThis.fetch;
@@ -82,14 +23,14 @@ test("9Router GET retries once on 502; mutations never replay", async (t) => {
       return new Response("{}", { status: 200, headers: { "set-cookie": "auth_token=t; Path=/" } });
     }
     calls.push(`${init?.method ?? "GET"} ${url}`);
-    if (calls.length === 1 || url.includes("/connections")) {
+    if (calls.length === 1 || init?.method === "PUT") {
       return new Response("bad gateway", { status: 502 });
     }
-    return new Response(JSON.stringify({ proxyPools: [] }), { status: 200 });
+    return new Response(JSON.stringify({ connections: [] }), { status: 200 });
   }) as typeof fetch;
 
-  const pools = await listPools({ url: "http://pi:1", timeoutMs: 2000 });
-  assert.deepEqual(pools, []);
+  const accounts = await listAntigravityConnections({ url: "http://pi:1", timeoutMs: 2000 });
+  assert.deepEqual(accounts, []);
   assert.equal(calls.filter((c) => c.startsWith("GET")).length, 2);
 
   calls.length = 0;

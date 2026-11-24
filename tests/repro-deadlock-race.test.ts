@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { createAntigravityRotator } from "../src/server/antigravity-rotator.js";
+import { openAntigravityRotationHistory } from "../src/server/antigravity-rotation-history.js";
 import {
   listAntigravityConnections,
   clearNineRouterSession,
@@ -13,6 +14,7 @@ const originalFetch = globalThis.fetch;
 
 test("FIX VERIFIED BUG 1: Timeout giải phóng runRotation khi 1 router URL bị freeze socket", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ag-rotator-deadlock-"));
+  const history = openAntigravityRotationHistory(tmpDir);
   clearNineRouterSession();
 
   const urlNormal = "http://router-normal.local:8080";
@@ -65,11 +67,7 @@ test("FIX VERIFIED BUG 1: Timeout giải phóng runRotation khi 1 router URL b�
   const rotator = createAntigravityRotator({
     dataDir: tmpDir,
     endpointTimeoutMs: 50,
-    history: {
-      get: () => undefined,
-      recordActivation: () => ({ accountId: "", turnCount: 0, lastActivatedAt: 0 }),
-      close: () => {},
-    },
+    history,
     getRouterUrls: () => [urlNormal, urlFreeze],
     getUsage: async () => ({
       quotas: {
@@ -100,6 +98,7 @@ test("FIX VERIFIED BUG 1: Timeout giải phóng runRotation khi 1 router URL b�
   } finally {
     globalThis.fetch = originalFetch;
     clearNineRouterSession();
+    history.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });

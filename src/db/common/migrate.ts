@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 
-export type DatabaseDomain = "proxies" | "rotation" | "sync";
+export type DatabaseDomain = "rotation" | "sync";
 
 export function migrateDomain(raw: Database.Database, domain: DatabaseDomain): void {
   const folder = fileURLToPath(new URL(`../migrations/${domain}/`, import.meta.url));
@@ -14,12 +14,14 @@ export function migrateDomain(raw: Database.Database, domain: DatabaseDomain): v
     entries: Array<{ tag: string; when: number }>;
   };
   const baseline = fs.readFileSync(path.join(folder, `${journal.entries[0].tag}.sql`), "utf8");
-  const proxyRollbackHash = "2cebf267498c06de738c51c86366bbc1e62cf0ca9e487e2f1cffa4c94d33ff84";
   const hash = crypto.createHash("sha256").update(baseline.replaceAll("\r\n", "\n")).digest("hex");
-  const compatibleHash = domain === "proxies" ? proxyRollbackHash : hash;
+  const compatibleHash = hash;
   const expected = new Database(":memory:");
   try {
     expected.exec(baseline);
+    for (const entry of journal.entries.slice(1)) {
+      expected.exec(fs.readFileSync(path.join(folder, `${entry.tag}.sql`), "utf8"));
+    }
     const tables = expected
       .prepare(
         "SELECT name, sql FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'",
@@ -31,28 +33,8 @@ export function migrateDomain(raw: Database.Database, domain: DatabaseDomain): v
         const existingTables = raw
           .prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'")
           .all() as Array<{ name: string }>;
-        const legacyAuditTables: Record<string, true> = {
-          proxy_audits: true,
-          proxy_audit_risks: true,
-          audit_jobs: true,
-          proxy_diagnostics: true,
-          fleet_managed_endpoints: true,
-        };
-        if (domain === "proxies") {
-          raw.exec(`
-            DROP TABLE IF EXISTS proxy_audit_risks;
-            DROP TABLE IF EXISTS proxy_audits;
-            DROP TABLE IF EXISTS audit_jobs;
-            DROP TABLE IF EXISTS proxy_diagnostics;
-            DROP TABLE IF EXISTS fleet_managed_endpoints;
-          `);
-        }
         for (const table of existingTables) {
-          if (
-            !knownTables.has(table.name) &&
-            table.name !== "__drizzle_migrations" &&
-            !(domain === "proxies" && table.name in legacyAuditTables)
-          ) {
+          if (!knownTables.has(table.name) && table.name !== "__drizzle_migrations") {
             throw new Error(`Unknown ${domain} database table: ${table.name}`);
           }
         }
@@ -114,11 +96,6 @@ export function migrateDomain(raw: Database.Database, domain: DatabaseDomain): v
           .get() as { hash: string } | undefined;
         if (recorded && recorded.hash !== compatibleHash) {
           const previousHashes: Partial<Record<DatabaseDomain, string[]>> = {
-            proxies: [
-              proxyRollbackHash,
-              "6ff2ebf85ff6352ee05cdb87b96e853c2bdd5e30e0a3e16bf4f2d9d1f6e95d18",
-              "fa2e8bd35d94b56acdbb56002b9ff7b7c86bacb1240df682a82ad841885b5da0",
-            ],
             sync: ["109a5ba8a5c59209ca9f0ad9d2296c41592799113866d2eb6609a93807a4a10f"],
           };
           const allowed = previousHashes[domain] ?? [];

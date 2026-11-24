@@ -135,71 +135,6 @@ export function createNineRouterRoutes(deps: ApiDependencies): Hono<ApiEnv> {
     }
   });
 
-  // 5. Node Proxy Pools
-  router.get("/nodes/:nodeId/proxy-pools", async (c) => {
-    const nodeId = c.req.param("nodeId");
-    try {
-      const res = await fetchFromNode(nodeId, "/api/proxy-pools?includeUsage=true");
-      if (!res.ok) return c.json({ error: `Node returned ${res.status}` }, res.status as 500);
-      const data = await res.json();
-      return c.json(data);
-    } catch (err) {
-      return c.json({ error: (err as Error).message }, 502);
-    }
-  });
-
-  // 6. Test Proxy Pool
-  router.post("/nodes/:nodeId/proxy-pools/:poolId/test", async (c) => {
-    const nodeId = c.req.param("nodeId");
-    const poolId = c.req.param("poolId");
-    try {
-      const res = await fetchFromNode(
-        nodeId,
-        `/api/proxy-pools/${encodeURIComponent(poolId)}/test`,
-        {
-          method: "POST",
-        },
-      );
-      const data = await res.json();
-      return c.json(data, res.status as 200);
-    } catch (err) {
-      return c.json({ error: (err as Error).message }, 502);
-    }
-  });
-
-  // 7. Update Proxy Pool
-  router.put("/nodes/:nodeId/proxy-pools/:poolId", async (c) => {
-    const nodeId = c.req.param("nodeId");
-    const poolId = c.req.param("poolId");
-    const body = await c.req.json();
-    try {
-      const res = await fetchFromNode(nodeId, `/api/proxy-pools/${encodeURIComponent(poolId)}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      return c.json(data, res.status as 200);
-    } catch (err) {
-      return c.json({ error: (err as Error).message }, 502);
-    }
-  });
-
-  // 8. Delete Proxy Pool
-  router.delete("/nodes/:nodeId/proxy-pools/:poolId", async (c) => {
-    const nodeId = c.req.param("nodeId");
-    const poolId = c.req.param("poolId");
-    try {
-      const res = await fetchFromNode(nodeId, `/api/proxy-pools/${encodeURIComponent(poolId)}`, {
-        method: "DELETE",
-      });
-      const data = await res.json();
-      return c.json(data, res.status as 200);
-    } catch (err) {
-      return c.json({ error: (err as Error).message }, 502);
-    }
-  });
-
   // 9. Node Connections
   router.get("/nodes/:nodeId/connections", async (c) => {
     const nodeId = c.req.param("nodeId");
@@ -216,28 +151,15 @@ export function createNineRouterRoutes(deps: ApiDependencies): Hono<ApiEnv> {
     }
   });
 
-  // 10. Bind Connection to Pool
-  // 10. Bind Connection to Pool or Update Account State
-  router.put("/nodes/:nodeId/connections/:connectionId/bind-pool", async (c) => {
+  // Update account state without changing provider-specific data.
+  router.put("/nodes/:nodeId/connections/:connectionId", async (c) => {
     const nodeId = c.req.param("nodeId");
     const connectionId = c.req.param("connectionId");
     const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
-    const patch: Record<string, unknown> = {};
-
-    if ("poolId" in body) {
-      const poolId = body.poolId;
-      patch.providerSpecificData = {
-        proxyPoolId: typeof poolId === "string" && poolId.trim().length > 0 ? poolId : null,
-      };
+    if (typeof body.isActive !== "boolean") {
+      return c.json({ error: "isActive must be a boolean" }, 400);
     }
-
-    if (typeof body.isActive === "boolean") {
-      patch.isActive = body.isActive;
-    }
-
-    if (Object.keys(patch).length === 0) {
-      return c.json({ error: "Missing poolId or isActive in request body" }, 400);
-    }
+    const patch = { isActive: body.isActive };
 
     try {
       const res = await fetchFromNode(

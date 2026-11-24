@@ -9,11 +9,8 @@ import { SESSION_COOKIE_NAME } from "../src/server/session-auth.js";
 function createMockDeps(): ApiDependencies {
   return {
     verifyControlPassword: (candidate) => candidate === "test-control-pass-123",
-    proxyIntelligenceRepo: {} as unknown as ApiDependencies["proxyIntelligenceRepo"],
-    poolRanker: {} as unknown as ApiDependencies["poolRanker"],
     antigravityRotator: {} as unknown as ApiDependencies["antigravityRotator"],
     unifiedSyncCoordinator: {} as unknown as ApiDependencies["unifiedSyncCoordinator"],
-    handleProxyCheck: async () => false,
     router: {} as unknown as ApiDependencies["router"],
     settings: {} as unknown as ApiDependencies["settings"],
     legacyHandlers: {
@@ -23,8 +20,6 @@ function createMockDeps(): ApiDependencies {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ settings: { autoSync: true } }));
       },
-      handleIntelligence: async () => {},
-      handleProxiesUnified: async () => {},
     },
   };
 }
@@ -112,6 +107,99 @@ test("hono contract: unknown api route returns 404 not found", async () => {
   assert.equal(res.status, 404);
   const data = await res.json();
   assert.deepEqual(data, { error: "not found" });
+});
+
+test("removed proxy routes return 404 without invoking proxy handlers", async () => {
+  const deps = createMockDeps();
+  let calls = 0;
+  deps.legacyHandlers.handleNineRouter = async (_req, res) => {
+    calls++;
+    res.writeHead(404);
+    res.end();
+  };
+  deps.legacyHandlers.handleAntigravity = async (_req, res) => {
+    calls++;
+    res.writeHead(404);
+    res.end();
+  };
+  deps.legacyHandlers.handleSettings = async (_req, res) => {
+    calls++;
+    res.writeHead(404);
+    res.end();
+  };
+  const app = createApiApp(deps);
+  const server = http.createServer(getRequestListener(app.fetch));
+  const { promise: listening, resolve: listeningResolve } = Promise.withResolvers<void>();
+  server.listen(0, "127.0.0.1", listeningResolve);
+  await listening;
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const port = address.port;
+  try {
+    for (const [method, route] of [
+      ["POST", "/api/antigravity/reset-proxies"],
+      ["POST", "/api/antigravity/repair-route"],
+      ["POST", "/api/antigravity/ownership/reserve"],
+      ["POST", "/api/antigravity/optimize-by-speed"],
+      ["GET", "/api/ninerouter/nodes/node/proxy-pools"],
+      ["PUT", "/api/ninerouter/nodes/node/connections/account/bind-pool"],
+      ["GET", "/api/settings/proxy-export"],
+      ["GET", "/api/proxies/unified"],
+      ["GET", "/api/intelligence/proxies"],
+    ]) {
+      const response = await fetch(
+        `http://127.0.0.1:${port}${route}?password=test-control-pass-123`,
+        { method },
+      );
+      assert.equal(response.status, 404, `${method} ${route}`);
+    }
+    assert.equal(calls, 7);
+  } finally {
+    const { promise: closed, resolve, reject } = Promise.withResolvers<void>();
+    server.close((error) => (error ? reject(error) : resolve()));
+    await closed;
+  }
+});
+
+test("node account routes preserve account reads and update only active state", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: Array<{ url: string; method: string; body?: unknown }> = [];
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (url.endsWith("/api/auth/login")) {
+      return Response.json({ ok: true }, { headers: { "set-cookie": "auth_token=test; Path=/" } });
+    }
+    requests.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    return Response.json({ connections: [{ id: "account-1", provider: "antigravity" }] });
+  }) as typeof fetch;
+  try {
+    const app = createApiApp(createMockDeps());
+    const base = "/api/ninerouter/nodes/server-lan/connections";
+    const list = await app.request(`${base}?password=test-control-pass-123`);
+    assert.equal(list.status, 200);
+    assert.deepEqual(await list.json(), {
+      connections: [{ id: "account-1", provider: "antigravity" }],
+    });
+    const update = await app.request(`${base}/account-1?password=test-control-pass-123`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ isActive: false, poolId: "ignored" }),
+    });
+    assert.equal(update.status, 200);
+    assert.equal(requests[1].method, "PUT");
+    assert.equal(new URL(requests[1].url).pathname, "/api/providers/account-1");
+    assert.deepEqual(requests[1].body, { isActive: false });
+    const invalid = await app.request(`${base}/account-1?password=test-control-pass-123`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ poolId: "ignored" }),
+    });
+    assert.equal(invalid.status, 400);
+    assert.equal(requests.length, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("hono contract: login rejects payload exceeding 10 KB with 413", async () => {

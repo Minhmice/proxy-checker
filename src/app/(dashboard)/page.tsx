@@ -1,10 +1,9 @@
 "use client";
 
 import React, { useState } from "react";
-import Link from "next/link";
-import { BarChart3, Globe, Shuffle, RefreshCw, Zap } from "lucide-react";
+import { BarChart3, RefreshCw } from "lucide-react";
 import { TokenUsageCard, TOKEN_USAGE_PERIODS } from "@/components/token-usage-card";
-import { AccountProxyStatusCard } from "@/components/account-proxy-status-card";
+import { AccountStatusCard } from "@/components/account-status-card";
 import { Button } from "@/components/ui/button";
 
 export default function DashboardPage() {
@@ -26,8 +25,8 @@ export default function DashboardPage() {
             Dashboard
           </h1>
           <p className="text-xs sm:text-sm text-zinc-400 mt-1">
-            Real-time daily token &amp; cost analytics, Antigravity session quotas, and proxy
-            binding telemetry.
+            Real-time daily token &amp; cost analytics, Antigravity session quotas, and autonomous
+            rotation.
           </p>
         </div>
 
@@ -53,29 +52,6 @@ export default function DashboardPage() {
               </button>
             ))}
           </div>
-          <Button
-            asChild
-            variant="outline"
-            size="sm"
-            className="h-9 border-[#23232C] bg-[#131318] text-zinc-300 hover:text-white hover:border-[#FF5B22]/40 gap-1.5 text-xs font-semibold rounded-xl transition-colors"
-          >
-            <Link href="/proxies">
-              <Globe className="size-3.5 text-[#FF5B22]" />
-              <span>Proxies</span>
-            </Link>
-          </Button>
-
-          <Button
-            asChild
-            variant="outline"
-            size="sm"
-            className="h-9 border-[#23232C] bg-[#131318] text-zinc-300 hover:text-white hover:border-[#FF5B22]/40 gap-1.5 text-xs font-semibold rounded-xl transition-colors"
-          >
-            <Link href="/bindings">
-              <Shuffle className="size-3.5 text-[#FF5B22]" />
-              <span>Bindings</span>
-            </Link>
-          </Button>
 
           <Button
             size="sm"
@@ -94,9 +70,9 @@ export default function DashboardPage() {
         <TokenUsageCard period={period} />
       </section>
 
-      {/* KHU VỰC 2: Antigravity Accounts & Proxy Binding Status */}
-      <section aria-label="Account & Proxy Status" key={`status-${refreshKey}`}>
-        <AccountProxyStatusCard />
+      {/* KHU VỰC 2: Antigravity Accounts & Quota Rotation */}
+      <section aria-label="Account Status" key={`status-${refreshKey}`}>
+        <AccountStatusCard />
       </section>
     </div>
   );

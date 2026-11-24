@@ -128,7 +128,7 @@ export function createBackupSnapshot(options?: {
   }
 
   // 2. Backup SQLite databases via VACUUM INTO
-  const sqliteFiles = ["proxies.sqlite3", "antigravity-rotation.sqlite3", "router-sync.sqlite3"];
+  const sqliteFiles = ["antigravity-rotation.sqlite3", "router-sync.sqlite3"];
   for (const name of sqliteFiles) {
     const srcPath = path.join(dataDir, name);
     const destPath = path.join(databasesDir, name);
@@ -147,7 +147,7 @@ export function createBackupSnapshot(options?: {
   }
 
   // 3. Backup 9Router / rotator state files if present
-  const stateFiles = ["antigravity-rotator.json", "pool-state.json"];
+  const stateFiles = ["antigravity-rotator.json"];
   for (const name of stateFiles) {
     const srcPath = path.join(dataDir, name);
     const destPath = path.join(backupDir, name);
@@ -206,9 +206,9 @@ export function restoreBackup(options?: {
   const errors: string[] = [];
 
   fs.mkdirSync(dataDir, { recursive: true });
-  const databaseFiles = fs.existsSync(databasesDir)
-    ? fs.readdirSync(databasesDir).filter((name) => name.endsWith(".sqlite3"))
-    : [];
+  const databaseFiles = ["antigravity-rotation.sqlite3", "router-sync.sqlite3"].filter((name) =>
+    fs.existsSync(path.join(databasesDir, name)),
+  );
 
   // 1. Restore settings.json
   const settingsBackup = path.join(backupDir, "settings.json");
@@ -239,7 +239,7 @@ export function restoreBackup(options?: {
   }
 
   // 3. Restore rotator / pool state JSON if exists
-  const stateFiles = ["antigravity-rotator.json", "pool-state.json"];
+  const stateFiles = ["antigravity-rotator.json"];
   for (const name of stateFiles) {
     const src = path.join(backupDir, name);
     const dest = path.join(dataDir, name);

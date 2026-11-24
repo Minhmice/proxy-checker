@@ -119,9 +119,8 @@ if ! NODE_ENV=production node --import tsx --input-type=module -e '
     console.error("Backup snapshot errors:", (res.errors || []).join("; "));
     process.exit(1);
   }
-  const required = ["proxies.sqlite3", "antigravity-rotation.sqlite3"];
-  if (process.env.ANTIGRAVITY_AUTHORITY_PRIVATE_KEY_PATH) required.push("router-sync.sqlite3");
-  for (const name of ["proxies.sqlite3", "antigravity-rotation.sqlite3", "router-sync.sqlite3"]) {
+  const required = ["antigravity-rotation.sqlite3"];
+  for (const name of ["antigravity-rotation.sqlite3", "router-sync.sqlite3"]) {
     const entry = `databases/${name}`;
     const exists = fs.existsSync(path.join(dataDir, name));
     if ((required.includes(name) && !exists) ||
