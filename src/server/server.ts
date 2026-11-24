@@ -279,7 +279,6 @@ async function main() {
     },
   });
   const apiRequestListener = getRequestListener(apiApp.fetch);
-  const upgradeHandler = dev ? app.getUpgradeHandler() : null;
   const server = http.createServer(async (request, response) => {
     const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
     if (!pathname.startsWith("/api/")) return handle(request, response);
@@ -287,13 +286,6 @@ async function main() {
     return apiRequestListener(request, response);
   });
 
-  if (upgradeHandler) {
-    server.on("upgrade", (request, socket, head) => {
-      const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
-      if (pathname === "/_next/webpack-hmr") return upgradeHandler(request, socket, head);
-      socket.destroy();
-    });
-  }
   server.on("clientError", (err: NodeJS.ErrnoException, socket) => {
     if (err.code === "ECONNRESET" || !socket.writable) {
       return;

@@ -5,4 +5,5 @@ const isProduction =
 
 export default {
   distDir: isProduction ? ".next-build" : ".next",
+  allowedDevOrigins: ["127.0.0.1", "[::1]"],
 };
