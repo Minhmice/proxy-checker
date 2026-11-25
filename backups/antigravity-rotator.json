@@ -1,9 +1,9 @@
 {
-  "lastRunAt": 1795621729005,
+  "lastRunAt": 1795623530046,
   "running": false,
   "totalAccounts": 7,
   "activeCount": 4,
-  "totalSessionQuotaPercentage": 191,
+  "totalSessionQuotaPercentage": 123,
   "maxPossiblePercentage": 700,
   "accounts": [
     {
@@ -13,12 +13,12 @@
       "name": "generateforwork38@gmail.com",
       "isActive": true,
       "sessionPercentage": 0,
-      "weeklyPercentage": 25.02608,
+      "weeklyPercentage": 16.15896,
       "resetAt": null,
       "thresholdPercentage": 8,
       "quotaAvailable": false,
       "lastError": null,
-      "lastCheckedAt": 1795621727512,
+      "lastCheckedAt": 1795623529025,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -29,13 +29,13 @@
       "email": "metavocab@gmail.com",
       "name": "metavocab@gmail.com",
       "isActive": true,
-      "sessionPercentage": 85.124785,
-      "weeklyPercentage": 94.836867,
-      "resetAt": "2026-11-25T16:17:24.000Z",
+      "sessionPercentage": 100,
+      "weeklyPercentage": 94.495904,
+      "resetAt": "2026-11-25T21:17:24.000Z",
       "thresholdPercentage": 8,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795621728363,
+      "lastCheckedAt": 1795623529575,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -52,7 +52,7 @@
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795621727612,
+      "lastCheckedAt": 1795623529166,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -69,7 +69,7 @@
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795621728556,
+      "lastCheckedAt": 1795623529702,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -86,7 +86,7 @@
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795621727830,
+      "lastCheckedAt": 1795623529306,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -97,13 +97,13 @@
       "email": "schwabauerkrystin+1@gmail.com",
       "name": "schwabauerkrystin+1@gmail.com",
       "isActive": true,
-      "sessionPercentage": 61,
+      "sessionPercentage": 1,
       "weeklyPercentage": 0,
       "resetAt": "2026-11-25T20:34:04.000Z",
       "thresholdPercentage": 6,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795621728131,
+      "lastCheckedAt": 1795623529721,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -114,13 +114,13 @@
       "email": "ngphu.fbm.contact@gmail.com",
       "name": "ngphu.fbm.contact@gmail.com",
       "isActive": true,
-      "sessionPercentage": 23,
+      "sessionPercentage": 0,
       "weeklyPercentage": 0,
       "resetAt": "2026-11-25T16:37:47.000Z",
       "thresholdPercentage": 7,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795621729002,
+      "lastCheckedAt": 1795623530042,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 1,
       "lastActivatedAt": 1795531560192
@@ -147,5 +147,5 @@
     }
   ],
   "degraded": true,
-  "error": "Quota unavailable for https://9router.minhmice.com:::5dafd58d-8505-4dd5-b759-1ab947a479e6"
+  "error": "Quota unavailable for https://9router.minhmice.com:::5dafd58d-8505-4dd5-b759-1ab947a479e6; No eligible account available for all active slots (codex)"
 }
