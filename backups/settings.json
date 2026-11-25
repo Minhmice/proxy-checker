@@ -1,8 +1,1 @@
-{
-  "controlPassword": "minh2908",
-  "nineRouterUrl": "https://9router.minhmice.com",
-  "nineRouterPassword": "minh2908",
-  "nineRouterApiKey": "",
-  "antigravityRotatorEnabled": true,
-  "antigravityRotateMinutes": 10
-}
+{"controlPassword":"test-pass-1795620624613-3jq4vk66uby","nineRouterUrl":"http://127.0.0.1:9","nineRouterPassword":"","nineRouterApiKey":"","antigravityRotatorEnabled":false,"antigravityRotateMinutes":60}
