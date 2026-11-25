@@ -1,10 +1,10 @@
 {
-  "lastRunAt": 1795649075800,
+  "lastRunAt": 1795650875447,
   "lastRotationAt": 1795645413695,
   "running": false,
   "totalAccounts": 8,
   "activeCount": 4,
-  "totalSessionQuotaPercentage": 456,
+  "totalSessionQuotaPercentage": 457,
   "maxPossiblePercentage": 800,
   "accounts": [
     {
@@ -19,7 +19,7 @@
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795649075661,
+      "lastCheckedAt": 1795650875398,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -30,13 +30,13 @@
       "email": "wing.workshop.plane@gmail.com",
       "name": "wing.workshop.plane@gmail.com",
       "isActive": true,
-      "sessionPercentage": 94.09963,
-      "weeklyPercentage": 97.936904,
+      "sessionPercentage": 94.14737,
+      "weeklyPercentage": 98.15850999999999,
       "resetAt": "2026-11-26T01:16:06.000Z",
       "thresholdPercentage": 9,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795649075654,
+      "lastCheckedAt": 1795650875253,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -47,13 +47,13 @@
       "email": "relique.ch@gmail.com",
       "name": "relique.ch@gmail.com",
       "isActive": true,
-      "sessionPercentage": 94.06232,
-      "weeklyPercentage": 97.63691399999999,
+      "sessionPercentage": 95.27343,
+      "weeklyPercentage": 98.22636,
       "resetAt": "2026-11-26T01:19:01.000Z",
       "thresholdPercentage": 8,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795649075793,
+      "lastCheckedAt": 1795650875415,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -70,7 +70,7 @@
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795649074617,
+      "lastCheckedAt": 1795650874581,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -87,7 +87,7 @@
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795649074814,
+      "lastCheckedAt": 1795650874937,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -104,7 +104,7 @@
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795649074736,
+      "lastCheckedAt": 1795650874644,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -121,7 +121,7 @@
       "thresholdPercentage": 5,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795649074342,
+      "lastCheckedAt": 1795650874814,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -138,7 +138,7 @@
       "thresholdPercentage": 5,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795649075428,
+      "lastCheckedAt": 1795650875444,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 2,
       "lastActivatedAt": 1795645413447
