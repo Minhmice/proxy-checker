@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "timestamp": "2026-11-25T17:18:52.903Z",
+  "timestamp": "2026-11-25T17:48:54.095Z",
   "sourceDataDir": "C:\\Users\\minhmice\\Documents\\projects\\proxy-checker\\data",
   "files": [
     {
@@ -11,12 +11,12 @@
     {
       "name": "databases/antigravity-rotation.sqlite3",
       "size": 16384,
-      "sha256": "f67e91e223edba8382ede9df68ceed345ef0d2a081973600aefbd88f8f1dbf7a"
+      "sha256": "1feea95b821d2a76db5b72757966c19b02ae9d8ad0d0d76ac7c0c0b76682f337"
     },
     {
       "name": "antigravity-rotator.json",
-      "size": 4547,
-      "sha256": "15231d4d9eca805f273bd9c70bb79a4bc404262ebe5c3e4379e1884d46a2c82f"
+      "size": 4729,
+      "sha256": "5a76c92cad511cb0c45fe514d20f8950c0b41287b259a57cadfc37cc888ddc37"
     }
   ]
 }
