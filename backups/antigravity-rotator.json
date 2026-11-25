@@ -1,9 +1,9 @@
 {
-  "lastRunAt": 1795632535808,
+  "lastRunAt": 1795634336537,
   "running": false,
   "totalAccounts": 7,
   "activeCount": 2,
-  "totalSessionQuotaPercentage": 146,
+  "totalSessionQuotaPercentage": 148,
   "maxPossiblePercentage": 700,
   "accounts": [
     {
@@ -18,7 +18,7 @@
       "thresholdPercentage": null,
       "quotaAvailable": false,
       "lastError": "[429]: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 161h48m41s.",
-      "lastCheckedAt": 1795632535224,
+      "lastCheckedAt": 1795634336140,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -29,13 +29,13 @@
       "email": "metavocab@gmail.com",
       "name": "metavocab@gmail.com",
       "isActive": true,
-      "sessionPercentage": 69.01979,
-      "weeklyPercentage": 87.506187,
+      "sessionPercentage": 70.74293499999999,
+      "weeklyPercentage": 87.580496,
       "resetAt": "2026-11-25T21:17:24.000Z",
       "thresholdPercentage": 8,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795632535806,
+      "lastCheckedAt": 1795634336535,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -52,7 +52,7 @@
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795632534693,
+      "lastCheckedAt": 1795634335576,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -69,7 +69,7 @@
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795632534873,
+      "lastCheckedAt": 1795634335761,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -86,7 +86,7 @@
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795632534816,
+      "lastCheckedAt": 1795634335847,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -103,7 +103,7 @@
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795632535197,
+      "lastCheckedAt": 1795634335874,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -120,7 +120,7 @@
       "thresholdPercentage": 7,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795632535430,
+      "lastCheckedAt": 1795634336491,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 1,
       "lastActivatedAt": 1795531560192
