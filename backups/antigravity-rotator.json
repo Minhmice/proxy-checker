@@ -1,42 +1,59 @@
 {
-  "lastRunAt": 1795642411690,
+  "lastRunAt": 1795644212472,
   "lastRotationAt": null,
   "running": false,
-  "totalAccounts": 7,
-  "activeCount": 3,
-  "totalSessionQuotaPercentage": 375,
-  "maxPossiblePercentage": 700,
+  "totalAccounts": 8,
+  "activeCount": 4,
+  "totalSessionQuotaPercentage": 513,
+  "maxPossiblePercentage": 800,
   "accounts": [
-    {
-      "id": "5dafd58d-8505-4dd5-b759-1ab947a479e6",
-      "provider": "antigravity",
-      "email": "generateforwork38@gmail.com",
-      "name": "generateforwork38@gmail.com",
-      "isActive": false,
-      "sessionPercentage": 0,
-      "weeklyPercentage": 0.62288,
-      "resetAt": null,
-      "thresholdPercentage": null,
-      "quotaAvailable": false,
-      "lastError": "[429]: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 161h48m41s.",
-      "lastCheckedAt": 1795642411449,
-      "routerUrl": "https://9router.minhmice.com",
-      "turnCount": 0,
-      "lastActivatedAt": null
-    },
     {
       "id": "a85db44f-1cd2-492a-a374-cea2f63b9808",
       "provider": "antigravity",
       "email": "metavocab@gmail.com",
       "name": "metavocab@gmail.com",
-      "isActive": true,
-      "sessionPercentage": 100,
-      "weeklyPercentage": 88.00704999999999,
+      "isActive": false,
+      "sessionPercentage": 98.1818,
+      "weeklyPercentage": 88.51963,
       "resetAt": "2026-11-26T02:17:24.000Z",
+      "thresholdPercentage": null,
+      "quotaAvailable": true,
+      "lastError": null,
+      "lastCheckedAt": 1795644212436,
+      "routerUrl": "https://9router.minhmice.com",
+      "turnCount": 0,
+      "lastActivatedAt": null
+    },
+    {
+      "id": "cfb17e31-fe46-46f6-8c4c-e8d2ec9a54d5",
+      "provider": "antigravity",
+      "email": "wing.workshop.plane@gmail.com",
+      "name": "wing.workshop.plane@gmail.com",
+      "isActive": true,
+      "sessionPercentage": 97.556853,
+      "weeklyPercentage": 99.08388000000001,
+      "resetAt": "2026-11-26T01:16:06.000Z",
+      "thresholdPercentage": 9,
+      "quotaAvailable": true,
+      "lastError": null,
+      "lastCheckedAt": 1795644211988,
+      "routerUrl": "https://9router.minhmice.com",
+      "turnCount": 0,
+      "lastActivatedAt": null
+    },
+    {
+      "id": "d0fda4a6-d45a-4284-8272-e091021e7f8e",
+      "provider": "antigravity",
+      "email": "relique.ch@gmail.com",
+      "name": "relique.ch@gmail.com",
+      "isActive": true,
+      "sessionPercentage": 98.05268000000001,
+      "weeklyPercentage": 98.76317399999999,
+      "resetAt": "2026-11-26T01:19:01.000Z",
       "thresholdPercentage": 8,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795642411688,
+      "lastCheckedAt": 1795644212470,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -47,13 +64,13 @@
       "email": "giainhatgvdgthanhpho@gmail.com",
       "name": "giainhatgvdgthanhpho@gmail.com",
       "isActive": true,
-      "sessionPercentage": 42,
+      "sessionPercentage": 20,
       "weeklyPercentage": 0,
       "resetAt": "2026-11-26T00:33:20.000Z",
       "thresholdPercentage": 7,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795642410087,
+      "lastCheckedAt": 1795644210786,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -64,13 +81,13 @@
       "email": "trantueminh35@gmail.com",
       "name": "trantueminh35@gmail.com",
       "isActive": true,
-      "sessionPercentage": 87,
+      "sessionPercentage": 53,
       "weeklyPercentage": 0,
       "resetAt": "2026-11-26T01:37:53.000Z",
       "thresholdPercentage": 5,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795642410290,
+      "lastCheckedAt": 1795644211092,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -87,7 +104,7 @@
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795642410582,
+      "lastCheckedAt": 1795644211277,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -100,11 +117,11 @@
       "isActive": false,
       "sessionPercentage": 100,
       "weeklyPercentage": 0,
-      "resetAt": "2026-11-26T02:33:31.000Z",
+      "resetAt": "2026-11-26T03:03:32.000Z",
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795642410739,
+      "lastCheckedAt": 1795644211311,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -121,7 +138,7 @@
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795642411415,
+      "lastCheckedAt": 1795644212179,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 1,
       "lastActivatedAt": 1795531560192
@@ -130,8 +147,8 @@
   "groups": [
     {
       "provider": "antigravity",
-      "totalAccounts": 2,
-      "activeCount": 1
+      "totalAccounts": 3,
+      "activeCount": 2
     },
     {
       "provider": "codex",
@@ -143,10 +160,10 @@
     {
       "url": "https://9router.minhmice.com",
       "ok": true,
-      "totalAccounts": 7,
-      "activeCount": 3
+      "totalAccounts": 8,
+      "activeCount": 4
     }
   ],
-  "degraded": true,
-  "error": "Quota unavailable for https://9router.minhmice.com:::5dafd58d-8505-4dd5-b759-1ab947a479e6; No eligible account available for all active slots (antigravity)"
+  "degraded": false,
+  "error": null
 }
