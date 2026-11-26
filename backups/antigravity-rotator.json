@@ -1,10 +1,10 @@
 {
-  "lastRunAt": 1795656401729,
+  "lastRunAt": 1795658202536,
   "lastRotationAt": 1795645413695,
   "running": false,
   "totalAccounts": 10,
-  "activeCount": 4,
-  "totalSessionQuotaPercentage": 601,
+  "activeCount": 5,
+  "totalSessionQuotaPercentage": 790,
   "maxPossiblePercentage": 1000,
   "accounts": [
     {
@@ -19,7 +19,7 @@
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795656401029,
+      "lastCheckedAt": 1795658202379,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -30,13 +30,13 @@
       "email": "wing.workshop.plane@gmail.com",
       "name": "wing.workshop.plane@gmail.com",
       "isActive": true,
-      "sessionPercentage": 100,
-      "weeklyPercentage": 94.29634999999999,
+      "sessionPercentage": 99.986666,
+      "weeklyPercentage": 95.054466,
       "resetAt": "2026-11-26T06:16:06.000Z",
       "thresholdPercentage": 9,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795656401697,
+      "lastCheckedAt": 1795658202231,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -48,12 +48,12 @@
       "name": "relique.ch@gmail.com",
       "isActive": true,
       "sessionPercentage": 100,
-      "weeklyPercentage": 94.95790600000001,
-      "resetAt": "2026-11-26T06:19:01.000Z",
+      "weeklyPercentage": 94.64768,
+      "resetAt": "2026-11-26T06:56:43.000Z",
       "thresholdPercentage": 8,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795656401726,
+      "lastCheckedAt": 1795658202532,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -70,7 +70,7 @@
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795656400340,
+      "lastCheckedAt": 1795658201185,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -81,13 +81,13 @@
       "email": "trantueminh35@gmail.com",
       "name": "trantueminh35@gmail.com",
       "isActive": false,
-      "sessionPercentage": 0,
+      "sessionPercentage": 100,
       "weeklyPercentage": 0,
-      "resetAt": "2026-11-26T01:37:53.000Z",
+      "resetAt": "2026-11-26T06:56:42.000Z",
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795656400368,
+      "lastCheckedAt": 1795658201344,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -98,13 +98,13 @@
       "email": "nguyennghia.ssb@gmail.com",
       "name": "nguyennghia.ssb@gmail.com",
       "isActive": true,
-      "sessionPercentage": 91,
+      "sessionPercentage": 87,
       "weeklyPercentage": 0,
       "resetAt": "2026-11-26T06:11:14.000Z",
       "thresholdPercentage": 9,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795656400224,
+      "lastCheckedAt": 1795658200844,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -115,13 +115,13 @@
       "email": "schwabauerkrystin+1@gmail.com",
       "name": "schwabauerkrystin+1@gmail.com",
       "isActive": true,
-      "sessionPercentage": 45,
+      "sessionPercentage": 40,
       "weeklyPercentage": 0,
       "resetAt": "2026-11-26T03:07:49.000Z",
       "thresholdPercentage": 5,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795656400248,
+      "lastCheckedAt": 1795658200885,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -138,7 +138,7 @@
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795656401369,
+      "lastCheckedAt": 1795658202057,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 2,
       "lastActivatedAt": 1795645413447
@@ -151,11 +151,11 @@
       "isActive": false,
       "sessionPercentage": 0,
       "weeklyPercentage": 75,
-      "resetAt": "2026-11-26T03:39:59.513Z",
+      "resetAt": "2026-11-26T03:40:00.213Z",
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795656400249,
+      "lastCheckedAt": 1795658200840,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -165,17 +165,17 @@
       "provider": "claude",
       "email": "Account 3",
       "name": "Account 3",
-      "isActive": false,
-      "sessionPercentage": 0,
-      "weeklyPercentage": 41,
-      "resetAt": "2026-11-26T03:20:00.496Z",
-      "thresholdPercentage": null,
+      "isActive": true,
+      "sessionPercentage": 98,
+      "weeklyPercentage": 100,
+      "resetAt": "2026-11-26T06:30:00.320Z",
+      "thresholdPercentage": 8,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795656400225,
+      "lastCheckedAt": 1795658200953,
       "routerUrl": "https://9router.minhmice.com",
-      "turnCount": 0,
-      "lastActivatedAt": null
+      "turnCount": 1,
+      "lastActivatedAt": 1795657002757
     }
   ],
   "groups": [
@@ -192,7 +192,7 @@
     {
       "provider": "claude",
       "totalAccounts": 2,
-      "activeCount": 0
+      "activeCount": 1
     }
   ],
   "endpoints": [
@@ -200,7 +200,7 @@
       "url": "https://9router.minhmice.com",
       "ok": true,
       "totalAccounts": 10,
-      "activeCount": 4
+      "activeCount": 5
     }
   ],
   "degraded": true,
