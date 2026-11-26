@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "timestamp": "2026-11-26T15:39:30.355Z",
+  "timestamp": "2026-11-26T16:09:23.977Z",
   "sourceDataDir": "C:\\Users\\minhmice\\Documents\\projects\\proxy-checker\\data",
   "files": [
     {
@@ -16,7 +16,7 @@
     {
       "name": "antigravity-rotator.json",
       "size": 6099,
-      "sha256": "36cde2dd96e8b053361dcfa2310d0f5b17bd5b38004ad61aa824dcdc5add8e86"
+      "sha256": "dc85b93b5aa6dbfab9c6f679afe567250eae7b46c84eb6649b68d4768e80e352"
     }
   ]
 }
