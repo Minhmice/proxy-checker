@@ -1,11 +1,11 @@
 {
-  "lastRunAt": 1795703041748,
+  "lastRunAt": 1795703062623,
   "lastRotationAt": 1795645413695,
   "running": false,
-  "totalAccounts": 5,
-  "activeCount": 4,
-  "totalSessionQuotaPercentage": 442,
-  "maxPossiblePercentage": 500,
+  "totalAccounts": 10,
+  "activeCount": 6,
+  "totalSessionQuotaPercentage": 940,
+  "maxPossiblePercentage": 1000,
   "accounts": [
     {
       "id": "a85db44f-1cd2-492a-a374-cea2f63b9808",
@@ -19,7 +19,7 @@
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795703033920,
+      "lastCheckedAt": 1795703061354,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -36,7 +36,7 @@
       "thresholdPercentage": 9,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795703035245,
+      "lastCheckedAt": 1795703061122,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -53,10 +53,95 @@
       "thresholdPercentage": 8,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795703034503,
+      "lastCheckedAt": 1795703061328,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
+    },
+    {
+      "id": "01950fce-411e-4797-abfb-4c04c9d23155",
+      "provider": "codex",
+      "email": "giainhatgvdgthanhpho@gmail.com",
+      "name": "giainhatgvdgthanhpho@gmail.com",
+      "isActive": true,
+      "sessionPercentage": 99,
+      "weeklyPercentage": 0,
+      "resetAt": "2026-11-26T15:39:15.000Z",
+      "thresholdPercentage": 6,
+      "quotaAvailable": true,
+      "lastError": null,
+      "lastCheckedAt": 1795703061329,
+      "routerUrl": "https://9router.minhmice.com",
+      "turnCount": 0,
+      "lastActivatedAt": null
+    },
+    {
+      "id": "e6157fe9-f106-40a3-9b96-7b805b960679",
+      "provider": "codex",
+      "email": "trantueminh35@gmail.com",
+      "name": "trantueminh35@gmail.com",
+      "isActive": false,
+      "sessionPercentage": 100,
+      "weeklyPercentage": 0,
+      "resetAt": "2026-11-26T19:24:23.000Z",
+      "thresholdPercentage": null,
+      "quotaAvailable": true,
+      "lastError": null,
+      "lastCheckedAt": 1795703061904,
+      "routerUrl": "https://9router.minhmice.com",
+      "turnCount": 0,
+      "lastActivatedAt": null
+    },
+    {
+      "id": "271c00ec-c531-48de-97a9-c39b2faec6f0",
+      "provider": "codex",
+      "email": "nguyennghia.ssb@gmail.com",
+      "name": "nguyennghia.ssb@gmail.com",
+      "isActive": false,
+      "sessionPercentage": 100,
+      "weeklyPercentage": 0,
+      "resetAt": "2026-11-26T19:24:23.000Z",
+      "thresholdPercentage": null,
+      "quotaAvailable": true,
+      "lastError": null,
+      "lastCheckedAt": 1795703062057,
+      "routerUrl": "https://9router.minhmice.com",
+      "turnCount": 0,
+      "lastActivatedAt": null
+    },
+    {
+      "id": "f9cb7a38-c562-4875-90d5-fd37c2e7fe85",
+      "provider": "codex",
+      "email": "schwabauerkrystin+1@gmail.com",
+      "name": "schwabauerkrystin+1@gmail.com",
+      "isActive": true,
+      "sessionPercentage": 100,
+      "weeklyPercentage": 0,
+      "resetAt": "2026-11-26T18:09:18.000Z",
+      "thresholdPercentage": 5,
+      "quotaAvailable": true,
+      "lastError": null,
+      "lastCheckedAt": 1795703061635,
+      "routerUrl": "https://9router.minhmice.com",
+      "turnCount": 0,
+      "lastActivatedAt": null
+    },
+    {
+      "id": "f24bf61c-ba4d-4324-b148-485b11129a2a",
+      "provider": "codex",
+      "email": "ngphu.fbm.contact@gmail.com",
+      "name": "ngphu.fbm.contact@gmail.com",
+      "isActive": false,
+      "sessionPercentage": 100,
+      "weeklyPercentage": 0,
+      "resetAt": "2026-11-26T19:24:24.000Z",
+      "thresholdPercentage": null,
+      "quotaAvailable": true,
+      "lastError": null,
+      "lastCheckedAt": 1795703062615,
+      "routerUrl": "https://9router.minhmice.com",
+      "turnCount": 2,
+      "lastActivatedAt": 1795645413447
     },
     {
       "id": "e773022d-24cd-48f7-b4eb-d9de6c4a62a9",
@@ -70,7 +155,7 @@
       "thresholdPercentage": 9,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795703033086,
+      "lastCheckedAt": 1795703061077,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 1,
       "lastActivatedAt": 1795686546033
@@ -81,13 +166,13 @@
       "email": "Account 3",
       "name": "Account 3",
       "isActive": true,
-      "sessionPercentage": 82,
+      "sessionPercentage": 81,
       "weeklyPercentage": 90,
-      "resetAt": "2026-11-26T18:00:00.518Z",
+      "resetAt": "2026-11-26T18:00:01.071Z",
       "thresholdPercentage": 8,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795703033937,
+      "lastCheckedAt": 1795703061239,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 1,
       "lastActivatedAt": 1795657002757
@@ -101,8 +186,8 @@
     },
     {
       "provider": "codex",
-      "totalAccounts": 0,
-      "activeCount": 0
+      "totalAccounts": 5,
+      "activeCount": 2
     },
     {
       "provider": "claude",
@@ -113,12 +198,11 @@
   "endpoints": [
     {
       "url": "https://9router.minhmice.com",
-      "ok": false,
-      "error": "codex: The operation was aborted due to timeout",
-      "totalAccounts": 5,
-      "activeCount": 4
+      "ok": true,
+      "totalAccounts": 10,
+      "activeCount": 6
     }
   ],
-  "degraded": true,
-  "error": "Endpoint https://9router.minhmice.com codex unavailable: The operation was aborted due to timeout"
+  "degraded": false,
+  "error": null
 }
