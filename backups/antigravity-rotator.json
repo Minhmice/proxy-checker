@@ -1,11 +1,11 @@
 {
-  "lastRunAt": 1795652676777,
+  "lastRunAt": 1795652798830,
   "lastRotationAt": 1795645413695,
   "running": false,
-  "totalAccounts": 8,
-  "activeCount": 4,
-  "totalSessionQuotaPercentage": 457,
-  "maxPossiblePercentage": 800,
+  "totalAccounts": 10,
+  "activeCount": 6,
+  "totalSessionQuotaPercentage": 489,
+  "maxPossiblePercentage": 1000,
   "accounts": [
     {
       "id": "a85db44f-1cd2-492a-a374-cea2f63b9808",
@@ -19,7 +19,7 @@
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795652676637,
+      "lastCheckedAt": 1795652798751,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -30,13 +30,13 @@
       "email": "wing.workshop.plane@gmail.com",
       "name": "wing.workshop.plane@gmail.com",
       "isActive": true,
-      "sessionPercentage": 94.86155,
-      "weeklyPercentage": 98.71539,
+      "sessionPercentage": 94.23658999999999,
+      "weeklyPercentage": 98.18081,
       "resetAt": "2026-11-26T01:16:06.000Z",
       "thresholdPercentage": 9,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795652676771,
+      "lastCheckedAt": 1795652798821,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -53,7 +53,7 @@
       "thresholdPercentage": 8,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795652676660,
+      "lastCheckedAt": 1795652798747,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -70,7 +70,7 @@
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795652675651,
+      "lastCheckedAt": 1795652798503,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -87,7 +87,7 @@
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795652675817,
+      "lastCheckedAt": 1795652798503,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -104,7 +104,7 @@
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795652675795,
+      "lastCheckedAt": 1795652798502,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -115,13 +115,13 @@
       "email": "schwabauerkrystin+1@gmail.com",
       "name": "schwabauerkrystin+1@gmail.com",
       "isActive": true,
-      "sessionPercentage": 62,
+      "sessionPercentage": 60,
       "weeklyPercentage": 0,
       "resetAt": "2026-11-26T03:07:49.000Z",
       "thresholdPercentage": 5,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795652676004,
+      "lastCheckedAt": 1795652798502,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -132,16 +132,50 @@
       "email": "ngphu.fbm.contact@gmail.com",
       "name": "ngphu.fbm.contact@gmail.com",
       "isActive": true,
-      "sessionPercentage": 81,
+      "sessionPercentage": 79,
       "weeklyPercentage": 0,
       "resetAt": "2026-11-26T03:23:46.000Z",
       "thresholdPercentage": 5,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795652676634,
+      "lastCheckedAt": 1795652798591,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 2,
       "lastActivatedAt": 1795645413447
+    },
+    {
+      "id": "e773022d-24cd-48f7-b4eb-d9de6c4a62a9",
+      "provider": "claude",
+      "email": "Account 2",
+      "name": "Account 2",
+      "isActive": true,
+      "sessionPercentage": 36,
+      "weeklyPercentage": 78,
+      "resetAt": "2026-11-26T03:40:00.577Z",
+      "thresholdPercentage": 8,
+      "quotaAvailable": true,
+      "lastError": null,
+      "lastCheckedAt": 1795652797854,
+      "routerUrl": "https://9router.minhmice.com",
+      "turnCount": 0,
+      "lastActivatedAt": null
+    },
+    {
+      "id": "96926811-71fc-44ad-9fab-64a9196b073d",
+      "provider": "claude",
+      "email": "Account 3",
+      "name": "Account 3",
+      "isActive": true,
+      "sessionPercentage": 0,
+      "weeklyPercentage": 41,
+      "resetAt": "2026-11-26T03:20:00.089Z",
+      "thresholdPercentage": 7,
+      "quotaAvailable": true,
+      "lastError": null,
+      "lastCheckedAt": 1795652798502,
+      "routerUrl": "https://9router.minhmice.com",
+      "turnCount": 0,
+      "lastActivatedAt": null
     }
   ],
   "groups": [
@@ -154,16 +188,21 @@
       "provider": "codex",
       "totalAccounts": 5,
       "activeCount": 2
+    },
+    {
+      "provider": "claude",
+      "totalAccounts": 2,
+      "activeCount": 2
     }
   ],
   "endpoints": [
     {
       "url": "https://9router.minhmice.com",
       "ok": true,
-      "totalAccounts": 8,
-      "activeCount": 4
+      "totalAccounts": 10,
+      "activeCount": 6
     }
   ],
-  "degraded": false,
-  "error": null
+  "degraded": true,
+  "error": "No eligible account available for all active slots (claude)"
 }
