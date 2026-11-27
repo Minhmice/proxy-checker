@@ -12,3 +12,7 @@ runtime/
 .worktrees/
 .superpowers/
 working-proxies.txt
+.claude/
+.probe-rot/
+README.original.md
+artifacts/

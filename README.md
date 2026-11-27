@@ -17,12 +17,12 @@ On first install, copy `.env.example` to `.env` to bootstrap — settings are th
 
 ## Tooling & Architecture Operations
 
-The application uses an integrated modern toolchain:
+Integrated modern toolchain:
 - **API Server:** [Hono](https://hono.dev) mounted inside the native Node.js HTTP server; Next.js handles pages, assets, and webpack-HMR.
 - **Database:** [Drizzle ORM](https://orm.drizzle.team) with `better-sqlite3` over domain SQLite databases (`data/antigravity-rotation.sqlite3`, `data/fleet.sqlite3`).
 - **Linter & Formatter:** [Biome v2](https://biomejs.dev) as the single code quality tool.
-- **API Mocking:** [MSW v3](https://mswjs.io) with strict separation: opt-in development browser worker (`NEXT_PUBLIC_ENABLE_API_MOCKS=true`) and Node test suite interception. Never activated in production builds.
-- **Accessibility:** [Axe-core](https://www.deque.com/axe/) via Playwright scanning dashboard routes against WCAG 2.0 / 2.1 A and AA standards.
+- **API Mocking:** [MSW v3](https://mswjs.io), strict separation: opt-in dev browser worker (`NEXT_PUBLIC_ENABLE_API_MOCKS=true`) and Node test suite interception. Never active in production builds.
+- **Accessibility:** [Axe-core](https://www.deque.com/axe/) via Playwright scans dashboard routes against WCAG 2.0 / 2.1 A and AA.
 
 ### Verification and Operational Commands
 
@@ -55,16 +55,16 @@ npm run db:verify -- <before-dir> <after-dir>
 
 ### Rollback Procedure
 
-If a deployment fails after the service has restarted, the deploy script stops the service and leaves databases untouched. A snapshot taken before deployment can be older than data written by the new release and must not be restored blindly.
+If deploy fails after service restart, deploy script stops service and leaves databases untouched. Pre-deploy snapshot can be older than data written by new release; do not restore blindly.
 
-1. Stop and confirm all application and external database writers are stopped.
-2. Preserve the entire current data directory, including SQLite `-wal` and `-shm` files, before attempting recovery.
-3. Inspect the current schema, preserved files, and the pre-deployment snapshot path reported in the deploy log. Decide on an offline recovery plan before changing data.
-4. Restart only after confirming that the release and database schema are compatible.
+1. Stop and confirm all application and external database writers stopped.
+2. Preserve entire current data directory, including SQLite `-wal` and `-shm` files, before recovery.
+3. Inspect current schema, preserved files, and pre-deploy snapshot path from deploy log. Decide offline recovery plan before changing data.
+4. Restart only after confirming release and database schema compatible.
 
 ## Run without Docker
 
-1. Copy `.env.example` to `.env` and set at minimum:
+1. Copy `.env.example` to `.env`, set at minimum:
    - `CONTROL_PASSWORD` — dashboard login
    - `NINEROUTER_PASSWORD` — **9Router dashboard password**
    - `NINEROUTER_URL` — default `https://9router.minhmice.com`
@@ -73,7 +73,7 @@ If a deployment fails after the service has restarted, the deploy script stops t
 
 ## Environment variables
 
-`.env` is optional after the first run — use **Settings** in the dashboard instead. These variables bootstrap `data/settings.json` on first start:
+`.env` optional after first run; use **Settings** instead. These variables bootstrap `data/settings.json` on first start:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
