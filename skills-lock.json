@@ -1,35 +1,63 @@
 {
-  "version": 1,
+  "version": 2,
   "skills": {
     "21st-ui": {
       "source": "21st-dev/magic-mcp",
       "sourceType": "github",
       "skillPath": "skills/21st-ui/SKILL.md",
-      "computedHash": "c4d00010908d5144d483ae351005bdc73de4dea2d1e423e43c66a8a6aa9c4417"
+      "computedHash": "8f8bc9f57c1defb81d0bcb2d81c3ae38bd8b2d76e8f37123ede937ea78d340ad"
+    },
+    "accessibility": {
+      "source": "addyosmani/web-quality-skills",
+      "commit": "afa8da942115f2961fdbfa80807ea0b232ff6c00",
+      "sourceType": "github",
+      "skillPath": "skills/accessibility/SKILL.md",
+      "computedHash": "c668809f5df57feb87cc06f1bc37fb340d1d92e26bacb6edbeab9258d22e76a5"
     },
     "components-build": {
       "source": "nolly-studio/cult-ui",
       "sourceType": "github",
       "skillPath": ".agents/skills/components-build/SKILL.md",
-      "computedHash": "d3b576306fedc20455b0f2120d35215f150d911858907060183dd3964654b623"
+      "computedHash": "18686ce92b873e16e4da59a20add39b10ed9cfbbc69e35a1085b7bf993da4cd8"
     },
     "fixing-motion-performance": {
       "source": "nolly-studio/cult-ui",
       "sourceType": "github",
       "skillPath": ".claude/skills/fixing-motion-performance/SKILL.md",
-      "computedHash": "ea5c90830d2b3ff29dfa6199932b89b27028ee5404cb735ddd779bac7a1c3101"
+      "computedHash": "eee91bebfa8b0fee03d34539be08ed2138015c60331fbf4a885bd20063863488"
     },
     "frontend-design": {
       "source": "nolly-studio/cult-ui",
       "sourceType": "github",
       "skillPath": ".agents/skills/frontend-design/SKILL.md",
-      "computedHash": "b664aede5a485650af808199ad1b3edfe4ac0f3ad53236d7095c39db6ced13fe"
+      "computedHash": "5af54caec8bb80842610380452bac530b00947ccb4ea684152d9cbf21195e55d"
     },
     "magic-ui": {
       "source": "magicuidesign/magicui",
       "sourceType": "github",
       "skillPath": "skills/magic-ui/SKILL.md",
-      "computedHash": "751895d50c76490c6f92a68cdbe61100bd96b4963d1e91e37b5d82c8df0fc2d7"
+      "computedHash": ""
+    },
+    "shadcn": {
+      "source": "shadcn-ui/ui",
+      "commit": "055aa6b7837b1808456a24beb4c97a677864aa82",
+      "sourceType": "github",
+      "skillPath": "skills/shadcn/SKILL.md",
+      "computedHash": "388962d16c7a4f13aaeee0d8f128e50a87df8553d42ef7988c39c0e1c74a40e8"
+    },
+    "tailwind-v4-shadcn": {
+      "source": "secondsky/claude-skills",
+      "commit": "14966c3024f48eea0386eb970b230ea0f4bebd33",
+      "sourceType": "github",
+      "skillPath": "plugins/tailwind-v4-shadcn/skills/tailwind-v4-shadcn/SKILL.md",
+      "computedHash": "c7432deb64737b2c3294c771fccff92bc0b7849247a6132581ade27ef4800445"
+    },
+    "web-design-guidelines": {
+      "source": "vercel-labs/agent-skills",
+      "commit": "5a37a6329fbad3666c3207392a6a7c0110e92efb",
+      "sourceType": "github",
+      "skillPath": "skills/web-design-guidelines/SKILL.md",
+      "computedHash": "5994e4cfd86144903d2ba750f862b9e36af15e3297aac983679e347b99f6cb71"
     }
   }
 }

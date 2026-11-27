@@ -4,6 +4,9 @@ import type {
   NineRouterTestResult,
   AntigravityRotatorSnapshot,
   AggregatedTokenUsage,
+  RecentRequestsResponse,
+  SpotifyAction,
+  SpotifyNow,
 } from "./types";
 import { isAbortError } from "./request-lifecycle";
 
@@ -165,6 +168,19 @@ export async function fetchSettings(
   }
 }
 
+async function parseBody(response: Response): Promise<any | null> {
+  try {
+    return await response.json();
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") throw err;
+    return null;
+  }
+}
+
+function httpFailure(response: Response): { ok: false; error: string } {
+  return { ok: false, error: `HTTP ${response.status}` };
+}
+
 export async function updateSettings(
   arg1: string | SettingsUpdatePayload,
   arg2?: SettingsUpdatePayload,
@@ -178,9 +194,9 @@ export async function updateSettings(
     headers: authHeaders(password),
     body: JSON.stringify(patch),
   });
-  const body = await response.json();
   if (response.status === 401) throw new Error("Wrong control password");
-  if (!response.ok) throw new Error(body.error || "Could not save settings");
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`);
   return body as SettingsResponse;
 }
 
@@ -199,8 +215,10 @@ export async function testNineRouterConnection(
     headers: authHeaders(password),
     body: JSON.stringify(patch ?? {}),
   });
-  const body = await response.json();
+  // ponytail: non-JSON bodies yield null; callers get HTTP-status errors.
   if (response.status === 401) throw new Error("Wrong control password");
+  const body = await parseBody(response);
+  if (!response.ok && !body) throw new Error(`HTTP ${response.status}`);
   return body as NineRouterTestResult;
 }
 
@@ -239,7 +257,9 @@ export async function refreshAntigravityQuota(
   });
   if (response.status === 401) throw new Error("Wrong control password");
   if (!response.ok) throw new Error("Failed to refresh Antigravity quotas");
-  return response.json();
+  const body = await parseBody(response);
+  if (!body) throw new Error(`HTTP ${response.status}`);
+  return body;
 }
 
 export async function rotateAntigravityAccounts(
@@ -251,7 +271,27 @@ export async function rotateAntigravityAccounts(
     headers: authHeaders(password),
   });
   if (response.status === 401) throw new Error("Wrong control password");
-  return response.json();
+  return (await parseBody(response)) ?? httpFailure(response);
+}
+export async function updateAntigravityAccountState(
+  accountId: string,
+  routerUrl: string | undefined,
+  isActive: boolean,
+  password?: string,
+): Promise<AntigravityRotatorSnapshot> {
+  const response = await fetch("/api/antigravity/account-state", {
+    method: "PUT",
+    credentials: "same-origin",
+    headers: { ...authHeaders(password), "Content-Type": "application/json" },
+    body: JSON.stringify({ accountId, routerUrl, isActive }),
+  });
+  const result = (await parseBody(response)) as
+    | (AntigravityRotatorSnapshot & { error?: string })
+    | null;
+  if (!response.ok || !Array.isArray(result?.accounts)) {
+    throw new Error(result?.error || `Account update failed: ${response.status}`);
+  }
+  return result;
 }
 
 export async function updateNodeConnection(
@@ -270,7 +310,7 @@ export async function updateNodeConnection(
     },
   );
   if (response.status === 401) throw new Error("Wrong control password");
-  return response.json();
+  return (await parseBody(response)) ?? httpFailure(response);
 }
 
 export interface BackupStatusResponse {
@@ -292,7 +332,9 @@ export async function fetchBackupStatus(password?: string): Promise<BackupStatus
     headers: authHeaders(password),
   });
   if (response.status === 401) throw new Error("Wrong control password");
-  return response.json();
+  const body = await parseBody(response);
+  if (!response.ok) return { ok: false, error: body?.error || `HTTP ${response.status}` };
+  return body ?? httpFailure(response);
 }
 
 export async function triggerBackupSync(
@@ -316,7 +358,7 @@ export async function triggerBackupSync(
     body: JSON.stringify({ push }),
   });
   if (response.status === 401) throw new Error("Wrong control password");
-  return response.json();
+  return (await parseBody(response)) ?? httpFailure(response);
 }
 
 export async function restoreBackup(
@@ -328,7 +370,7 @@ export async function restoreBackup(
     headers: authHeaders(password),
   });
   if (response.status === 401) throw new Error("Wrong control password");
-  return response.json();
+  return (await parseBody(response)) ?? httpFailure(response);
 }
 
 export async function fetchTokenUsage(
@@ -357,7 +399,6 @@ export async function fetchTokenUsage(
   const params = new URLSearchParams({ period });
   if (nodeId && nodeId !== "all") params.set("nodeId", nodeId);
 
-  // 1. Try unified aggregate endpoint
   try {
     const response = await fetch(`/api/ninerouter/stats?${params.toString()}`, {
       cache: "no-store",
@@ -373,7 +414,6 @@ export async function fetchTokenUsage(
     if (signal?.aborted || isAbortError(err)) throw err;
   }
 
-  // 2. Fallback: Query Pi Master node (server-lan) if aggregate route is unreachable or 404
   const targetNode = nodeId && nodeId !== "all" ? nodeId : "server-lan";
   const fallbackUrl = `/api/ninerouter/nodes/${encodeURIComponent(targetNode)}/stats?period=${encodeURIComponent(period)}`;
   const fallbackRes = await fetch(fallbackUrl, {
@@ -414,4 +454,45 @@ export async function fetchTokenUsage(
       },
     ],
   };
+}
+
+export async function fetchRecentRequests(
+  password?: string,
+  signal?: AbortSignal,
+): Promise<RecentRequestsResponse> {
+  const response = await fetch("/api/ninerouter/recent", {
+    cache: "no-store",
+    signal,
+    credentials: "same-origin",
+    headers: authHeaders(password),
+  });
+  if (response.status === 401) throw new Error("Wrong control password");
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(body?.error ?? `Recent requests failed (HTTP ${response.status})`);
+  }
+  return body as RecentRequestsResponse;
+}
+
+export async function fetchSpotifyNow(signal?: AbortSignal): Promise<SpotifyNow> {
+  const response = await fetch("/api/spotify/now", {
+    cache: "no-store",
+    credentials: "same-origin",
+    signal,
+  });
+  if (!response.ok) throw new Error(`Spotify request failed (HTTP ${response.status})`);
+  return (await response.json()) as SpotifyNow;
+}
+
+/** Rejects with an `Error` whose message is the server's error code, e.g. `no_device`. */
+export async function sendSpotifyAction(action: SpotifyAction): Promise<void> {
+  const response = await fetch("/api/spotify/control", {
+    body: JSON.stringify({ action }),
+    credentials: "same-origin",
+    headers: jsonHeaders(),
+    method: "POST",
+  });
+  if (response.ok) return;
+  const body = (await response.json().catch(() => null)) as { error?: string } | null;
+  throw new Error(body?.error ?? "upstream");
 }

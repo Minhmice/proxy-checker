@@ -1,25 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import {
-  Eye,
-  EyeOff,
-  ArrowRight,
-  Volume2,
-  VolumeX,
-  ShieldCheck,
-  Check,
-  Clock,
-  Lock,
-  Terminal,
-  Server,
-  AlertCircle,
-} from "lucide-react";
+import { AlertCircle, ArrowRight, Check, Eye, EyeOff } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
 import { login } from "@/lib/api";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import {
   InputGroup,
@@ -28,63 +14,31 @@ import {
   InputGroupInput,
 } from "@/components/ui/input-group";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import KineticGrid from "@/components/ui/kinetic-grid";
+import DitherFrame from "@/components/ui/dither-frame";
+import { DitherCard } from "@/components/dithercn/dither-card";
+import { Fire } from "@/components/dithercn/fire";
+import { SpotifyPlayer } from "@/components/spotify-player";
 import { cn } from "@/lib/utils";
 
-function playAudioTone(freq: number, type: OscillatorType, duration: number, gainVal: number) {
-  try {
-    if (typeof window === "undefined" || !("AudioContext" in window)) return;
-    const ctx = new window.AudioContext();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = type;
-    osc.frequency.setValueAtTime(freq, ctx.currentTime);
-    gain.gain.setValueAtTime(gainVal, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + duration);
-  } catch {
-    // Audio context suppressed by policy
-  }
-}
+const delay = (ms: number) => {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  setTimeout(resolve, ms);
+  return promise;
+};
 
-const LOG_ENTRIES = [
-  {
-    tag: "AUTH",
-    tagClass: "auth-terminal-tag",
-    text: "Control password required for dashboard and account operations",
-  },
-  {
-    tag: "SESSION",
-    tagClass: "auth-terminal-tag--sync",
-    text: "Session cookie valid for 24 hours from sign-in",
-  },
-  {
-    tag: "SECURITY",
-    tagClass: "auth-terminal-tag--ok",
-    text: "Issued session token uses HttpOnly cookie",
-  },
-  {
-    tag: "AUDIT",
-    tagClass: "auth-terminal-tag",
-    text: "Operational events and rotation history recorded to local database",
-  },
-];
+/** Stagger index for the entrance animations defined in dashboard-shell.css. */
+const step = (index: number) => ({ "--i": index }) as CSSProperties;
 
 export default function AuthPage() {
   const router = useRouter();
   const { authenticated, setAuthenticated, setPassword } = useAuth();
   const [value, setValue] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [audioEnabled, setAudioEnabled] = useState(false);
   const [timeString, setTimeString] = useState("");
   const [isPending, setIsPending] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [decryptStage, setDecryptStage] = useState<"idle" | "decrypting" | "verified">("idle");
   const [isShaking, setIsShaking] = useState(false);
-  const lastKeyToneRef = useRef(0);
   const pendingRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -100,52 +54,22 @@ export default function AuthPage() {
 
   useEffect(() => {
     const updateClock = () => {
-      const now = new Date();
-      setTimeString(now.toISOString().substring(11, 19) + " UTC");
+      setTimeString(`${new Date().toISOString().substring(11, 19)} UTC`);
     };
     updateClock();
     const interval = setInterval(updateClock, 1000);
     return () => clearInterval(interval);
   }, []);
 
-  const playKeyClick = useCallback(() => {
-    if (!audioEnabled) return;
-    const now = Date.now();
-    if (now - lastKeyToneRef.current < 45) return;
-    lastKeyToneRef.current = now;
-    playAudioTone(760 + Math.random() * 80, "triangle", 0.025, 0.015);
-  }, [audioEnabled]);
-
-  const playAccessChord = useCallback(() => {
-    if (!audioEnabled) return;
-    playAudioTone(440, "sine", 0.12, 0.04);
-    setTimeout(() => playAudioTone(880, "sine", 0.25, 0.05), 90);
-  }, [audioEnabled]);
-
-  const playErrorBuzz = useCallback(() => {
-    if (!audioEnabled) return;
-    playAudioTone(160, "sawtooth", 0.16, 0.04);
-  }, [audioEnabled]);
-
-  const toggleAudio = () => {
-    setAudioEnabled((prev) => {
-      const next = !prev;
-      if (next) playAudioTone(880, "sine", 0.08, 0.03);
-      return next;
-    });
-  };
-
   const handleInputChange = (nextVal: string) => {
     setValue(nextVal);
     if (errorMessage) {
       setErrorMessage("");
     }
-    playKeyClick();
   };
 
   const triggerShake = () => {
     setIsShaking(true);
-    playErrorBuzz();
     setTimeout(() => setIsShaking(false), 340);
   };
 
@@ -182,12 +106,11 @@ export default function AuthPage() {
       }
 
       setDecryptStage("decrypting");
-      playAccessChord();
-      await new Promise<void>((resolve) => setTimeout(resolve, 180));
+      await delay(180);
       if (signal.aborted) return;
 
       setDecryptStage("verified");
-      await new Promise<void>((resolve) => setTimeout(resolve, 160));
+      await delay(160);
       if (signal.aborted) return;
 
       router.replace("/");
@@ -212,263 +135,177 @@ export default function AuthPage() {
     }
   }
 
+  const opening = decryptStage !== "idle";
+
   return (
-    <KineticGrid className="auth-page" globalColor="default">
-      <div className="auth-split-wrapper">
-        <div className="auth-split-grid">
-          {/* Left Column: Mission Control & System Guidance */}
-          <div className="auth-hero-pane">
-            <div>
-              <div className="flex items-center gap-3">
-                <div className="auth-gate-mark font-mono text-sm font-bold">mP</div>
-                <div>
-                  <span className="text-base font-bold text-ink tracking-tight block">
-                    minhmiceProxy
-                  </span>
-                  <span className="text-xs font-mono text-slate-400 tracking-wide">
-                    Token &amp; Quota Observer
-                  </span>
-                </div>
+    <DitherFrame intensity={0.12}>
+      <main className="mx-auto grid min-h-dvh w-full max-w-[1600px] grid-cols-1 gap-3 p-3 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:gap-4 lg:p-4">
+        <DitherCard
+          glow="top-right"
+          color="--primary"
+          reach={320}
+          strength={0.35}
+          radius={16}
+          className="relative isolate flex min-h-[44dvh] flex-col overflow-hidden lg:col-start-2 lg:row-start-1 lg:min-h-0"
+        >
+          <Fire
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-[34%]"
+            height={opening ? 1 : 0.72}
+            scale={1.5}
+            wind={-0.15}
+            embers={0.4}
+            intensity={opening ? 0.9 : 0.6}
+            palette={["transparent", "--dither-ink", "--primary"]}
+          />
+          <div className="relative z-10 flex flex-1 flex-col gap-8 p-6 sm:p-8 lg:p-12">
+            <div className="auth-rise flex items-center gap-3" style={step(0)}>
+              <div className="flame-logo-core grid size-9 place-items-center rounded-[10px] bg-primary font-mono text-xs font-bold text-primary-foreground">
+                <span className="relative z-10">mP</span>
               </div>
-
-              <div className="mt-8 lg:mt-16">
-                <h1 className="text-2xl sm:text-4xl lg:text-5xl font-bold tracking-tight text-ink leading-[1.14]">
-                  Autonomous account quota management and token efficiency under complete control.
-                </h1>
-                <p className="mt-4 text-sm sm:text-base text-slate-300 max-w-xl leading-relaxed">
-                  Live session quota monitoring, autonomous threshold rotation, and real-time token
-                  telemetry for 9Router endpoints in dim control-room conditions.
-                </p>
-              </div>
-
-              {/* Factual Operational Console Card */}
-              <div className="auth-mission-card">
-                <div className="flex items-center justify-between pb-3 mb-3 border-b border-border-subtle">
-                  <div className="flex items-center gap-2">
-                    <span className="status-dot status-dot--ok" />
-                    <span className="font-mono text-xs font-semibold text-ink uppercase tracking-wider">
-                      Control Plane Ready
-                    </span>
-                  </div>
-                  <span className="font-mono text-xs text-slate-400">GATEWAY 127.0.0.1:1300</span>
-                </div>
-
-                <div className="auth-mission-metrics">
-                  <div className="auth-mission-metric-cell">
-                    <span className="auth-mission-metric-k">ACCESS SCOPE</span>
-                    <span className="auth-mission-metric-v">
-                      <ShieldCheck className="size-3.5 text-primary" /> Operator
-                    </span>
-                  </div>
-                  <div className="auth-mission-metric-cell">
-                    <span className="auth-mission-metric-k">SESSION LIFETIME</span>
-                    <span className="auth-mission-metric-v text-accent-green">
-                      <Clock className="size-3.5 text-accent-green" /> 24 Hours
-                    </span>
-                  </div>
-                  <div className="auth-mission-metric-cell">
-                    <span className="auth-mission-metric-k">TARGET DAEMON</span>
-                    <span className="auth-mission-metric-v">
-                      <Server className="size-3.5 text-primary" /> 9Router
-                    </span>
-                  </div>
-                  <div className="auth-mission-metric-cell">
-                    <span className="auth-mission-metric-k">SESSION STORE</span>
-                    <span className="auth-mission-metric-v">
-                      <Lock className="size-3.5 text-accent-green" /> HttpOnly
-                    </span>
-                  </div>
-                </div>
-
-                {/* Session Policy Guidelines */}
-                <div className="auth-terminal-box">
-                  <div className="auth-terminal-header">
-                    <span className="flex items-center gap-1.5">
-                      <Terminal className="size-3 text-muted-foreground" /> Session Access
-                      Guidelines
-                    </span>
-                    <span className="text-[10px] text-accent-green font-medium">
-                      AUTHENTICATION REQUIRED
-                    </span>
-                  </div>
-                  <div className="space-y-1.5">
-                    {LOG_ENTRIES.map((entry, idx) => (
-                      <div
-                        key={idx}
-                        className={cn("auth-terminal-line", idx >= 2 && "hidden sm:flex")}
-                      >
-                        <span className={cn("text-[11px] font-semibold shrink-0", entry.tagClass)}>
-                          [{entry.tag}]
-                        </span>
-                        <span className="auth-terminal-msg text-[11px] truncate text-slate-200">
-                          {entry.text}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
+              <span className="text-sm font-semibold tracking-tight">minhmiceProxy</span>
             </div>
 
-            {/* Architecture Trust Bar */}
-            <div className="auth-trust-bar">
-              <div className="auth-trust-item text-slate-300">
-                <ShieldCheck className="size-3.5 text-primary" />
-                <span>Session Isolation</span>
-              </div>
-              <div className="auth-trust-item text-slate-300">
-                <Lock className="size-3.5 text-accent-green" />
-                <span>Protected Route Management</span>
-              </div>
-              <div className="auth-trust-item text-slate-300">
-                <Server className="size-3.5 text-slate-400" />
-                <span>Protected Token Console</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Right Column: Operator Authentication Chassis */}
-          <div className="auth-form-pane">
-            <div className="w-full max-w-[440px] flex items-center justify-between mb-4">
-              {timeString ? (
-                <span className="auth-telemetry-badge text-slate-300" title="Live UTC timestamp">
-                  <Clock className="size-3 text-slate-400" />
-                  <span>{timeString}</span>
+            <div className="my-auto flex max-w-[46rem] flex-col gap-6 pb-[16%] lg:pb-[18%]">
+              <h1 className="text-[clamp(2.25rem,4.3vw,4.25rem)] font-semibold leading-[1.06] tracking-[-0.03em]">
+                <span className="auth-line">
+                  <span style={step(0)}>Two accounts live.</span>
                 </span>
-              ) : (
-                <div />
-              )}
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={toggleAudio}
-                className={cn("auth-audio-toggle", audioEnabled && "is-active")}
-                aria-pressed={audioEnabled}
-                aria-label={
-                  audioEnabled ? "Disable UI synthesized sound" : "Enable UI synthesized sound"
-                }
-                title={audioEnabled ? "Synthesized sound feedback active" : "Sound muted"}
+                <span className="auth-line text-muted-foreground">
+                  <span style={step(1)}>One verified handoff.</span>
+                </span>
+              </h1>
+              <p
+                className="auth-rise max-w-[44ch] text-sm leading-relaxed text-muted-foreground sm:text-base"
+                style={step(3)}
               >
-                {audioEnabled ? (
-                  <Volume2 className="size-3 text-primary" />
-                ) : (
-                  <VolumeX className="size-3 text-muted-foreground" />
-                )}
-                <span>{audioEnabled ? "AUDIO ON" : "AUDIO OFF"}</span>
-              </Button>
+                9Router quota and token telemetry for Antigravity and Codex. An account is switched
+                off only after its replacement is confirmed active.
+              </p>
+            </div>
+          </div>
+        </DitherCard>
+
+        <section
+          aria-labelledby="auth-title"
+          className="flex min-w-0 flex-col px-3 pt-6 pb-4 sm:px-6 lg:col-start-1 lg:row-start-1 lg:px-10 lg:py-10"
+        >
+          <div className="auth-rise flex items-center justify-between gap-3" style={step(1)}>
+            <span
+              className="font-mono text-xs tabular-nums text-muted-foreground"
+              title="Live UTC timestamp"
+            >
+              {timeString || "\u00a0"}
+            </span>
+          </div>
+
+          <SpotifyPlayer
+            className="auth-rise order-last mt-8 w-full max-w-[26rem] lg:order-none"
+            style={step(2)}
+          />
+
+          <div className="min-h-10 flex-1 lg:min-h-24" aria-hidden="true" />
+
+          <div
+            className={cn("flex w-full max-w-[26rem] flex-col gap-8", isShaking && "auth-shake")}
+          >
+            <div className="auth-rise flex flex-col gap-2" style={step(2)}>
+              <h2 id="auth-title" className="text-2xl font-semibold tracking-tight">
+                Sign in
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                Enter the control password to open the console.
+              </p>
             </div>
 
-            <Card className={cn("auth-page-card", isShaking && "is-shaking")}>
-              <CardHeader className="pb-4">
-                <CardTitle
-                  id="auth-page-title"
-                  className="text-2xl font-bold tracking-tight text-ink"
-                >
-                  Authorize Control Plane
-                </CardTitle>
-                <CardDescription className="text-sm text-slate-300">
-                  Enter control password to access account rotation and dashboard settings.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                {errorMessage && (
-                  <Alert
-                    id="auth-error-alert"
-                    variant="destructive"
-                    className="mb-4 py-2.5 px-3 text-xs"
-                    role="alert"
-                    aria-live="assertive"
-                  >
-                    <AlertCircle className="size-4 shrink-0" />
-                    <AlertDescription className="text-xs font-medium">
-                      {errorMessage}
-                    </AlertDescription>
-                  </Alert>
-                )}
+            {errorMessage && (
+              <Alert
+                id="auth-error-alert"
+                className="border-destructive px-3 py-2.5 text-xs"
+                role="alert"
+                aria-live="assertive"
+              >
+                <AlertCircle className="size-4 shrink-0 text-destructive" />
+                <AlertDescription className="text-xs font-medium text-card-foreground">
+                  {errorMessage}
+                </AlertDescription>
+              </Alert>
+            )}
 
-                <form onSubmit={submit} className="auth-gate-form" aria-busy={isPending}>
-                  <FieldGroup>
-                    <Field>
-                      <FieldLabel htmlFor="auth-password">Operator passphrase</FieldLabel>
-                      <InputGroup>
-                        <InputGroupInput
-                          id="auth-password"
-                          type={showPassword ? "text" : "password"}
-                          autoComplete="current-password"
-                          autoFocus
-                          value={value}
-                          onChange={(event) => handleInputChange(event.target.value)}
-                          placeholder="Enter control passphrase"
-                          className="auth-input-mono font-mono text-base"
-                          disabled={isPending}
-                          aria-invalid={Boolean(errorMessage)}
-                          aria-describedby={errorMessage ? "auth-error-alert" : undefined}
-                        />
-                        <InputGroupAddon align="inline-end">
-                          <InputGroupButton
-                            type="button"
-                            onClick={() => setShowPassword((current) => !current)}
-                            aria-label={showPassword ? "Hide passphrase" : "Show passphrase"}
-                            disabled={isPending}
-                          >
-                            {showPassword ? <EyeOff /> : <Eye />}
-                          </InputGroupButton>
-                        </InputGroupAddon>
-                      </InputGroup>
-                      <div className="auth-entropy-strip" aria-live="polite">
-                        <span className="text-[11px] text-muted-foreground font-mono">
-                          {value.length === 0
-                            ? "Passphrase required"
-                            : `${value.length} character${value.length === 1 ? "" : "s"} entered`}
+            <form onSubmit={submit} aria-busy={isPending}>
+              <FieldGroup className="gap-8">
+                <Field className="auth-rise" style={step(3)}>
+                  <FieldLabel htmlFor="auth-password">Control password</FieldLabel>
+                  <InputGroup className="auth-underline h-14 rounded-none border-0 border-b border-muted-foreground/50 bg-transparent shadow-none has-[[data-slot=input-group-control]:focus-visible]:bg-transparent has-[[data-slot=input-group-control]:focus-visible]:ring-0">
+                    <InputGroupInput
+                      id="auth-password"
+                      type={showPassword ? "text" : "password"}
+                      autoComplete="current-password"
+                      value={value}
+                      onChange={(event) => handleInputChange(event.target.value)}
+                      className="auth-input-mono h-14 px-0 font-mono text-lg"
+                      disabled={isPending || opening}
+                      aria-invalid={Boolean(errorMessage)}
+                      aria-describedby={errorMessage ? "auth-error-alert" : undefined}
+                    />
+                    <InputGroupAddon align="inline-end">
+                      <InputGroupButton
+                        type="button"
+                        variant="plain"
+                        size="icon-sm"
+                        className="size-11 text-muted-foreground hover:text-foreground"
+                        onClick={() => setShowPassword((current) => !current)}
+                        aria-label={showPassword ? "Hide password" : "Show password"}
+                        disabled={isPending || opening}
+                      >
+                        {showPassword ? <EyeOff strokeWidth={1.5} /> : <Eye strokeWidth={1.5} />}
+                      </InputGroupButton>
+                    </InputGroupAddon>
+                  </InputGroup>
+                </Field>
+
+                <div className="auth-rise" style={step(4)}>
+                  <Button
+                    type="submit"
+                    size="lg"
+                    disabled={isPending || opening}
+                    className="group/cta min-h-11 gap-3 pr-2 pl-5"
+                  >
+                    {decryptStage === "verified" ? (
+                      <>
+                        <span>Signed in</span>
+                        <span className="grid size-7 place-items-center rounded-full bg-black/15">
+                          <Check className="size-4" strokeWidth={2} />
                         </span>
-                        <span className="text-[10px] uppercase font-mono tracking-wider text-slate-400">
-                          {value.length > 0 ? "INPUT READY" : "EMPTY"}
+                      </>
+                    ) : (
+                      <>
+                        <span>
+                          {isPending
+                            ? "Checking password"
+                            : decryptStage === "decrypting"
+                              ? "Opening session"
+                              : "Sign in"}
                         </span>
-                      </div>
-                    </Field>
-                    <Button
-                      type="submit"
-                      disabled={isPending || decryptStage !== "idle"}
-                      className="w-full flex items-center justify-between mt-2"
-                    >
-                      {isPending ? (
-                        <span className="flex items-center gap-2">
-                          <ShieldCheck className="size-4 animate-spin text-primary" />
-                          <span>Verifying password...</span>
+                        <span className="grid size-7 place-items-center rounded-full bg-black/15 transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover/cta:translate-x-0.5 motion-reduce:transition-none">
+                          <ArrowRight className="size-4" strokeWidth={2} />
                         </span>
-                      ) : decryptStage === "idle" ? (
-                        <>
-                          <span>Authorize Session</span>
-                          <div className="flex items-center gap-1.5 ml-auto">
-                            <span className="text-[10px] font-mono opacity-65 tracking-wider hidden sm:inline">
-                              [↵ ENTER]
-                            </span>
-                            <ArrowRight data-icon="inline-end" className="size-4" />
-                          </div>
-                        </>
-                      ) : decryptStage === "decrypting" ? (
-                        <span className="flex items-center gap-2">
-                          <ShieldCheck className="size-4 animate-spin text-primary" />
-                          <span>Establishing session...</span>
-                        </span>
-                      ) : (
-                        <span className="flex items-center gap-2 text-emerald-400">
-                          <Check className="size-4" />
-                          <span>Session granted</span>
-                        </span>
-                      )}
-                    </Button>
-                  </FieldGroup>
-                </form>
-                <p className="auth-gate-footnote font-mono text-xs opacity-75 mt-4">
-                  Local session verification · Valid for 24 hours from sign-in
-                </p>
-              </CardContent>
-            </Card>
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </FieldGroup>
+            </form>
           </div>
-        </div>
-      </div>
-    </KineticGrid>
+
+          <p
+            className="auth-rise mt-10 max-w-[26rem] text-xs leading-relaxed text-muted-foreground"
+            style={step(5)}
+          >
+            Sessions last 24 hours and are kept in an HttpOnly cookie.
+          </p>
+        </section>
+      </main>
+    </DitherFrame>
   );
 }

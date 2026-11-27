@@ -1,9 +1,5 @@
 import { Client } from "ssh2";
 
-/**
- * Compare two semver strings (e.g. "0.5.109" vs "0.5.104").
- * Returns 1 if a > b, -1 if a < b, 0 if equal.
- */
 export function compareSemver(a: string, b: string): number {
   if (!a || !b) return 0;
   const rawA = a.replace(/^[v^~]/, "").trim();
@@ -77,15 +73,6 @@ export interface NineRouterInteractiveSshRunner {
   runUpgradeSequence(target: NineRouterServerTarget): Promise<InteractiveUpgradeResult>;
 }
 
-/**
- * Connects over SSH with PTY (pseudo-terminal) allocated, runs:
- * 1. sudo npm i -g 9router@latest --prefer-online
- * 2. 9router (starts server & shows menu)
- * 3. Sends Enter (selects "Web UI (Open in Browser)")
- * 4. Waits for "Press Enter to go back to menu..."
- * 5. Sends Enter (goes back to menu)
- * 6. Sends Down Arrow twice + Enter (selects "Hide to Tray (Background)")
- */
 export async function executeNineRouterInteractiveUpgrade(
   target: NineRouterServerTarget,
   timeoutMs = 180_000,
@@ -142,7 +129,6 @@ export async function executeNineRouterInteractiveUpgrade(
       finish("failed", err.message);
     })
     .on("ready", () => {
-      // Allocate interactive PTY (pseudo-terminal) so 9router TUI/raw-mode works properly
       client.shell(
         {
           term: "xterm-256color",
@@ -180,17 +166,14 @@ export async function executeNineRouterInteractiveUpgrade(
             );
           };
 
-          // Fallback: if shell prompt character is not detected within 2.5s, start update anyway
           const shellReadyTimer = setTimeout(startNpmUpdate, 2500);
           stream.on("data", (chunk: Buffer) => {
             const rawText = chunk.toString("utf8");
             fullOutput += rawText;
 
-            // Maintain a clean, ANSI-stripped sliding window of the last 4000 characters
             const cleanText = rawText.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
             slidingCleanBuffer = (slidingCleanBuffer + cleanText).slice(-4000);
 
-            // Handle sudo password prompt (checks both recent chunk and trailing sliding buffer)
             if (
               !sudoSent &&
               (/(?:password|Password):\s*$/i.test(slidingCleanBuffer.trim()) ||
@@ -208,17 +191,13 @@ export async function executeNineRouterInteractiveUpgrade(
               sudoSent = false;
             }
 
-            // Phase 0: Waiting for initial login shell prompt ($ or #)
             if (phase === "waiting_shell") {
               if (/[#$]\s*$/.test(slidingCleanBuffer.trim())) {
                 clearTimeout(shellReadyTimer);
                 startNpmUpdate();
                 return;
               }
-            }
-
-            // Phase 1: Waiting for npm update to finish (must match actual output, not the command echo)
-            else if (phase === "updating") {
+            } else if (phase === "updating") {
               const hasFailureSignal =
                 slidingCleanBuffer.includes("###NPM_UPGRADE_FAILED###") &&
                 [...slidingCleanBuffer.matchAll(/###NPM_UPGRADE_FAILED###/g)].some(
@@ -253,7 +232,6 @@ export async function executeNineRouterInteractiveUpgrade(
                 fullOutput += "\n[Action]: npm update completed, starting 9router...\n";
                 stream.write("9router\n");
 
-                // Safety timeout in case menu prompt text varies
                 routerStartedTimeout = setTimeout(() => {
                   if (phase === "starting_router") {
                     phase = "web_selected";
@@ -261,10 +239,7 @@ export async function executeNineRouterInteractiveUpgrade(
                   }
                 }, 15_000);
               }
-            }
-
-            // Phase 2: 9router started, menu displayed
-            else if (phase === "starting_router") {
+            } else if (phase === "starting_router") {
               if (
                 slidingCleanBuffer.includes("Choose Interface") ||
                 slidingCleanBuffer.includes("Web UI") ||
@@ -279,22 +254,18 @@ export async function executeNineRouterInteractiveUpgrade(
                 fullOutput += `\n[Action]: Selecting Web UI (UpdateNotice=${hasUpdateNoticeInMenu})...\n`;
 
                 if (hasUpdateNoticeInMenu) {
-                  stream.write("\x1b[B"); // Move down to "Web UI"
+                  stream.write("\x1b[B");
                   setTimeout(() => {
-                    stream.write("\r"); // Select "Web UI"
+                    stream.write("\r");
                   }, 300);
                 } else {
                   setTimeout(() => {
-                    stream.write("\r"); // Item 0 is "Web UI"
+                    stream.write("\r");
                   }, 300);
                 }
               }
-            }
-
-            // Phase 3: Web UI opened, waiting for return prompt
-            else if (phase === "web_selected") {
+            } else if (phase === "web_selected") {
               if (!webReturnTimeout) {
-                // Safety timeout: on headless remote Linux, xdg-open may not render pause prompt; return after 8s
                 webReturnTimeout = setTimeout(() => {
                   if (phase === "web_selected") {
                     phase = "returning_to_menu";
@@ -320,10 +291,7 @@ export async function executeNineRouterInteractiveUpgrade(
                 fullOutput += "\n[Action]: Back prompt received, returning to menu...\n";
                 stream.write("\r");
               }
-            }
-
-            // Phase 4: Returning to menu, waiting for Choose Interface to reappear
-            else if (phase === "returning_to_menu") {
+            } else if (phase === "returning_to_menu") {
               const triggerHide = () => {
                 if (phase !== "returning_to_menu") return;
                 if (menuNavTimeout) {
@@ -351,17 +319,13 @@ export async function executeNineRouterInteractiveUpgrade(
               };
 
               if (!menuNavTimeout) {
-                // Fallback: if menu re-render string is missed, trigger navigation after 5s
                 menuNavTimeout = setTimeout(triggerHide, 5000);
               }
 
               if (slidingCleanBuffer.includes("Choose Interface")) {
                 triggerHide();
               }
-            }
-
-            // Phase 5: Hidden in background / tray
-            else if (phase === "hiding") {
+            } else if (phase === "hiding") {
               if (
                 slidingCleanBuffer.includes("running in background") ||
                 slidingCleanBuffer.includes("Switching to tray mode") ||
@@ -385,9 +349,6 @@ export async function executeNineRouterInteractiveUpgrade(
               finish("failed", "Interactive session closed before completion");
             }
           });
-
-          // Waiting for shell prompt before kicking off npm update
-          // shellReadyTimer will trigger fallback if prompt is delayed
         },
       );
     })
@@ -438,7 +399,6 @@ export class NineRouterServerManager {
     if (serverIds && serverIds.length > 0 && targets.length === 0) {
       throw new Error(`Unknown server ID(s): ${serverIds.join(", ")}`);
     }
-    // Check concurrency locks on target servers
     for (const target of targets) {
       if (this.activeServerLocks.has(target.id)) {
         throw new Error(
@@ -447,7 +407,6 @@ export class NineRouterServerManager {
       }
     }
 
-    // Acquire locks
     for (const target of targets) {
       this.activeServerLocks.add(target.id);
     }
@@ -475,7 +434,6 @@ export class NineRouterServerManager {
       done: donePromise,
     };
 
-    // Evict oldest completed jobs if max capacity reached
     if (this.jobs.size >= this.maxStoredJobs) {
       const oldestKey = this.jobs.keys().next().value;
       if (oldestKey) this.jobs.delete(oldestKey);
@@ -522,7 +480,6 @@ export class NineRouterServerManager {
         job.completedAt = Date.now();
         resolveDone(job);
       } finally {
-        // Release locks
         for (const target of targets) {
           this.activeServerLocks.delete(target.id);
         }

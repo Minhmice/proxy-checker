@@ -12,11 +12,6 @@ function isTransientLock(err: unknown): boolean {
   );
 }
 
-/**
- * Atomic rename with short retry. Windows rejects rename (EPERM/EBUSY) while any
- * process holds the destination open; that lock is usually released within ms.
- * Never falls back to copy: a non-atomic write could leave a torn file on crash.
- */
 export function replaceFileAtomicSync(
   source: string,
   destination: string,
@@ -37,11 +32,16 @@ export function replaceFileAtomicSync(
 export function writeJsonAtomicSync(filePath: string, data: unknown): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const temp = `${filePath}.${process.pid}.tmp`;
-  fs.writeFileSync(temp, JSON.stringify(data, null, 2));
+  const json = JSON.stringify(data, null, 2);
   try {
+    fs.writeFileSync(temp, json);
     replaceFileAtomicSync(temp, filePath);
   } catch (err) {
-    fs.rmSync(temp, { force: true });
+    try {
+      fs.rmSync(temp, { force: true });
+    } catch {
+      // Preserve the write or rename error.
+    }
     throw err;
   }
 }

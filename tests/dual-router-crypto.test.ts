@@ -18,20 +18,33 @@ test("crypto-envelope: roundtrip preserves UTF-8 string snapshot", () => {
 test("crypto-envelope: roundtrip preserves binary data and empty buffer", () => {
   const key = crypto.randomBytes(32);
 
-  // 1. Random binary data
   const binaryPayload = crypto.randomBytes(4096);
   const encryptedBinary = sealSnapshot(binaryPayload, key);
   const decryptedBinary = openSnapshot(encryptedBinary, key);
   assert.deepEqual(decryptedBinary, new Uint8Array(binaryPayload));
 
-  // 2. Empty buffer (0 bytes)
   const emptyPayload = new Uint8Array(0);
   const encryptedEmpty = sealSnapshot(emptyPayload, key);
-  // Header: 4 (magic) + 1 (ver) + 12 (iv) + 16 (tag) = 33 bytes
   assert.equal(encryptedEmpty.byteLength, 33);
   const decryptedEmpty = openSnapshot(encryptedEmpty, key);
   assert.equal(decryptedEmpty.byteLength, 0);
   assert.deepEqual(decryptedEmpty, emptyPayload);
+});
+
+test("crypto-envelope: output uses the existing AES-GCM wire format", () => {
+  const key = crypto.randomBytes(32);
+  for (const plaintext of [Buffer.alloc(0), crypto.randomBytes(4096)]) {
+    const envelope = Buffer.from(sealSnapshot(plaintext, key));
+    assert.equal(envelope.subarray(0, 4).toString("ascii"), "9RCE");
+    assert.equal(envelope[4], 1);
+    assert.equal(envelope.length, 33 + plaintext.length);
+    const decipher = crypto.createDecipheriv("aes-256-gcm", key, envelope.subarray(5, 17));
+    decipher.setAuthTag(envelope.subarray(17, 33));
+    assert.deepEqual(
+      Buffer.concat([decipher.update(envelope.subarray(33)), decipher.final()]),
+      plaintext,
+    );
+  }
 });
 
 test("crypto-envelope: random IV produces distinct ciphertexts for identical plaintext", () => {
@@ -43,7 +56,6 @@ test("crypto-envelope: random IV produces distinct ciphertexts for identical pla
 
   assert.notDeepEqual(env1, env2);
 
-  // Both decrypt to original
   assert.deepEqual(openSnapshot(env1, key), plaintext);
   assert.deepEqual(openSnapshot(env2, key), plaintext);
 });
@@ -81,7 +93,6 @@ test("crypto-envelope: tampered ciphertext throws error", () => {
   const plaintext = new TextEncoder().encode("critical-system-backup-content");
   const envelope = sealSnapshot(plaintext, key);
 
-  // Flip bit in ciphertext region (offset >= 33)
   const tampered = new Uint8Array(envelope);
   tampered[tampered.length - 1] ^= 0x01;
 
@@ -93,7 +104,6 @@ test("crypto-envelope: tampered auth tag throws error", () => {
   const plaintext = new TextEncoder().encode("critical-system-backup-content");
   const envelope = sealSnapshot(plaintext, key);
 
-  // Auth tag is at offsets 17..32
   const tampered = new Uint8Array(envelope);
   tampered[20] ^= 0x01;
 
@@ -105,7 +115,6 @@ test("crypto-envelope: tampered IV throws error", () => {
   const plaintext = new TextEncoder().encode("critical-system-backup-content");
   const envelope = sealSnapshot(plaintext, key);
 
-  // IV is at offsets 5..16
   const tampered = new Uint8Array(envelope);
   tampered[6] ^= 0x01;
 
@@ -136,7 +145,6 @@ test("crypto-envelope: truncated envelope throws error", () => {
   const key = crypto.randomBytes(32);
   const envelope = sealSnapshot(new TextEncoder().encode("hello"), key);
 
-  // Anything shorter than HEADER_LENGTH (33 bytes)
   const truncated = envelope.subarray(0, 32);
   assert.throws(() => openSnapshot(truncated, key), /Envelope truncated/);
 });

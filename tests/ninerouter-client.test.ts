@@ -91,6 +91,38 @@ test("account discovery reads all pages and propagates later page errors", async
   }
 });
 
+test("account discovery filters every Codex pagination request by provider", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: Array<{ page: number; provider: string | null }> = [];
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = new URL(String(input));
+    const page = Number(url.searchParams.get("page") ?? 1);
+    requests.push({ page, provider: url.searchParams.get("provider") });
+    return Response.json({
+      connections: [{ id: `codex-${page}`, provider: "codex", isActive: false }],
+      pagination: { page, total: 2, totalPages: 2 },
+    });
+  }) as typeof fetch;
+  try {
+    const accounts = await listAntigravityConnections({
+      url: "https://router.example",
+      apiKey: "test-api-key",
+      provider: "codex",
+    });
+    assert.deepEqual(
+      accounts.map((account) => account.id),
+      ["codex-1", "codex-2"],
+    );
+    assert.deepEqual(requests, [
+      { page: 1, provider: "codex" },
+      { page: 2, provider: "codex" },
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearNineRouterSession();
+  }
+});
+
 test("account discovery accepts empty zero-page responses but rejects inconsistent pagination", async () => {
   const originalFetch = globalThis.fetch;
   const overrides = { url: "https://router.example", apiKey: "test-api-key" };
@@ -153,5 +185,135 @@ test("router connection test isolates failed endpoints", async () => {
   } finally {
     globalThis.fetch = originalFetch;
     clearNineRouterSession();
+  }
+});
+
+test("request clears its timeout only after the response body is read", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  let timer: NodeJS.Timeout | undefined;
+  let cleared = false;
+  globalThis.setTimeout = ((
+    callback: (...args: unknown[]) => void,
+    ms?: number,
+    ...args: unknown[]
+  ) => {
+    const handle = originalSetTimeout(callback, ms, ...args);
+    if (ms === 60_000) timer = handle;
+    return handle;
+  }) as typeof setTimeout;
+  globalThis.clearTimeout = ((handle: NodeJS.Timeout) => {
+    if (handle === timer) cleared = true;
+    originalClearTimeout(handle);
+  }) as typeof clearTimeout;
+  globalThis.fetch = (async () => {
+    const response = Response.json({ percentage: 42 });
+    const text = response.text.bind(response);
+    response.text = async () => {
+      assert.equal(cleared, false);
+      return text();
+    };
+    return response;
+  }) as typeof fetch;
+  try {
+    assert.deepEqual(
+      await getAccountUsage("one", {
+        url: "https://router.example",
+        apiKey: "test-api-key",
+        timeoutMs: 60_000,
+      }),
+      { percentage: 42 },
+    );
+    assert.ok(timer);
+    assert.equal(cleared, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+    clearNineRouterSession();
+  }
+});
+
+test("clearing a session prevents old logins from replacing or disrupting new sessions", async () => {
+  const originalFetch = globalThis.fetch;
+  const overrides = { url: "https://router.example", password: "password" };
+  const logins: Array<(response: Response) => void> = [];
+  const cookies: string[] = [];
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    if (String(input).endsWith("/api/auth/login")) {
+      const { promise, resolve } = Promise.withResolvers<Response>();
+      logins.push(resolve);
+      return promise;
+    }
+    cookies.push((init!.headers as Record<string, string>).Cookie);
+    return Response.json({});
+  }) as typeof fetch;
+  const loginResponse = (token: string) =>
+    new Response("{}", { headers: { "set-cookie": `auth_token=${token}; Path=/` } });
+  try {
+    clearNineRouterSession();
+    const old = getAccountUsage("old", overrides);
+    clearNineRouterSession(`${overrides.url}/`);
+    const fresh = getAccountUsage("fresh", overrides);
+    assert.equal(logins.length, 2);
+    logins[0](loginResponse("old"));
+    await old;
+    const joined = getAccountUsage("joined", overrides);
+    assert.equal(logins.length, 2);
+    logins[1](loginResponse("fresh"));
+    await Promise.all([fresh, joined]);
+    await getAccountUsage("cached", overrides);
+    assert.deepEqual(cookies, [
+      "auth_token=old",
+      "auth_token=fresh",
+      "auth_token=fresh",
+      "auth_token=fresh",
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearNineRouterSession();
+  }
+});
+
+test("clearing a session prevents stale request completion and 401 from changing its replacement", async () => {
+  for (const staleStatus of [200, 401]) {
+    const originalFetch = globalThis.fetch;
+    const overrides = { url: "https://router.example", password: "password" };
+    let loginCount = 0;
+    const oldResponse = Promise.withResolvers<Response>();
+    const oldStarted = Promise.withResolvers<void>();
+    const cookies: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/auth/login")) {
+        loginCount++;
+        return new Response("{}", {
+          headers: { "set-cookie": `auth_token=${loginCount}; Path=/` },
+        });
+      }
+      cookies.push((init!.headers as Record<string, string>).Cookie);
+      if (url.endsWith("/api/usage/old")) {
+        oldStarted.resolve();
+        return oldResponse.promise;
+      }
+      return Response.json({});
+    }) as typeof fetch;
+    try {
+      clearNineRouterSession();
+      const old = getAccountUsage("old", overrides);
+      await oldStarted.promise;
+      clearNineRouterSession(overrides.url);
+      await getAccountUsage("fresh", overrides);
+      oldResponse.resolve(new Response("{}", { status: staleStatus }));
+      if (staleStatus === 401) await assert.rejects(old);
+      else await old;
+      await getAccountUsage("cached", overrides);
+      assert.equal(loginCount, 2);
+      assert.equal(cookies.at(-1), "auth_token=2");
+    } finally {
+      globalThis.fetch = originalFetch;
+      clearNineRouterSession();
+    }
   }
 });

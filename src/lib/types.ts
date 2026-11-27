@@ -1,3 +1,17 @@
+export const ROTATION_POLICY = {
+  thresholdMin: 5,
+  thresholdMax: 10,
+  standbyQuotaExclusive: 20,
+} as const;
+
+export type RotationProvider = "antigravity" | "codex" | "claude";
+
+export const PROVIDER_LABEL: Record<RotationProvider, string> = {
+  antigravity: "Antigravity",
+  codex: "Codex",
+  claude: "Claude Code",
+};
+
 export interface ActivityEntry {
   id: string;
   at: number;
@@ -52,6 +66,7 @@ export interface SettingsUpdatePayload {
 
 export interface AntigravityAccountState {
   id: string;
+  provider?: RotationProvider;
   email: string;
   name: string;
   isActive: boolean;
@@ -77,12 +92,14 @@ export interface AntigravityRotatorEndpointSummary {
 
 export interface AntigravityRotatorSnapshot {
   lastRunAt: number | null;
+  lastRotationAt?: number | null;
   running: boolean;
   totalAccounts: number;
   activeCount: number;
   totalSessionQuotaPercentage: number;
   maxPossiblePercentage: number;
   accounts: AntigravityAccountState[];
+  groups?: Array<{ provider: RotationProvider; activeCount: number; totalAccounts: number }>;
   endpoints?: AntigravityRotatorEndpointSummary[];
   degraded?: boolean;
   error?: string | null;
@@ -117,4 +134,38 @@ export interface AggregatedTokenUsage {
   totalCost: number;
   byModel: Record<string, ModelUsageStats>;
   nodes: NodeUsageSummary[];
+}
+
+export interface RecentRequest {
+  nodeId: string;
+  timestamp: string;
+  model: string;
+  provider: string;
+  promptTokens: number;
+  completionTokens: number;
+  status: string;
+}
+
+export interface RecentRequestsResponse {
+  requests: RecentRequest[];
+}
+
+export type SpotifyStatus = "unconfigured" | "disconnected" | "idle" | "ready" | "error";
+export type SpotifyAction = "play" | "pause" | "next" | "previous";
+
+export interface SpotifyNow {
+  status: SpotifyStatus;
+  playing: boolean;
+  trackId: string | null;
+  title: string;
+  artist: string;
+  album: string;
+  art: string | null;
+  /** Link back to the track on Spotify, as the platform terms require. */
+  url: string | null;
+  progressMs: number;
+  durationMs: number;
+  device: string | null;
+  canControl: boolean;
+  error?: string;
 }

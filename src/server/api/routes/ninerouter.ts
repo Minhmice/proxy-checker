@@ -6,7 +6,6 @@ import { getNodeInventory, fetchFromNode } from "../../ninerouter-node-proxy.js"
 export function createNineRouterRoutes(deps: ApiDependencies): Hono<ApiEnv> {
   const router = new Hono<ApiEnv>();
 
-  // 1. Aggregate Stats across all nodes or specific node
   router.get("/stats", async (c) => {
     const period = c.req.query("period") || "today";
     const requestedNodeId = c.req.query("nodeId");
@@ -116,7 +115,54 @@ export function createNineRouterRoutes(deps: ApiDependencies): Hono<ApiEnv> {
     });
   });
 
-  // 2. Node Stats
+  router.get("/recent", async (c) => {
+    const nodes = getNodeInventory();
+    const results = await Promise.allSettled(
+      nodes.map(async (node) => {
+        const res = await fetchFromNode(node.id, "/api/usage/stats?period=today");
+        if (!res.ok) throw new Error(`Node ${node.id} returned HTTP ${res.status}`);
+        const stats = (await res.json()) as { recentRequests?: unknown };
+        return { node, recent: Array.isArray(stats.recentRequests) ? stats.recentRequests : [] };
+      }),
+    );
+    const requests = results
+      .flatMap((r) =>
+        r.status === "fulfilled" ? r.value.recent.map((e) => ({ e, id: r.value.node.id })) : [],
+      )
+      .map(({ e, id }) => {
+        const r = e as Record<string, unknown>;
+        return {
+          nodeId: id,
+          timestamp: String(r.timestamp ?? ""),
+          model: String(r.model ?? "unknown"),
+          provider: String(r.provider ?? ""),
+          promptTokens: Number(r.promptTokens) || 0,
+          completionTokens: Number(r.completionTokens) || 0,
+          status: String(r.status ?? "ok"),
+        };
+      })
+      .sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp))
+      .slice(0, 30);
+    if (nodes.length && results.every((r) => r.status === "rejected")) {
+      return c.json({ error: "No 9Router node reported recent requests." }, 502);
+    }
+    return c.json({ requests });
+  });
+
+  router.get("/chart", async (c) => {
+    try {
+      const node = getNodeInventory()[0];
+      if (!node) return c.json({ error: "No 9Router node configured" }, 503);
+      const res = await fetchFromNode(node.id, "/api/usage/chart?period=60d");
+      if (!res.ok) return c.json({ error: `Node returned ${res.status}` }, 502);
+      const data = await res.json();
+      if (!Array.isArray(data)) return c.json({ error: "Invalid usage chart response" }, 502);
+      return c.json(data);
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 502);
+    }
+  });
+
   router.get("/nodes/:nodeId/stats", async (c) => {
     const nodeId = c.req.param("nodeId");
     const period = c.req.query("period") || "today";
@@ -135,7 +181,6 @@ export function createNineRouterRoutes(deps: ApiDependencies): Hono<ApiEnv> {
     }
   });
 
-  // 9. Node Connections
   router.get("/nodes/:nodeId/connections", async (c) => {
     const nodeId = c.req.param("nodeId");
     try {
@@ -151,7 +196,6 @@ export function createNineRouterRoutes(deps: ApiDependencies): Hono<ApiEnv> {
     }
   });
 
-  // Update account state without changing provider-specific data.
   router.put("/nodes/:nodeId/connections/:connectionId", async (c) => {
     const nodeId = c.req.param("nodeId");
     const connectionId = c.req.param("connectionId");
@@ -178,7 +222,6 @@ export function createNineRouterRoutes(deps: ApiDependencies): Hono<ApiEnv> {
     }
   });
 
-  // Fallback to legacy handler
   router.all("*", async (c) => {
     const req = c.env.incoming;
     const res = c.env.outgoing;

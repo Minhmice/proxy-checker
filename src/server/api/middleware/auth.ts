@@ -7,17 +7,18 @@ export function createAuthMiddleware(deps: ApiDependencies): MiddlewareHandler<A
   return async (c, next) => {
     const pathname = new URL(c.req.url).pathname;
 
-    // 1. Explicit public and worker token routes
     if (
       pathname === "/api/health" ||
       pathname === "/api/auth/login" ||
       pathname === "/api/auth/logout" ||
-      pathname === "/api/auth/session"
+      pathname === "/api/auth/session" ||
+      pathname === "/api/spotify/now" ||
+      pathname === "/api/spotify/control" ||
+      pathname === "/api/spotify/callback"
     ) {
       return next();
     }
 
-    // 2. Adapt request headers for in-memory session validation
     const cookie = c.req.header("cookie");
     const authorization = c.req.header("authorization");
     const incomingReq =
@@ -51,14 +52,12 @@ export function createAuthMiddleware(deps: ApiDependencies): MiddlewareHandler<A
       }
     }
 
-    // 3. Query string token/password compatibility
     const queryAuth = c.req.query("password") || c.req.query("auth") || c.req.query("token");
     if (queryAuth && deps.verifyControlPassword(queryAuth)) {
       c.set("authenticated", true);
       return next();
     }
 
-    // 4. Return appropriate 401 error message matching existing contract
     if (pathname.startsWith("/api/settings")) {
       return c.json({ error: "Unauthorized" }, 401);
     }

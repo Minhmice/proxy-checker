@@ -1,23 +1,7 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# Proxy Checker Pi Auto-Deploy Script
-#
-# Pull-based deployment:
-# 1. Acquires exclusive flock
-# 2. Fetches origin/$DEPLOY_BRANCH
-# 3. Compares local SHA vs remote SHA (no-op if up to date)
-# 4. Stops the service and snapshots SQLite before touching code
-# 5. Fast-forward pull
-# 6. Runs npm ci only if lockfile changed
-# 7. Next.js production build with constrained Node memory for Pi
-# 8. Starts systemd service
-# 9. Healthcheck retry loop (30s)
-# 10. Automatic rollback on healthcheck failure
-# ==============================================================================
 
 set -euo pipefail
 
-# 1. Non-blocking exclusive lock
 LOCK_FILE="/tmp/proxy-checker-deploy.lock"
 exec 200>"$LOCK_FILE"
 if ! flock -n 200; then
@@ -25,11 +9,9 @@ if ! flock -n 200; then
   exit 0
 fi
 
-# 2. Config & Defaults
 DEPLOY_DIR="${DEPLOY_DIR:-/opt/proxyfleet}"
 ENV_FILE="${DEPLOY_DIR}/.env"
 if [[ -f "$ENV_FILE" ]]; then
-  # Load env without exporting internal comments
   # shellcheck disable=SC1090
   set -a
   source "$ENV_FILE"
@@ -45,10 +27,8 @@ HEALTH_INTERVAL=2
 
 cd "$DEPLOY_DIR"
 
-# Ensure git safe directory for service user
 git config --global --add safe.directory "$DEPLOY_DIR" 2>/dev/null || true
 
-# 3. Fetch & Compare
 echo "[deploy] $(date -Iseconds) Fetching origin/$DEPLOY_BRANCH..."
 git fetch origin "$DEPLOY_BRANCH" --quiet
 
@@ -62,7 +42,6 @@ fi
 
 echo "[deploy] New commit detected: $LOCAL_SHA -> $REMOTE_SHA"
 
-# 4. Stop writers before taking a pre-deployment snapshot or changing the release.
 export APP_DATA_DIR="${APP_DATA_DIR:-/var/lib/proxyfleet}"
 export APP_BACKUP_DIR="${APP_BACKUP_DIR:-${DEPLOY_DIR}/backups}"
 INITIAL_STATE="$(systemctl show "$SERVICE_NAME" --property=ActiveState --value)"
@@ -133,7 +112,6 @@ if ! NODE_ENV=production node --import tsx --input-type=module -e '
   abort_before_changes "Pre-deployment snapshot failed (retained at $SNAPSHOT_DIR)"
 fi
 
-# 5. Prepare rollback artifacts.
 PREV_SHA="$LOCAL_SHA"
 if [[ -d ".next-build" ]] && ! cp -r .next-build "$SNAPSHOT_DIR/.next-build"; then
   abort_before_changes "Could not preserve previous build"
@@ -183,13 +161,11 @@ rollback() {
   exit 1
 }
 
-# 6. Pull updates (fast-forward only)
 echo "[deploy] Pulling changes (ff-only)..."
 if ! git pull --ff-only origin "$DEPLOY_BRANCH"; then
   rollback "git pull --ff-only failed (divergent branch)"
 fi
 
-# 7. Check dependencies
 if git diff --name-only "$PREV_SHA" HEAD | grep -qE "(package\.json|package-lock\.json)" || [[ ! -d "node_modules" ]]; then
   DEPENDENCIES_CHANGED=1
   echo "[deploy] Dependencies changed. Running npm ci..."
@@ -200,20 +176,17 @@ else
   echo "[deploy] Dependencies unchanged. Skipping npm ci."
 fi
 
-# 8. Build Next.js
 echo "[deploy] Building Next.js production bundle (NODE_OPTIONS=--max-old-space-size=$NODE_MEM)..."
 if ! NODE_OPTIONS="--max-old-space-size=$NODE_MEM" npm run build; then
   rollback "npm run build failed"
 fi
 
-# 9. Restart Systemd Service
 RESTART_ATTEMPTED=1
 echo "[deploy] Restarting systemd service: $SERVICE_NAME..."
 if ! systemctl restart "$SERVICE_NAME"; then
   rollback "systemctl restart failed"
 fi
 
-# 10. Healthcheck
 echo "[deploy] Verifying service health at $HEALTH_URL..."
 HEALTHY=0
 for ((i=1; i<=MAX_HEALTH_ATTEMPTS; i++)); do
@@ -230,6 +203,5 @@ if [[ "$HEALTHY" -ne 1 ]]; then
   rollback "Health check failed after $MAX_HEALTH_ATTEMPTS attempts"
 fi
 
-# 11. Keep the database snapshot for manual recovery, but discard the copied build.
 rm -rf "$SNAPSHOT_DIR/.next-build"
 echo "[deploy] SUCCESS: Successfully deployed $REMOTE_SHA at $(date -Iseconds)."

@@ -19,6 +19,32 @@ export const KNOWN_NODES: NineRouterNodeInfo[] = [
 const nodeCookies = new Map<string, string>();
 const inFlightLogins = new Map<string, Promise<string | null>>();
 
+function awaitSharedLogin(
+  loginPromise: Promise<string | null>,
+  signal: AbortSignal | null | undefined,
+): Promise<string | null> {
+  if (!signal) return loginPromise;
+  if (signal.aborted) return Promise.reject(signal.reason);
+
+  const { promise, resolve, reject } = Promise.withResolvers<string | null>();
+  const onAbort = () => {
+    signal.removeEventListener("abort", onAbort);
+    reject(signal.reason);
+  };
+  signal.addEventListener("abort", onAbort, { once: true });
+  loginPromise.then(
+    (cookie) => {
+      signal.removeEventListener("abort", onAbort);
+      resolve(cookie);
+    },
+    (error) => {
+      signal.removeEventListener("abort", onAbort);
+      reject(error);
+    },
+  );
+  return promise;
+}
+
 export function clearNodeCookies(): void {
   nodeCookies.clear();
   inFlightLogins.clear();
@@ -56,9 +82,7 @@ export function getNodeCandidateUrls(nodeId: string): string[] {
         }
       }
     }
-  } catch {
-    // settings unavailable
-  }
+  } catch {}
 
   for (const fallback of [node.url, "http://100.74.116.125:20128"]) {
     const normalized = fallback.replace(/\/+$/, "");
@@ -98,9 +122,7 @@ async function loginToNode(nodeUrl: string, password?: string): Promise<string |
     if (!pass) {
       try {
         pass = getSettingsSecrets().nineRouterPassword;
-      } catch {
-        // settings unavailable
-      }
+      } catch {}
     }
     if (!pass) {
       return null;
@@ -149,7 +171,7 @@ export async function fetchFromNode(
     try {
       let cookie = nodeCookies.get(baseUrl);
       if (!cookie) {
-        const newCookie = await loginToNode(baseUrl);
+        const newCookie = await awaitSharedLogin(loginToNode(baseUrl), options?.signal);
         if (newCookie) {
           cookie = newCookie;
           nodeCookies.set(baseUrl, newCookie);
@@ -169,7 +191,7 @@ export async function fetchFromNode(
 
       if (res.status === 401 && retryAuth) {
         nodeCookies.delete(baseUrl);
-        const newCookie = await loginToNode(baseUrl);
+        const newCookie = await awaitSharedLogin(loginToNode(baseUrl), options?.signal);
         if (newCookie) {
           nodeCookies.set(baseUrl, newCookie);
           const retryHeaders = new Headers(options?.headers);
@@ -184,12 +206,13 @@ export async function fetchFromNode(
 
       return res;
     } catch (err) {
+      if (options?.signal?.aborted) {
+        throw options.signal.reason;
+      }
       lastError = err;
-      // Never blindly replay mutations after ambiguous delivery
       if (!isIdempotentRead) {
         throw err;
       }
-      // Retry alternate route on network error for idempotent reads
       if (i < candidateUrls.length - 1) {
         continue;
       }

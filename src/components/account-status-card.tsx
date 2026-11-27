@@ -1,474 +1,232 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { Shuffle, RefreshCw, Clock, AlertCircle, AlertTriangle, Layers, Cpu } from "lucide-react";
-import { toast } from "sonner";
+import { useState } from "react";
+import { cn } from "@/lib/utils";
+import { useAccountQuota } from "@/components/antigravity-quota-widget";
 import { useAuth } from "@/components/auth-provider";
-import { fetchAntigravityStatus, refreshAntigravityQuota } from "@/lib/api";
-import type { AntigravityAccountState, AntigravityRotatorSnapshot } from "@/lib/types";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { CardContent, CardDescription, CardHeader } from "@/components/ui/card";
+import { DitherCard } from "@/components/dithercn/dither-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { DitherBar } from "@/components/ui/dither";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
+import { updateAntigravityAccountState } from "@/lib/api";
+import { formatCountdown } from "@/lib/countdown";
+import { PROVIDER_LABEL, type AntigravityAccountState } from "@/lib/types";
+import { CountUp } from "@/components/ui/count-up";
 
-function formatCountdown(resetAt: string | null): string {
-  if (!resetAt) return "No reset info";
-  const diffMs = new Date(resetAt).getTime() - Date.now();
-  if (diffMs <= 0) return "Resetting soon";
-  const mins = Math.floor(diffMs / 60_000);
-  const hours = Math.floor(mins / 60);
-  const remMins = mins % 60;
-  if (hours > 0) {
-    return `${hours}h ${remMins}m`;
-  }
-  return `${remMins}m`;
+/** "metavocab@gmail.com" -> "me***@gmail.com". A name without "@" ("Account 2") is not secret and stays whole. */
+function maskLabel(value: string) {
+  const at = value.indexOf("@");
+  return at === -1 ? value : `${value.slice(0, 2)}***${value.slice(at)}`;
 }
 
-function quotaColor(percentage: number): { text: string; bg: string; border: string; bar: string } {
-  if (percentage > 50) {
-    return {
-      text: "text-emerald-400",
-      bg: "bg-emerald-500/10",
-      border: "border-emerald-500/20",
-      bar: "bg-emerald-500",
-    };
-  }
-  if (percentage > 20) {
-    return {
-      text: "text-amber-400",
-      bg: "bg-amber-500/10",
-      border: "border-amber-500/20",
-      bar: "bg-amber-500",
-    };
-  }
-  return {
-    text: "text-rose-400",
-    bg: "bg-rose-500/10",
-    border: "border-rose-500/20",
-    bar: "bg-rose-500",
-  };
+/** Red at 20% or less, amber to 50%, green above. The label also says "Low", so color is never the only cue. */
+export function quotaTier(percent: number) {
+  if (percent <= 20) return { color: "--error", text: "text-error", low: true };
+  if (percent <= 50) return { color: "--warning", text: "text-warning", low: false };
+  return { color: "--success", text: "text-success", low: false };
 }
 
-interface AccountStatusCardProps {
-  className?: string;
+function resetText(resetAt: string | null) {
+  if (!resetAt) return null;
+  const countdown = formatCountdown(resetAt);
+  return countdown === "Resetting soon" || countdown === "No reset info"
+    ? countdown
+    : `Resets in ${countdown}`;
 }
 
-export function AccountStatusCard({ className }: AccountStatusCardProps) {
-  const { password, authenticated } = useAuth();
-  const canRead = authenticated || Boolean(password);
+export function AccountStatusCard() {
+  const {
+    snapshot,
+    loading,
+    unavailable,
+    error,
+    refreshing,
+    canRefresh,
+    refresh,
+    acceptAccountSnapshot,
+  } = useAccountQuota();
+  const { password } = useAuth();
+  const [pending, setPending] = useState<AntigravityAccountState | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const accounts = snapshot?.accounts ?? [];
 
-  const [snapshot, setSnapshot] = useState<AntigravityRotatorSnapshot | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [filterView, setFilterView] = useState<"active" | "all">("active");
-
-  const inFlightRef = useRef<AbortController | null>(null);
-  const hasLoadedRef = useRef(false);
-
-  const loadData = useCallback(
-    async (isManual = false) => {
-      if (!canRead) {
-        setLoading(false);
-        return;
-      }
-
-      if (inFlightRef.current) {
-        inFlightRef.current.abort();
-      }
-      const controller = new AbortController();
-      inFlightRef.current = controller;
-
-      if (isManual) {
-        setRefreshing(true);
-      } else if (!hasLoadedRef.current) {
-        setLoading(true);
-      }
-      setError(null);
-
-      try {
-        const snapRes = await fetchAntigravityStatus(
-          password || undefined,
-          controller.signal,
-        ).catch(() => null);
-
-        if (controller.signal.aborted) return;
-
-        if (snapRes) {
-          setSnapshot(snapRes);
-        }
-        hasLoadedRef.current = true;
-      } catch (err) {
-        if (controller.signal.aborted) return;
-        setError(err instanceof Error ? err.message : "Failed to load account status");
-      } finally {
-        if (!controller.signal.aborted) {
-          setLoading(false);
-          setRefreshing(false);
-        }
-      }
-    },
-    [canRead, password],
-  );
-
-  useEffect(() => {
-    void loadData();
-    const timer = setInterval(() => {
-      void loadData();
-    }, 15_000);
-    return () => {
-      clearInterval(timer);
-      if (inFlightRef.current) {
-        inFlightRef.current.abort();
-      }
-    };
-  }, [loadData]);
-
-  const handleManualRefresh = async () => {
-    setRefreshing(true);
+  async function toggle(account: AntigravityAccountState) {
+    setPending(account);
+    setActionError(null);
     try {
-      await refreshAntigravityQuota(password || undefined).catch(() => null);
-      await loadData(true);
-      toast.success("Account quotas refreshed");
-    } catch (err) {
-      toast.error((err as Error).message);
-      setRefreshing(false);
+      acceptAccountSnapshot(
+        await updateAntigravityAccountState(
+          account.id,
+          account.routerUrl,
+          !account.isActive,
+          password || undefined,
+        ),
+      );
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Account update failed.");
+    } finally {
+      setPending(null);
     }
-  };
-
-  const accounts = useMemo(() => {
-    const list = snapshot?.accounts ?? [];
-    if (filterView === "active") {
-      return list.filter((a) => a.isActive);
-    }
-    // "all": active accounts first, then reserve accounts
-    return [...list].sort((a, b) => {
-      if (a.isActive && !b.isActive) return -1;
-      if (!a.isActive && b.isActive) return 1;
-      return b.sessionPercentage - a.sessionPercentage;
-    });
-  }, [snapshot, filterView]);
-
-  const activeAccountsCount = useMemo(
-    () => (snapshot?.accounts ?? []).filter((a) => a.isActive).length,
-    [snapshot],
-  );
-
-  const activeAccount = useMemo(
-    () => (snapshot?.accounts ?? []).find((a) => a.isActive),
-    [snapshot],
-  );
+  }
 
   return (
-    <Card
-      className={cn(
-        "rounded-2xl border border-[#23232C] bg-[#131318] shadow-sm overflow-hidden",
-        className,
-      )}
-    >
-      <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-[#23232C] p-5 pb-4 bg-[#0F0F13]">
-        <div className="space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="flex size-7 items-center justify-center rounded-lg bg-[#FF5B22]/15 text-[#FF5B22] border border-[#FF5B22]/30">
-              <Cpu className="size-3.5" />
-            </span>
-            <CardTitle className="text-base font-bold text-zinc-100">Account Status</CardTitle>
+    <DitherCard glow="top-left" color="--primary" reach={260} interactive radius={16}>
+      <CardHeader>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 id="account-quota" className="text-xl font-semibold tracking-tight">
+            Account quota
+          </h2>
+          {snapshot && (
             <Badge
               variant="outline"
-              className="font-mono text-xs border-[#23232C] bg-[#181820] text-zinc-300"
+              className="border-success/40 bg-success/10 text-success tabular-nums"
             >
-              Active:{" "}
-              <strong className="text-emerald-400 font-bold ml-1">{activeAccountsCount}</strong> / 1
+              {snapshot.activeCount} of {accounts.length} enabled
             </Badge>
-            {activeAccount?.thresholdPercentage != null && (
-              <Badge
-                variant="outline"
-                className="font-mono text-[11px] border-[#FF5B22]/40 bg-[#FF5B22]/15 text-orange-200 font-semibold hidden sm:inline-flex"
-              >
-                Rotate threshold: &le; {activeAccount.thresholdPercentage}%
-              </Badge>
-            )}
-            {snapshot?.degraded && (
-              <Badge
-                variant="outline"
-                className="font-mono text-[11px] border-amber-500/40 bg-amber-500/15 text-amber-300 font-semibold"
-              >
-                Degraded
-              </Badge>
-            )}
-          </div>
-          <CardDescription className="text-xs text-zinc-400">
-            Antigravity accounts with direct quota rotation and single-account management.
-          </CardDescription>
+          )}
         </div>
-
-        <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
-          {/* Toggle Active / All filter */}
-          <div className="flex items-center bg-[#181820] border border-[#23232C] rounded-lg p-0.5 text-xs">
-            <button
-              type="button"
-              onClick={() => setFilterView("active")}
-              className={cn(
-                "px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer",
-                filterView === "active"
-                  ? "bg-[#FF5B22] text-black font-extrabold shadow-xs"
-                  : "text-zinc-300 hover:text-zinc-100",
-              )}
-            >
-              Active ({activeAccountsCount})
-            </button>
-            <button
-              type="button"
-              onClick={() => setFilterView("all")}
-              className={cn(
-                "px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer",
-                filterView === "all"
-                  ? "bg-[#FF5B22] text-black font-extrabold shadow-xs"
-                  : "text-zinc-300 hover:text-zinc-100",
-              )}
-            >
-              All ({snapshot?.totalAccounts ?? snapshot?.accounts?.length ?? 0})
-            </button>
-          </div>
-
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleManualRefresh}
-            disabled={loading || refreshing}
-            className="h-8 border-[#23232C] bg-[#181820] hover:bg-[#23232C] text-zinc-100 hover:text-white text-xs gap-1.5 disabled:opacity-90 disabled:text-zinc-200"
-          >
-            <RefreshCw className={cn("size-3", refreshing && "animate-spin text-[#FF5B22]")} />
-            <span>Refresh</span>
-          </Button>
-        </div>
+        <CardDescription>
+          Session quota left on each account. Rotation can switch accounts on or off automatically.
+        </CardDescription>
       </CardHeader>
-
-      <CardContent className="p-0">
-        {loading && !snapshot ? (
-          <div className="p-6 space-y-3">
-            <Skeleton className="h-10 w-full bg-[#181820]" />
-            <Skeleton className="h-10 w-full bg-[#181820]" />
-            <Skeleton className="h-10 w-full bg-[#181820]" />
-          </div>
-        ) : error && accounts.length === 0 ? (
-          <div className="p-8 text-center space-y-2">
-            <AlertCircle className="size-8 text-rose-400 mx-auto opacity-80" />
-            <p className="text-sm font-semibold text-zinc-200">{error}</p>
-            <p className="text-xs text-zinc-400 max-w-sm mx-auto">
-              Please check 9Router connection in Settings or trigger a manual refresh.
-            </p>
-          </div>
-        ) : accounts.length === 0 ? (
-          <div className="py-12 text-center text-zinc-400 space-y-2">
-            <Layers className="size-8 mx-auto opacity-40 text-[#FF5B22]" />
-            <p className="text-sm font-semibold text-zinc-200">
-              {filterView === "active" ? "No active Antigravity accounts" : "No accounts found"}
-            </p>
-            <p className="text-xs text-zinc-400 max-w-md mx-auto">
-              Configure Antigravity OAuth accounts in 9Router to enable autonomous rotation.
-            </p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader className="bg-[#0F0F13]/90">
-                <TableRow className="border-[#23232C] hover:bg-transparent">
-                  <TableHead className="text-xs font-semibold text-zinc-400 py-3 pl-5">
-                    Identity / Account
-                  </TableHead>
-                  <TableHead className="text-xs font-semibold text-zinc-400 py-3">
-                    Gemini Session Quota
-                  </TableHead>
-                  <TableHead className="text-xs font-semibold text-zinc-400 py-3">
-                    Weekly Quota
-                  </TableHead>
-                  <TableHead className="text-xs font-semibold text-zinc-400 py-3">
-                    Threshold
-                  </TableHead>
-                  <TableHead className="text-xs font-semibold text-zinc-400 py-3 pr-5 text-right">
-                    Rotation Status
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {accounts.map((acc) => {
-                  const quotaIsAvailable = acc.quotaAvailable !== false;
-                  const sessionPct = acc.sessionPercentage;
-                  const colors = quotaIsAvailable ? quotaColor(sessionPct) : null;
-                  const threshold = acc.thresholdPercentage;
-                  const isScheduledRotate =
-                    acc.isActive &&
-                    quotaIsAvailable &&
-                    threshold != null &&
-                    sessionPct <= threshold;
-
-                  return (
-                    <TableRow
-                      key={acc.id}
-                      className={cn(
-                        "border-[#23232C]/70 transition-colors",
-                        acc.isActive
-                          ? "hover:bg-[#181820]"
-                          : "opacity-70 hover:opacity-100 hover:bg-[#181820]/50",
-                      )}
-                    >
-                      {/* Identity */}
-                      <TableCell className="py-3 pl-5">
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-sm font-semibold text-zinc-100 flex items-center gap-1.5 truncate max-w-[220px]">
-                            {acc.name || acc.email || acc.id}
-                          </span>
-                          <span className="text-[11px] font-mono text-zinc-400 truncate max-w-[220px]">
-                            {acc.email || acc.id}
-                          </span>
-                        </div>
-                      </TableCell>
-
-                      {/* Quota Progress */}
-                      <TableCell className="py-3 min-w-[180px]">
-                        <div className="space-y-1.5">
-                          <div className="flex items-center justify-between text-xs font-mono">
-                            {quotaIsAvailable ? (
-                              <span className={cn("font-bold text-xs", colors?.text)}>
-                                {sessionPct}%
-                              </span>
-                            ) : (
-                              <span className="text-xs text-amber-400 font-semibold">
-                                Unavailable
-                              </span>
-                            )}
-                            <span className="text-[10px] text-zinc-400 flex items-center gap-1">
-                              <Clock className="size-2.5 text-zinc-500" />
-                              {formatCountdown(acc.resetAt)}
-                            </span>
-                          </div>
-                          {quotaIsAvailable ? (
-                            <div
-                              role="progressbar"
-                              aria-valuenow={sessionPct}
-                              aria-valuemin={0}
-                              aria-valuemax={100}
-                              aria-label={`Gemini session quota: ${sessionPct}% remaining`}
-                              className="h-1.5 w-full bg-[#181820] rounded-full overflow-hidden border border-[#23232C]"
-                            >
-                              <div
-                                className={cn(
-                                  "h-full rounded-full transition-all duration-300",
-                                  colors?.bar,
-                                )}
-                                style={{
-                                  width: `${Math.min(100, Math.max(0, sessionPct))}%`,
-                                }}
-                              />
-                            </div>
-                          ) : (
-                            <div className="h-1.5 w-full bg-[#181820] rounded-full border border-[#23232C]/60" />
-                          )}
-                        </div>
-                      </TableCell>
-
-                      {/* Weekly Quota */}
-                      <TableCell className="py-3">
-                        <span className="text-xs font-mono text-zinc-300">
-                          {Number.isFinite(acc.weeklyPercentage) ? `${acc.weeklyPercentage}%` : "—"}
-                        </span>
-                      </TableCell>
-
-                      {/* Threshold */}
-                      <TableCell className="py-3">
-                        {threshold != null ? (
-                          <span className="text-xs font-mono font-semibold text-zinc-200">
-                            {threshold}%
-                          </span>
-                        ) : (
-                          <span className="text-xs font-mono text-zinc-600">—</span>
-                        )}
-                      </TableCell>
-
-                      {/* Rotation Status */}
-                      <TableCell className="py-3 pr-5 text-right">
-                        {acc.isActive ? (
-                          isScheduledRotate ? (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <button
-                                  type="button"
-                                  className="inline-flex cursor-help rounded-md focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5B22] p-0 bg-transparent border-0"
-                                  aria-label={`Scheduled Rotate: Quota is ${sessionPct}%, at or below ${threshold}% threshold`}
-                                >
-                                  <Badge
-                                    variant="outline"
-                                    className="border-amber-500/40 bg-amber-500/15 text-amber-300 text-[10px] font-semibold gap-1 py-0.5 px-2"
-                                  >
-                                    <AlertTriangle className="size-2.5 text-amber-400" />
-                                    Scheduled Rotate
-                                  </Badge>
-                                </button>
-                              </TooltipTrigger>
-                              <TooltipContent className="bg-[#1C1C24] text-xs text-zinc-200 border-[#23232C]">
-                                Quota &le; {threshold}%. Will be rotated out to reserve on next
-                                maintenance cycle.
-                              </TooltipContent>
-                            </Tooltip>
-                          ) : acc.lastError ? (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <button
-                                  type="button"
-                                  className="inline-flex cursor-help rounded-md focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-rose-500 p-0 bg-transparent border-0"
-                                  aria-label={`Active with error: ${acc.lastError}`}
-                                >
-                                  <Badge
-                                    variant="outline"
-                                    className="border-rose-500/40 bg-rose-500/15 text-rose-300 text-[10px] font-semibold gap-1 py-0.5 px-2"
-                                  >
-                                    <AlertCircle className="size-2.5 text-rose-400" />
-                                    Degraded
-                                  </Badge>
-                                </button>
-                              </TooltipTrigger>
-                              <TooltipContent className="bg-[#1C1C24] text-xs text-zinc-200 border-[#23232C]">
-                                {acc.lastError}
-                              </TooltipContent>
-                            </Tooltip>
-                          ) : (
-                            <Badge
-                              variant="outline"
-                              className="border-emerald-500/40 bg-emerald-500/15 text-emerald-300 text-[10px] font-semibold gap-1.5 py-0.5 px-2"
-                            >
-                              <span className="size-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                              Active
-                            </Badge>
-                          )
-                        ) : (
-                          <Badge
-                            variant="outline"
-                            className="border-zinc-700 bg-zinc-800/60 text-zinc-400 text-[10px] font-medium py-0.5 px-2"
-                          >
-                            Reserve
-                          </Badge>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
+      <CardContent className="flex flex-col gap-3">
+        {actionError && (
+          <p role="alert" className="text-sm text-error">
+            {actionError}
+          </p>
         )}
+        {(unavailable || snapshot?.degraded) && (
+          <p role="status" className="text-sm text-warning">
+            {unavailable
+              ? snapshot
+                ? "Showing last known quota. "
+                : "Quota unavailable. "
+              : "Some quota readings are unavailable. "}
+            {error ?? ""}
+          </p>
+        )}
+        {loading && !snapshot ? (
+          <Skeleton className="h-24" />
+        ) : accounts.length ? (
+          <ul className="divide-y divide-border border-y border-border">
+            {accounts.map((account, index) => {
+              const label = maskLabel(account.email || account.name || account.id);
+              const percent =
+                account.quotaAvailable && Number.isFinite(account.sessionPercentage)
+                  ? Math.min(100, Math.max(0, account.sessionPercentage))
+                  : null;
+              const delay = index * 90 + 150;
+              const updating =
+                pending?.id === account.id && pending?.routerUrl === account.routerUrl;
+              return (
+                <li
+                  key={JSON.stringify([account.routerUrl, account.id])}
+                  style={{ "--row-order": index } as React.CSSProperties}
+                  className="row-enter grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(8rem,1fr)_auto]"
+                >
+                  <div className="min-w-0">
+                    <p className="wrap-anywhere text-sm font-medium">{label}</p>
+                    <p className="flex flex-wrap items-center gap-x-2.5 text-xs text-foreground/75">
+                      <span>{PROVIDER_LABEL[account.provider ?? "antigravity"]}</span>
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1.5 font-medium",
+                          account.isActive ? "text-success" : "text-muted-foreground",
+                        )}
+                      >
+                        <span aria-hidden="true" className="relative flex size-2">
+                          {account.isActive && (
+                            <span className="absolute inset-0 animate-ping rounded-full bg-success/60 motion-reduce:hidden" />
+                          )}
+                          <span
+                            className={cn(
+                              "relative size-2 rounded-full",
+                              account.isActive ? "bg-success" : "bg-muted-foreground/60",
+                            )}
+                          />
+                        </span>
+                        {account.isActive ? "Enabled" : "Disabled"}
+                      </span>
+                    </p>
+                    {account.lastError && (
+                      <p className="wrap-anywhere text-xs text-error">{account.lastError}</p>
+                    )}
+                  </div>
+                  <div className="col-span-2 row-start-2 min-w-0 sm:col-span-1 sm:row-auto">
+                    <div className="flex flex-wrap items-baseline justify-between gap-x-2 text-xs tabular-nums">
+                      <strong
+                        className={cn(
+                          "font-semibold",
+                          percent === null ? "text-warning" : quotaTier(percent).text,
+                        )}
+                      >
+                        {percent === null ? (
+                          "Quota unavailable"
+                        ) : (
+                          <>
+                            {quotaTier(percent).low && "Low · "}
+                            <CountUp value={percent} delay={delay} />% left
+                          </>
+                        )}
+                      </strong>
+                      {resetText(account.resetAt) && (
+                        <span className="text-muted-foreground">{resetText(account.resetAt)}</span>
+                      )}
+                    </div>
+                    {percent !== null && (
+                      <div
+                        role="progressbar"
+                        aria-valuenow={percent}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-label={`${label} session quota remaining`}
+                        className="relative mt-2 h-1.5 overflow-hidden rounded-sm"
+                      >
+                        <DitherBar
+                          percent={percent}
+                          delay={delay}
+                          color={quotaTier(percent).color}
+                        />
+                      </div>
+                    )}
+                  </div>
+                  <Switch
+                    checked={account.isActive}
+                    className="col-start-2 row-start-1 sm:col-start-3"
+                    disabled={
+                      !canRefresh ||
+                      Boolean(pending) ||
+                      refreshing ||
+                      unavailable ||
+                      snapshot?.running
+                    }
+                    onCheckedChange={() => void toggle(account)}
+                    aria-label={`Enable ${label}`}
+                    aria-busy={updating || undefined}
+                  />
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          !unavailable && (
+            <p className="text-sm text-muted-foreground">
+              No Antigravity or Codex accounts reported by 9Router.
+            </p>
+          )
+        )}
+        <Button
+          variant="outline"
+          className="min-h-11 self-start"
+          disabled={!canRefresh || refreshing || Boolean(pending)}
+          onClick={() => void refresh()}
+        >
+          {refreshing ? "Refreshing quota…" : "Refresh quota & run rotation"}
+        </Button>
       </CardContent>
-    </Card>
+    </DitherCard>
   );
 }

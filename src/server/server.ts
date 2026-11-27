@@ -52,7 +52,7 @@ function readBody(
     request.on("data", (chunk: Buffer) => {
       received += chunk.length;
       if (received > maxBytes) {
-        request.destroy();
+        request.pause();
         const err = new Error("Request payload too large") as Error & {
           status?: number;
         };
@@ -101,6 +101,33 @@ async function handleAntigravity(
       return json(response, { started: false, error: (err as Error).message }, 500);
     }
   }
+  if (request.method === "PUT" && pathname === "/api/antigravity/account-state") {
+    let body: Record<string, unknown>;
+    try {
+      body = await readBody(request);
+    } catch {
+      return json(response, { error: "Invalid account state request" }, 400);
+    }
+    if (
+      !body ||
+      typeof body.accountId !== "string" ||
+      !body.accountId ||
+      typeof body.isActive !== "boolean" ||
+      (body.routerUrl !== undefined && typeof body.routerUrl !== "string")
+    ) {
+      return json(response, { error: "Invalid account state request" }, 400);
+    }
+    try {
+      const snapshot = await antigravityRotator.setAccountActive(
+        body.accountId,
+        body.routerUrl,
+        body.isActive,
+      );
+      return json(response, snapshot);
+    } catch (error) {
+      return json(response, { error: (error as Error).message }, 409);
+    }
+  }
   return json(response, { error: "not found" }, 404);
 }
 
@@ -141,12 +168,23 @@ async function handleSettings(
       });
       return json(response, result);
     } catch (error) {
+      if ((error as Error & { status?: number }).status === 413) {
+        response.setHeader("Connection", "close");
+        return json(response, { error: (error as Error).message }, 413);
+      }
       return json(response, { error: (error as Error).message }, 400);
     }
   }
 
   if (request.method === "POST" && pathname === "/api/settings/test-ninerouter") {
-    const body = await readBody(request);
+    let body: Record<string, unknown>;
+    try {
+      body = await readBody(request);
+    } catch (error) {
+      if ((error as Error & { status?: number }).status !== 413) throw error;
+      response.setHeader("Connection", "close");
+      return json(response, { error: (error as Error).message }, 413);
+    }
     const overrides = {
       url: typeof body.nineRouterUrl === "string" ? body.nineRouterUrl.trim() : undefined,
       password:
@@ -169,10 +207,21 @@ const dev = process.env.NODE_ENV !== "production" && process.env.npm_lifecycle_e
 const port = Number(process.env.PORT || 1300);
 
 let maintenanceIntervalId: NodeJS.Timeout | undefined;
+let httpServer: http.Server | undefined;
+let shuttingDown = false;
+const backgroundTasks = new Set<Promise<unknown>>();
+
+function trackTask<T>(task: Promise<T>): Promise<T> {
+  backgroundTasks.add(task);
+  const done = () => backgroundTasks.delete(task);
+  task.then(done, done);
+  return task;
+}
 let lastScheduledRotationAt = 0;
 let lastScheduledBackupAt = 0;
 
 async function runScheduledMaintenance() {
+  if (shuttingDown) return;
   const settings = getSettingsSecrets();
   const now = Date.now();
   const configured = nineRouterConfigured();
@@ -185,13 +234,15 @@ async function runScheduledMaintenance() {
     configured,
     rotationDue,
   });
-  if (rotationDue) lastScheduledRotationAt = now;
 
   try {
     const report = await unifiedSyncCoordinator.runUnifiedSyncCycle({
       force: false,
       rotation: rotationDue,
     });
+    if (rotationDue && report.started && !report.rotationSkipped) {
+      lastScheduledRotationAt = Math.max(lastScheduledRotationAt, now);
+    }
     if (report.error) {
       const maintError = report.error;
       logScoped(
@@ -209,37 +260,55 @@ async function runScheduledMaintenance() {
       `Scheduled maintenance cycle exception: ${(cycleErr as Error).message}`,
     );
   }
-  if (now - lastScheduledBackupAt >= 30 * 60_000) {
+  if (!shuttingDown && now - lastScheduledBackupAt >= 30 * 60_000) {
     lastScheduledBackupAt = now;
-    void triggerFullBackupAndSync().catch((err) => {
-      logScoped(
-        "Server",
-        "triggerFullBackupAndSync",
-        "warn",
-        `Scheduled backup sync failed: ${(err as Error).message}`,
-      );
-    });
+    void trackTask(
+      triggerFullBackupAndSync()
+        .then(({ backup, git }) => {
+          if (!backup.ok || !git.ok) {
+            logScoped(
+              "Server",
+              "triggerFullBackupAndSync",
+              "warn",
+              `Scheduled backup sync failed: ${!backup.ok ? backup.errors.join("; ") : git.error || "Git sync failed"}`,
+            );
+          }
+        })
+        .catch((err) => {
+          logScoped(
+            "Server",
+            "triggerFullBackupAndSync",
+            "warn",
+            `Scheduled backup sync failed: ${(err as Error).message}`,
+          );
+        }),
+    );
   }
 }
 
 function scheduleMaintenance() {
+  if (shuttingDown) return;
   clearInterval(maintenanceIntervalId);
   maintenanceIntervalId = setInterval(() => {
-    void runScheduledMaintenance().catch((error) =>
+    void trackTask(
+      runScheduledMaintenance().catch((error) =>
+        logScoped(
+          "Server",
+          "runScheduledMaintenance",
+          "error",
+          `Scheduled maintenance interval failed: ${(error as Error).message}`,
+        ),
+      ),
+    );
+  }, 15_000);
+  void trackTask(
+    runScheduledMaintenance().catch((error) =>
       logScoped(
         "Server",
         "runScheduledMaintenance",
         "error",
-        `Scheduled maintenance interval failed: ${(error as Error).message}`,
+        `Startup maintenance failed: ${(error as Error).message}`,
       ),
-    );
-  }, 15_000);
-  void runScheduledMaintenance().catch((error) =>
-    logScoped(
-      "Server",
-      "runScheduledMaintenance",
-      "error",
-      `Startup maintenance failed: ${(error as Error).message}`,
     ),
   );
 }
@@ -256,15 +325,27 @@ onSettingsChange((_settings, changed) => {
   ) {
     scheduleMaintenance();
   }
-  void triggerFullBackupAndSync().catch((err) => {
-    logActivity("warn", `Settings change backup sync failed: ${(err as Error).message}`);
-  });
+  void trackTask(
+    triggerFullBackupAndSync()
+      .then(({ backup, git }) => {
+        if (!backup.ok || !git.ok) {
+          logActivity(
+            "warn",
+            `Settings change backup sync failed: ${!backup.ok ? backup.errors.join("; ") : git.error || "Git sync failed"}`,
+          );
+        }
+      })
+      .catch((err) => {
+        logActivity("warn", `Settings change backup sync failed: ${(err as Error).message}`);
+      }),
+  );
 });
 
 async function main() {
   const app = next({ dev, dir: root });
   const handle = app.getRequestHandler();
   await app.prepare();
+  if (shuttingDown) return;
 
   const apiApp = createApiApp({
     verifyControlPassword,
@@ -285,6 +366,7 @@ async function main() {
 
     return apiRequestListener(request, response);
   });
+  httpServer = server;
 
   server.on("clientError", (err: NodeJS.ErrnoException, socket) => {
     if (err.code === "ECONNRESET" || !socket.writable) {
@@ -295,32 +377,57 @@ async function main() {
 
   server.listen(port, () => {
     console.log(`minhmiceProxy listening on http://localhost:${port}`);
-    scheduleMaintenance();
+    if (!shuttingDown) scheduleMaintenance();
   });
 }
 
-process.on("unhandledRejection", (reason) => {
-  const detail = reason instanceof Error ? `${reason.message}\n${reason.stack}` : String(reason);
-  console.error(`[process] unhandledRejection\n${detail}`);
-});
-process.on("uncaughtException", (error: Error & { code?: string }) => {
-  if (error.code === "ECONNRESET" || error.message?.includes("ECONNRESET")) {
-    return;
-  }
-  console.error(`[process] uncaughtException\n${error.stack ?? error}`);
-});
-function shutdown() {
+const SHUTDOWN_TIMEOUT_MS = 10_000;
+
+function forceExit(reason: string) {
+  console.error(`Forcing exit: ${reason}`);
   releaseDataLease();
+  process.exit(1);
 }
 
-process.on("SIGINT", () => {
-  shutdown();
+async function gracefulShutdown(signal: NodeJS.Signals) {
+  if (shuttingDown) return forceExit(`second ${signal} during shutdown`);
+  shuttingDown = true;
+  console.log(`Shutdown started on ${signal}; waiting up to ${SHUTDOWN_TIMEOUT_MS / 1000}s`);
+  clearInterval(maintenanceIntervalId);
+  maintenanceIntervalId = undefined;
+
+  const server = httpServer;
+  const sweep = setInterval(() => server?.closeIdleConnections(), 100);
+  const deadline = Promise.withResolvers<"timeout">();
+  const timer = setTimeout(() => deadline.resolve("timeout"), SHUTDOWN_TIMEOUT_MS);
+  const timeout = deadline.promise;
+  const drained = (async () => {
+    if (server) {
+      const closed = Promise.withResolvers<void>();
+      server.close(() => closed.resolve());
+      await closed.promise;
+    }
+    while (backgroundTasks.size > 0) await Promise.allSettled([...backgroundTasks]);
+    return "drained" as const;
+  })();
+
+  let outcome: "drained" | "timeout" | "error";
+  try {
+    outcome = await Promise.race([drained, timeout]);
+  } catch (error) {
+    console.error(`Shutdown drain failed: ${(error as Error).message}`);
+    outcome = "error";
+  }
+  clearTimeout(timer);
+  clearInterval(sweep);
+  if (outcome !== "drained") return forceExit(`graceful shutdown ${outcome}`);
+  console.log("Shutdown complete");
+  releaseDataLease();
   process.exit(0);
-});
-process.on("SIGTERM", () => {
-  shutdown();
-  process.exit(0);
-});
+}
+
+process.on("SIGINT", () => void gracefulShutdown("SIGINT"));
+process.on("SIGTERM", () => void gracefulShutdown("SIGTERM"));
 main().catch((error) => {
   console.error(error);
   process.exit(1);

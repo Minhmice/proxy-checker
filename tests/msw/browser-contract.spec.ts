@@ -11,7 +11,6 @@ test("msw browser contract: browser files exist and cover client contracts", () 
 });
 
 test("msw browser contract: production guard prevents starting worker without opt-in flags", async () => {
-  // In Node environment or non-opt-in flags, startBrowserMocks exits immediately
   const originalEnv = process.env.NEXT_PUBLIC_ENABLE_API_MOCKS;
   try {
     delete process.env.NEXT_PUBLIC_ENABLE_API_MOCKS;

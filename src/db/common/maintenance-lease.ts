@@ -5,7 +5,6 @@ import path from "node:path";
 export type DataLeaseMode = "application" | "maintenance";
 
 export const LEASE_HEARTBEAT_MS = 15_000;
-// ponytail: event loop blocked > 2 min lets a second instance steal the lease; raise if seen.
 export const LEASE_STALE_MS = 120_000;
 
 function processIsAlive(pid: number): boolean {
@@ -51,8 +50,6 @@ export function acquireDataLease(dataDir: string, mode: DataLeaseMode): () => vo
       : [];
     const ownerMode = owner[0];
     const ownerPid = Number(owner[1]);
-    // Crash leaves the owner file behind and the OS may hand its PID to another node
-    // process; a live owner refreshes mtime, so a stale heartbeat means dead owner.
     const heartbeatFresh =
       fs.existsSync(ownerPath) && Date.now() - fs.statSync(ownerPath).mtimeMs < LEASE_STALE_MS;
     if (!Number.isInteger(ownerPid) || (heartbeatFresh && processIsAlive(ownerPid))) {
@@ -74,9 +71,7 @@ export function acquireDataLease(dataDir: string, mode: DataLeaseMode): () => vo
     try {
       const now = new Date();
       fs.utimesSync(ownerFile, now, now);
-    } catch {
-      // lease dir removed externally; nothing to refresh
-    }
+    } catch {}
   }, LEASE_HEARTBEAT_MS);
   heartbeat.unref();
   let released = false;
@@ -87,9 +82,7 @@ export function acquireDataLease(dataDir: string, mode: DataLeaseMode): () => vo
       clearInterval(heartbeat);
       process.removeListener("exit", release);
       fs.rmSync(leaseDir, { recursive: true, force: true });
-    } catch {
-      // ignore errors during cleanup
-    }
+    } catch {}
   };
   process.once("exit", release);
   return release;

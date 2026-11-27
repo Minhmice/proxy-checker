@@ -41,14 +41,14 @@ export function openAntigravityRotationHistory(dataDir: string): AntigravityRota
     };
   };
   const validThreshold = (value: number | null | undefined) =>
-    typeof value === "number" && Number.isInteger(value) && value >= 10 && value <= 20;
+    typeof value === "number" && Number.isInteger(value) && value >= 5 && value <= 10;
   const saveThreshold = (
     accountId: string,
     thresholdPercentage: number,
     state: "pending" | "active",
   ) => {
     if (!validThreshold(thresholdPercentage))
-      throw new Error("Rotation threshold must be an integer from 10 to 20");
+      throw new Error("Rotation threshold must be an integer from 5 to 10");
     const current = get(accountId);
     const threshold =
       current && current.tenureState !== "inactive" && validThreshold(current.thresholdPercentage)

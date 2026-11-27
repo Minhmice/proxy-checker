@@ -1,19 +1,32 @@
 # Antigravity account rotation and token telemetry dashboard
 
-One Node.js application: a Next.js dashboard that syncs with **9Router**, tracks Gemini session quotas across Antigravity accounts, manages single-account autonomous quota rotation, and displays real-time model token analytics.
+One Node.js app: Next.js dashboard syncing with **9Router**. Track session quotas across Antigravity and Codex accounts, run independent two-account autonomous quota rotation per provider, show real-time model token analytics.
 
-## Single-Account Antigravity Rotation
+## Two-Account Antigravity and Codex Rotation
 
-- **Single active account:** Keeps exactly one Antigravity account active globally across configured 9Router endpoints at steady state.
-- **Sampled threshold:** Each account activation receives an integer quota threshold uniformly sampled between 10% and 20% inclusive, persisted across restarts and maintenance cycles.
-- **Quota rotation:** When the active account's Gemini session quota drops to or below its persisted threshold (or an account error occurs), a standby account with >20% quota and earliest reset duration is activated.
-- **Safe handoff:** The successor is verified active before deactivating the predecessor. If activation fails or no eligible standby exists, the current account remains active.
+- **Independent groups:** Antigravity and Codex (`codex` provider) rotate independently. Each keeps two active accounts when eligible accounts exist. Healthy incumbents stay active. No proxies; Claude accounts untouched.
+- **Sampled threshold:** Each account activation gets integer quota threshold uniformly sampled 5%-10% inclusive, persisted across restarts and maintenance cycles.
+- **Session quota only:** Decisions use session quota percentage. Weekly quota display only (hidden for Codex), never used for decisions.
+- **Exhausted Codex sessions:** Fresh session telemetry stays readable at 0% even if 9Router keeps its usage-limit 429 error. Such accounts stay ineligible until session quota exceeds 20%; auth and telemetry failures still report errors.
+- **Quota rotation:** At persisted session threshold (or account error), replace account with same-provider standby having session above 20%; pick highest session percentage, then earliest session reset.
+- **Safe handoff:** Verify successor active before deactivating predecessor. If activation fails, write fails, or no eligible standby exists, current account stays active.
+- **Dashboard:** Account Status card and sidebar quota widget label each account by provider (no provider = Antigravity) and show per-provider active counts from `/api/antigravity/status`.
+- **Rotation feedback:** Open dashboard shows brief dither-flame toast when quota polling observes confirmed replacement. Opening dashboard does not replay past rotations.
+- **Refresh status:** Dashboard and sidebar share one quota snapshot. Failed refresh keeps last known values labeled stale, never reports success.
 
 ## Settings
 
-Open **Settings** in the dashboard to configure 9Router credentials, autonomous rotation daemon interval, Git backups, and master control password. Values are stored in `data/settings.json` and apply immediately. Server listens on port `1300`.
+Open **Settings** to configure 9Router credentials, autonomous rotation daemon toggle and interval (one shared toggle/schedule for Antigravity and Codex), Git backups, master control password. Stored in `data/settings.json`, apply immediately. Server listens on port `1300`.
 
-On first install, copy `.env.example` to `.env` to bootstrap — settings are then seeded into `data/settings.json` automatically.
+Unsaved Settings edits stay in memory across dashboard navigation. Restore and sign-out warn before discarding drafts. Backup status shows refresh failures, distinguishes last known values from current data.
+
+First install: copy `.env.example` to `.env` to bootstrap; settings then seeded into `data/settings.json` automatically.
+
+## Session loading animation
+
+Pixel loader in `src/components/ui/loading-animation.tsx` runs while session check or sign-in redirect pending. Does not delay navigation. Open **Help → UI Components → Pixel loader demo** for scroll, assemble, Replay sequence. Reduced motion keeps session figure still, skips animated demo transition.
+
+Demo frames sampled from third-party footage. Replace `BUILTIN_FRAMES` with cleared 66×53 packed frames before public release (or supply cleared `frames` in every usage).
 
 ## Tooling & Architecture Operations
 
@@ -68,8 +81,9 @@ If deploy fails after service restart, deploy script stops service and leaves da
    - `CONTROL_PASSWORD` — dashboard login
    - `NINEROUTER_PASSWORD` — **9Router dashboard password**
    - `NINEROUTER_URL` — default `https://9router.minhmice.com`
-2. From the project root, run `npm install` and `npm run dev`.
-3. Open `http://localhost:1300`, enter the control password, and view dashboard analytics.
+2. From project root run `npm install` and `npm run dev`.
+3. Open `http://localhost:1300`, enter control password, view dashboard analytics.
+   Dev also supports `http://127.0.0.1:1300`. Next.js owns HMR WebSocket upgrade listener; do not add second custom listener.
 
 ## Environment variables
 
@@ -81,6 +95,8 @@ If deploy fails after service restart, deploy script stops service and leaves da
 | `NINEROUTER_URL` | `https://9router.minhmice.com` | 9Router base URL |
 | `NINEROUTER_PASSWORD` | — | 9Router dashboard login password |
 | `NINEROUTER_API_KEY` | — | Optional legacy Bearer key |
+| `SPOTIFY_CLIENT_ID` | — | Spotify app client id (public, PKCE; no secret). Register `http://127.0.0.1:<PORT>/api/spotify/callback` as its redirect URI; Spotify rejects `localhost`. |
+| `SPOTIFY_REDIRECT_URI` | `http://127.0.0.1:<PORT>/api/spotify/callback` | Override when served over HTTPS behind a proxy |
 
 ## Deploy lên Raspberry Pi (Auto-pull via systemd)
 

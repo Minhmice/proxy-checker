@@ -67,6 +67,52 @@ test("app-config drops legacy proxy settings while retaining account rotation an
   }
 });
 
+test("app-config defaults invalid rotation intervals from settings files and preserves finite rounding and clamps", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "app-config-test-interval-"));
+  const originalEnv = { ...process.env };
+  const settingsPath = path.join(tmpDir, "settings.json");
+  process.env.APP_CONFIG_PATH = settingsPath;
+
+  try {
+    for (const [value, expected] of [
+      ['"15"', 10],
+      ["null", 10],
+      ["true", 10],
+      ["{}", 10],
+      ["1e999", 10],
+      ["-1e999", 10],
+      ["12.6", 13],
+      ["0", 1],
+      ["61", 60],
+    ] as const) {
+      fs.writeFileSync(
+        settingsPath,
+        `{"controlPassword":"stored-control","nineRouterPassword":"stored-router-password","antigravityRotatorEnabled":false,"antigravityRotateMinutes":${value}}`,
+      );
+      initAppConfig();
+      const settings = getSettingsSecrets();
+      assert.equal(settings.antigravityRotateMinutes, expected, value);
+      assert.equal(settings.controlPassword, "stored-control");
+      assert.equal(settings.nineRouterPassword, "stored-router-password");
+      assert.equal(settings.antigravityRotatorEnabled, false);
+    }
+  } finally {
+    for (const key of [
+      "APP_CONFIG_PATH",
+      "CONTROL_PASSWORD",
+      "NINEROUTER_URL",
+      "NINEROUTER_PASSWORD",
+      "NINEROUTER_API_KEY",
+      "ANTIGRAVITY_ROTATOR_ENABLED",
+      "ANTIGRAVITY_ROTATE_MINUTES",
+    ]) {
+      if (originalEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = originalEnv[key];
+    }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test("app-config normalizes, validates, and updates nineRouterUrl in settings", () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "app-config-test-url-"));
   const originalPath = process.env.APP_CONFIG_PATH;
@@ -77,19 +123,15 @@ test("app-config normalizes, validates, and updates nineRouterUrl in settings", 
   try {
     initAppConfig();
 
-    // Strips trailing slashes
     updateSettings({ nineRouterUrl: "http://192.168.1.100:20128/" });
     assert.equal(getSettingsSecrets().nineRouterUrl, "http://192.168.1.100:20128");
 
-    // Auto-adds http:// if missing protocol
     updateSettings({ nineRouterUrl: "100.79.102.99:20128" });
     assert.equal(getSettingsSecrets().nineRouterUrl, "http://100.79.102.99:20128");
 
-    // Trims whitespace and multiple trailing slashes
     updateSettings({ nineRouterUrl: "   https://9router.example.com///   " });
     assert.equal(getSettingsSecrets().nineRouterUrl, "https://9router.example.com");
 
-    // Supports multiple comma-separated URLs and normalizes each
     updateSettings({ nineRouterUrl: "192.168.1.54, 9router.minhmice.com" });
     assert.equal(
       getSettingsSecrets().nineRouterUrl,
@@ -100,7 +142,6 @@ test("app-config normalizes, validates, and updates nineRouterUrl in settings", 
       "http://9router.minhmice.com",
     ]);
 
-    // Supports mixed ports and protocols with deduplication
     updateSettings({
       nineRouterUrl:
         "http://192.168.1.54:20128, https://9router.minhmice.com, http://192.168.1.54:20128",
@@ -114,10 +155,8 @@ test("app-config normalizes, validates, and updates nineRouterUrl in settings", 
       "https://9router.minhmice.com",
     ]);
 
-    // Rejects empty URL
     assert.throws(() => updateSettings({ nineRouterUrl: "   " }), /cannot be empty/);
 
-    // Rejects unsupported protocol
     assert.throws(() => updateSettings({ nineRouterUrl: "ftp://example.com" }), /http or https/);
   } finally {
     if (originalPath !== undefined) {

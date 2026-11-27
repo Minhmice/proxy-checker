@@ -76,9 +76,7 @@ function projectServerPids() {
       .map((s) => s.trim())
       .filter((s) => /^\d+$/.test(s));
     if (pids.length) return pids;
-  } catch {
-    // fallback if PowerShell is unavailable
-  }
+  } catch {}
 
   try {
     const out = execSync(

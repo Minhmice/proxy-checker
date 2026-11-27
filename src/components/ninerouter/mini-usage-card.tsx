@@ -14,6 +14,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DitherBar, DitherDivider } from "@/components/ui/dither";
 
 interface UsageStatsData {
   totalRequests?: number;
@@ -97,20 +98,21 @@ export function MiniUsageCard({ nodeId, nodeName, nodeUrl, period }: MiniUsageCa
   );
 
   return (
-    <Card className="bg-[#131318] border border-[#23232C] rounded-2xl p-5 hover:border-white/15 transition-all shadow-lg flex flex-col justify-between">
-      <CardHeader className="p-0 pb-3 border-b border-[#23232C] flex flex-row items-center justify-between space-y-0">
-        <div className="flex items-center gap-2.5">
-          <div className="flex size-8 items-center justify-center rounded-xl bg-[#FF5B22]/10 text-[#FF5B22] border border-[#FF5B22]/25 shadow-[0_0_12px_rgba(255,91,34,0.15)]">
+    <Card className="flex flex-col justify-between gap-0 rounded-2xl border-border bg-card p-5 shadow-sm transition-colors hover:border-primary/40">
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 p-0 pb-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-xl border border-primary/25 bg-primary/10 text-primary">
             <Server className="size-4" />
           </div>
-          <div>
-            <CardTitle className="text-sm font-bold text-zinc-100 flex items-center gap-2">
-              {nodeName}
+          <div className="min-w-0">
+            <CardTitle className="flex min-w-0 flex-wrap items-center gap-2 text-sm font-bold text-foreground">
+              <span className="min-w-0 break-all">{nodeName}</span>
               <Badge
                 variant="outline"
-                className="text-[10px] font-mono border-[#23232C] bg-[#0A0A0E] text-zinc-400 tabular-nums"
+                title={nodeUrl}
+                className="max-w-full shrink border-border bg-background font-mono text-[10px] text-muted-foreground tabular-nums"
               >
-                {nodeUrl.replace(/https?:\/\//, "")}
+                <span className="truncate">{nodeUrl.replace(/https?:\/\//, "")}</span>
               </Badge>
             </CardTitle>
           </div>
@@ -120,76 +122,83 @@ export function MiniUsageCard({ nodeId, nodeName, nodeUrl, period }: MiniUsageCa
           variant="ghost"
           onClick={fetchStats}
           disabled={loading}
-          className="size-7 p-0 text-zinc-400 hover:text-[#FF5B22] hover:bg-[#FF5B22]/10 transition-colors"
+          aria-label={`Refresh ${nodeName} usage`}
+          className="size-9 shrink-0 p-0 text-muted-foreground hover:text-primary"
         >
-          <RefreshCw className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
+          <RefreshCw
+            className={`size-3.5 ${loading ? "animate-spin motion-reduce:animate-none" : ""}`}
+          />
         </Button>
       </CardHeader>
+      <DitherDivider edge="top" length={6} className="h-1.5" />
 
       <CardContent className="p-0 pt-4 space-y-4">
         {error ? (
-          <div className="flex items-center gap-2 p-3 text-xs rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-400">
+          <div className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
             <AlertCircle className="size-4 shrink-0" />
             <span>Connection error: {error}</span>
           </div>
         ) : (
           <>
-            {/* 5 KPI Metric Tiles */}
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center">
-              <div className="p-2.5 rounded-xl bg-[#181820]/80 border border-[#23232C]">
-                <span className="text-[10px] uppercase font-semibold text-zinc-400 tracking-wider block">
+              <div className="rounded-xl border border-border bg-muted/50 p-2.5">
+                <span className="block text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                   Requests
                 </span>
-                <span className="text-base font-bold text-zinc-100 mt-0.5 block font-mono tabular-nums">
+                <span className="mt-0.5 block font-mono text-base font-bold tabular-nums text-foreground">
                   {requests.toLocaleString()}
                 </span>
               </div>
 
-              <div className="p-2.5 rounded-xl bg-[#181820]/80 border border-[#23232C]">
-                <span className="text-[10px] uppercase font-semibold text-rose-400/90 tracking-wider block flex items-center justify-center gap-1">
+              <div className="rounded-xl border border-border bg-muted/50 p-2.5">
+                <span className="flex items-center justify-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-dither-red">
                   <Zap className="size-2.5" /> In Tokens
                 </span>
-                <span className="text-base font-bold text-rose-400 mt-0.5 block font-mono tabular-nums">
+                <span className="mt-0.5 block font-mono text-base font-bold tabular-nums text-dither-red">
                   {formatTokens(inputTokens)}
                 </span>
               </div>
 
-              <div className="p-2.5 rounded-xl bg-[#181820]/80 border border-[#23232C]">
-                <span className="text-[10px] uppercase font-semibold text-[#FF8555]/90 tracking-wider block flex items-center justify-center gap-1">
+              <div className="rounded-xl border border-border bg-muted/50 p-2.5">
+                <span className="flex items-center justify-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-chart-2">
                   <Database className="size-2.5" /> Cached
                 </span>
-                <span className="text-base font-bold text-[#FF8555] mt-0.5 block font-mono tabular-nums">
+                <span className="mt-0.5 block font-mono text-base font-bold tabular-nums text-chart-2">
                   {formatTokens(cachedTokens)}
                 </span>
               </div>
 
-              <div className="p-2.5 rounded-xl bg-[#181820]/80 border border-[#23232C]">
-                <span className="text-[10px] uppercase font-semibold text-emerald-400/90 tracking-wider block flex items-center justify-center gap-1">
+              <div className="rounded-xl border border-border bg-muted/50 p-2.5">
+                <span className="flex items-center justify-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-success">
                   <ArrowUpRight className="size-2.5" /> Out Tokens
                 </span>
-                <span className="text-base font-bold text-emerald-400 mt-0.5 block font-mono tabular-nums">
+                <span className="mt-0.5 block font-mono text-base font-bold tabular-nums text-success">
                   {formatTokens(outputTokens)}
                 </span>
               </div>
 
-              <div className="p-2.5 rounded-xl bg-[#181820]/80 border border-[#23232C] col-span-2 sm:col-span-1">
-                <span className="text-[10px] uppercase font-semibold text-[#FF5B22] tracking-wider block flex items-center justify-center gap-0.5">
+              <div className="col-span-2 rounded-xl border border-border bg-muted/50 p-2.5 sm:col-span-1">
+                <span className="flex items-center justify-center gap-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary">
                   <DollarSign className="size-2.5" /> Est. Cost
                 </span>
-                <span className="text-base font-bold text-[#FF5B22] mt-0.5 block font-mono tabular-nums">
+                <span className="mt-0.5 block font-mono text-base font-bold tabular-nums text-primary">
                   ~${cost.toFixed(2)}
                 </span>
               </div>
             </div>
 
-            {/* Model Breakdown Mini List */}
             <div className="space-y-1.5 pt-1">
-              <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider block">
+              <span className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Top Active Models
               </span>
+              {topModels.length > 0 && (
+                <p className="text-[11px] text-muted-foreground">
+                  Bar width compares total tokens with the largest listed model.
+                </p>
+              )}
               <div className="space-y-1.5">
                 {topModels.length === 0 ? (
-                  <span className="text-xs text-zinc-500 italic block py-1">
+                  <span className="block py-1 text-xs italic text-muted-foreground">
                     No request data in this period
                   </span>
                 ) : (
@@ -197,34 +206,38 @@ export function MiniUsageCard({ nodeId, nodeName, nodeUrl, period }: MiniUsageCa
                     const modelTokens = (m.promptTokens || 0) + (m.completionTokens || 0);
                     const pct = Math.min(
                       100,
-                      Math.max(5, Math.round((modelTokens / maxModelTokens) * 100)),
+                      Math.max(0, Math.round((modelTokens / maxModelTokens) * 100)),
                     );
                     return (
                       <div
                         key={modelName}
-                        className="p-2 rounded-xl bg-[#181820]/60 border border-[#23232C] hover:border-[#23232C]/80 transition-colors"
+                        className="rounded-xl border border-border bg-muted/40 p-2 transition-colors hover:border-primary/40"
                       >
-                        <div className="flex items-center justify-between text-xs">
-                          <div className="flex items-center gap-1.5 truncate">
-                            <Cpu className="size-3 text-[#FF5B22] shrink-0" />
-                            <span className="truncate text-zinc-200 font-medium">
+                        <div className="flex items-center justify-between gap-2 text-xs">
+                          <div className="flex min-w-0 items-center gap-1.5">
+                            <Cpu className="size-3 shrink-0 text-primary" />
+                            <span className="truncate font-medium text-foreground">
                               {modelName.split(" ")[0]}
                             </span>
                           </div>
                           <div className="flex items-center gap-2 font-mono text-[11px] shrink-0 tabular-nums">
-                            <span className="text-rose-400">{formatTokens(m.promptTokens)}↑</span>
-                            <span className="text-emerald-400">
+                            <span className="text-dither-red">{formatTokens(m.promptTokens)}↑</span>
+                            <span className="text-success">
                               {formatTokens(m.completionTokens)}↓
                             </span>
-                            <span className="text-zinc-400">({m.requests} req)</span>
+                            <span className="text-muted-foreground">({m.requests} req)</span>
                           </div>
                         </div>
-                        {/* Flame progress bar */}
-                        <div className="h-1 w-full bg-[#23232C] rounded-full overflow-hidden mt-1.5">
-                          <div
-                            className="h-full bg-gradient-to-r from-[#FF6633] to-[#FF3D00] rounded-full transition-all duration-500"
-                            style={{ width: `${pct}%` }}
-                          />
+                        <div
+                          role="progressbar"
+                          aria-label={`${modelName} tokens relative to the largest listed model`}
+                          aria-valuenow={pct}
+                          aria-valuetext={`${formatTokens(modelTokens)} tokens, ${pct}% of the largest listed model`}
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          className="relative h-1.5 w-full overflow-hidden rounded-sm mt-1.5"
+                        >
+                          <DitherBar percent={pct} />
                         </div>
                       </div>
                     );

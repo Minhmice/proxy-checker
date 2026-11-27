@@ -79,53 +79,43 @@ export async function syncBackupToGit(options?: {
 
     const backupPathspec = `:(literal)${relBackupDir}`;
     try {
-      // 1. Check if git repo exists
       const isRepo = fs.existsSync(path.join(repoRoot, ".git"));
       if (!isRepo) {
+        lastSyncError = "Not a git repository";
         return {
           ok: false,
           changed: false,
           committed: false,
           pushed: false,
-          error: "Not a git repository",
+          error: lastSyncError,
         };
       }
       if (!relBackupDir || relBackupDir.startsWith("..") || path.isAbsolute(relBackupDir)) {
+        lastSyncError = `Backup directory (${backupDir}) is outside repository or is the repository root (${repoRoot}); git sync requires a subdirectory`;
         return {
           ok: false,
           changed: false,
           committed: false,
           pushed: false,
-          error: `Backup directory (${backupDir}) is outside repository or is the repository root (${repoRoot}); git sync requires a subdirectory`,
+          error: lastSyncError,
         };
       }
 
-      // 2. Check for changes in backupDir
       const { stdout: statusOut } = await runGit(["status", "--porcelain", "--", backupPathspec]);
       const changed = statusOut.trim().length > 0;
 
-      if (!changed) {
-        return {
-          ok: true,
-          changed: false,
-          committed: false,
-          pushed: false,
-        };
+      let commitSha: string | undefined;
+      if (changed) {
+        await runGit(["add", "--", backupPathspec]);
+
+        const timestamp = new Date().toISOString().replace("T", " ").substring(0, 19);
+        const commitMsg = `backup(9router): sync config and db [${timestamp}]`;
+        await runGit(["commit", "--only", "-m", commitMsg, "--", backupPathspec]);
+
+        const { stdout: shaOut } = await runGit(["rev-parse", "--short", "HEAD"]);
+        commitSha = shaOut.trim();
       }
 
-      // 3. Stage backup files
-      await runGit(["add", "--", backupPathspec]);
-
-      // 4. Commit
-      const timestamp = new Date().toISOString().replace("T", " ").substring(0, 19);
-      const commitMsg = `backup(9router): sync config and db [${timestamp}]`;
-      await runGit(["commit", "--only", "-m", commitMsg, "--", backupPathspec]);
-
-      // Get latest commit sha
-      const { stdout: shaOut } = await runGit(["rev-parse", "--short", "HEAD"]);
-      const commitSha = shaOut.trim();
-
-      // 5. Push if requested or if remote configured
       let pushed = false;
       let pushError: string | undefined;
 
@@ -138,18 +128,19 @@ export async function syncBackupToGit(options?: {
             pushed = true;
           } catch (pushErr) {
             pushError = (pushErr as Error).message || "Git push failed";
-            // Do not fail entire operation on push error (e.g. offline)
+            lastSyncError = pushError;
           }
         }
       }
 
       return {
-        ok: true,
-        changed: true,
-        committed: true,
+        ok: !pushError,
+        changed,
+        committed: changed,
         commitSha,
         pushed,
         pushError,
+        error: pushError,
       };
     } catch (err) {
       const errMsg = (err as Error).message || "Git sync error";
@@ -181,7 +172,6 @@ export async function getBackupSyncStatus(options?: {
   let remoteConfigured = false;
   let backupFileCount = 0;
 
-  // Check manifest for backup timestamp
   const manifestPath = path.join(backupDir, "manifest.json");
   if (fs.existsSync(manifestPath)) {
     try {
@@ -190,7 +180,6 @@ export async function getBackupSyncStatus(options?: {
     } catch {}
   }
 
-  // Count files
   if (fs.existsSync(backupDir)) {
     const countFiles = (dir: string): number => {
       let count = 0;
@@ -211,11 +200,9 @@ export async function getBackupSyncStatus(options?: {
     if (isRepo && isInsideRepo) {
       remoteConfigured = await hasGitRemote();
 
-      // Check uncommitted changes
       const { stdout: statusOut } = await runGit(["status", "--porcelain", "--", backupPathspec]);
       hasUncommittedChanges = statusOut.trim().length > 0;
 
-      // Last commit affecting backups
       const { stdout: logOut } = await runGit([
         "log",
         "-1",

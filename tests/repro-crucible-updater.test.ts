@@ -9,14 +9,12 @@ import {
 } from "../src/server/server-interactive-updater.js";
 
 test("REGRESSION-01: compareSemver correctly follows SemVer 2.0.0 precedence for prerelease tags", () => {
-  // Pre-release versions have LOWER precedence than normal releases (0.5.109-beta.1 < 0.5.109)
   assert.equal(compareSemver("0.5.109-beta.1", "0.5.109"), -1);
   assert.equal(compareSemver("0.5.109", "0.5.109-beta.1"), 1);
   assert.equal(compareSemver("0.5.109-beta.1", "0.5.109-beta.2"), -1);
   assert.equal(compareSemver("0.5.109-beta.2", "0.5.109-beta.1"), 1);
   assert.equal(compareSemver("0.5.109-beta.1", "0.5.109-beta.1"), 0);
 
-  // Normal releases
   assert.equal(compareSemver("0.5.109", "0.5.104"), 1);
   assert.equal(compareSemver("0.5.104", "0.5.109"), -1);
   assert.equal(compareSemver("0.5.109", "0.5.109"), 0);
@@ -43,11 +41,9 @@ test("REGRESSION-02: Simultaneous startInteractiveUpgrade acquires lock and prev
 
   const manager = new NineRouterServerManager(mockRunner);
 
-  // First job acquires lock on server-lan
   const job1 = await manager.startInteractiveUpgrade(["server-lan"]);
   assert.equal(manager.isServerLocked("server-lan"), true);
 
-  // Second concurrent job attempting to upgrade server-lan must be rejected with lock error
   await assert.rejects(
     async () => {
       await manager.startInteractiveUpgrade(["server-lan"]);
@@ -57,10 +53,8 @@ test("REGRESSION-02: Simultaneous startInteractiveUpgrade acquires lock and prev
     },
   );
 
-  // Let first job complete
   await job1.done;
 
-  // Lock must be released
   assert.equal(manager.isServerLocked("server-lan"), false);
   assert.equal(maxConcurrencyObserved, 1, "Concurrency strictly bounded to 1 per server host");
 });
@@ -81,7 +75,6 @@ test("REGRESSION-03: Max job capacity eviction prevents memory leaks", async () 
     await job.done;
   }
 
-  // Max capacity is capped at 50 jobs
   assert.ok(manager.listJobs().length <= 50, "Capped at max capacity to prevent memory leak");
 });
 test("REGRESSION-04: Runner promise rejection is safely caught and marked failed without corrupting job status", async () => {
@@ -104,10 +97,6 @@ test("REGRESSION-04: Runner promise rejection is safely caught and marked failed
   const job = await manager.startInteractiveUpgrade();
   await job.done;
 
-  // Asserting expected correct behavior:
-  // 1. The crashed target must NOT remain in "running" state
-  // 2. The crashed target status must be "failed"
-  // 3. The overall job status must be "failed"
   assert.equal(job.targets["server-lan"].status, "failed");
   assert.equal(job.status, "failed");
 });

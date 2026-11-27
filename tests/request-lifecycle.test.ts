@@ -19,7 +19,6 @@ test("fetch client helpers gracefully handle aborted signals without rejections"
     globalThis.fetch = originalFetch;
   });
 
-  // Mock fetch that rejects with DOMException when aborted, without wall-clock timers
   globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
     const signal = init?.signal;
     if (signal?.aborted) {
@@ -38,20 +37,17 @@ test("fetch client helpers gracefully handle aborted signals without rejections"
     return promise;
   };
 
-  // 1. checkSession with pre-aborted signal
   const c1 = new AbortController();
   c1.abort();
   const sessionRes = await checkSession(c1.signal);
   assert.equal(sessionRes, false);
 
-  // 2. fetchSettings with signal aborted in-flight
   const c2 = new AbortController();
   const settingsPromise = fetchSettings(undefined, c2.signal);
   c2.abort();
   const settingsRes = await settingsPromise;
   assert.equal(settingsRes.settings.controlPasswordSet, false);
 
-  // 3. fetchAntigravityStatus with in-flight abort
   const c3 = new AbortController();
   const agPromise = fetchAntigravityStatus(undefined, c3.signal);
   c3.abort();

@@ -24,12 +24,12 @@ test("keeps healthy incumbent above its persisted threshold", () => {
     ],
     { allEndpointsReadable: true },
   );
-  assert.deepEqual(plan.activeIds, ["old"]);
-  assert.deepEqual(plan.activations, []);
+  assert.deepEqual(plan.activeIds, ["old", "new"]);
+  assert.deepEqual(plan.activations, ["new"]);
   assert.deepEqual(plan.deactivations, []);
 });
 
-test("replaces incumbent at threshold with earliest eligible successor", () => {
+test("replaces incumbent and fills second slot using eligible reserves", () => {
   const plan = computeRotationPlan(
     [
       account("old", { isActive: true, sessionPercentage: 15, thresholdPercentage: 15 }),
@@ -38,9 +38,9 @@ test("replaces incumbent at threshold with earliest eligible successor", () => {
     ],
     { allEndpointsReadable: true },
   );
-  assert.deepEqual(plan.activations, ["first"]);
+  assert.deepEqual(plan.activations, ["first", "later"]);
   assert.deepEqual(plan.deactivations, ["old"]);
-  assert.deepEqual(plan.activeIds, ["first"]);
+  assert.deepEqual(plan.activeIds, ["first", "later"]);
 });
 
 test("keeps exhausted incumbent when no successor qualifies", () => {
@@ -70,6 +70,22 @@ test("does not activate while an endpoint is unreadable", () => {
   assert.equal(plan.degraded, true);
 });
 
+test("retains all observed actives without changes while an endpoint is unreadable", () => {
+  const plan = computeRotationPlan(
+    [
+      account("first", { isActive: true }),
+      account("second", { isActive: true, sessionPercentage: 5 }),
+      account("third", { isActive: true }),
+      account("reserve"),
+    ],
+    { allEndpointsReadable: false },
+  );
+  assert.deepEqual(plan.activeIds, ["first", "second", "third"]);
+  assert.deepEqual(plan.activations, []);
+  assert.deepEqual(plan.deactivations, []);
+  assert.equal(plan.degraded, true);
+});
+
 test("converges multiple active accounts deterministically", () => {
   const plan = computeRotationPlan(
     [
@@ -78,8 +94,8 @@ test("converges multiple active accounts deterministically", () => {
     ],
     { allEndpointsReadable: true },
   );
-  assert.deepEqual(plan.activeIds, ["a"]);
-  assert.deepEqual(plan.deactivations, ["z"]);
+  assert.deepEqual(plan.activeIds, ["a", "z"]);
+  assert.deepEqual(plan.deactivations, []);
 });
 
 test("candidate quota requires more than twenty, no error and available telemetry", () => {
@@ -103,7 +119,7 @@ test("equal or invalid resets use qualified ID tie-breaker", () => {
     ],
     { allEndpointsReadable: true },
   );
-  assert.deepEqual(plan.activeIds, ["https://a:::same"]);
+  assert.deepEqual(plan.activeIds, ["https://a:::same", "https://b:::same"]);
 });
 
 test("unhealthy startup retains qualified ID order when no successor exists", () => {
@@ -114,8 +130,8 @@ test("unhealthy startup retains qualified ID order when no successor exists", ()
     ],
     { allEndpointsReadable: true },
   );
-  assert.deepEqual(plan.activeIds, ["https://a:::same"]);
-  assert.deepEqual(plan.deactivations, ["https://b:::same"]);
+  assert.deepEqual(plan.activeIds, ["https://a:::same", "https://b:::same"]);
+  assert.deepEqual(plan.deactivations, []);
 });
 
 test("selects empty-state successor only with fresh finite quota", () => {
@@ -128,4 +144,19 @@ test("selects empty-state successor only with fresh finite quota", () => {
   );
   assert.deepEqual(plan.activations, ["good"]);
   assert.deepEqual(plan.activeIds, ["good"]);
+});
+
+test("keeps healthy peer and replaces exhausted slot with highest quota", () => {
+  const plan = computeRotationPlan(
+    [
+      account("low", { isActive: true, sessionPercentage: 10 }),
+      account("peer", { isActive: true, sessionPercentage: 70 }),
+      account("early", { sessionPercentage: 50, resetAt: "2099-01-01T00:00:00Z" }),
+      account("rich", { sessionPercentage: 95, resetAt: "2099-01-02T00:00:00Z" }),
+    ],
+    { allEndpointsReadable: true },
+  );
+  assert.deepEqual(plan.activations, ["rich"]);
+  assert.deepEqual(plan.deactivations, ["low"]);
+  assert.deepEqual(plan.activeIds, ["peer", "rich"]);
 });

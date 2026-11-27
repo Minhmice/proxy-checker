@@ -1,4 +1,6 @@
 import "./load-env.js";
+import { setTimeout as sleep } from "node:timers/promises";
+import type { RotationProvider } from "../lib/types.js";
 import {
   getSettingsSecrets,
   normalizeSingleNineRouterUrl,
@@ -7,6 +9,16 @@ import {
 
 const authCookiesByUrl = new Map<string, string>();
 const inFlightLoginsByUrl = new Map<string, Promise<string | null>>();
+const sessionGenerations = new Map<string, object>();
+
+function sessionGeneration(url: string): object {
+  let generation = sessionGenerations.get(url);
+  if (!generation) {
+    generation = {};
+    sessionGenerations.set(url, generation);
+  }
+  return generation;
+}
 
 export interface NineRouterRequestOverrides {
   url?: string;
@@ -52,14 +64,18 @@ export function clearNineRouterSession(url?: string) {
       const normalized = normalizeSingleNineRouterUrl(url);
       authCookiesByUrl.delete(url);
       authCookiesByUrl.delete(normalized);
+      sessionGenerations.delete(url);
+      sessionGenerations.delete(normalized);
       inFlightLoginsByUrl.delete(url);
       inFlightLoginsByUrl.delete(normalized);
     } catch {
       authCookiesByUrl.delete(url);
+      sessionGenerations.delete(url);
       inFlightLoginsByUrl.delete(url);
     }
   } else {
     authCookiesByUrl.clear();
+    sessionGenerations.clear();
     inFlightLoginsByUrl.clear();
   }
 }
@@ -95,10 +111,12 @@ async function fetchWithSignal(
 }
 
 async function delay(ms: number, signal?: AbortSignal | null): Promise<void> {
-  const { promise, resolve } = Promise.withResolvers<void>();
-  setTimeout(resolve, ms);
-  await promise;
-  signal?.throwIfAborted();
+  try {
+    await sleep(ms, undefined, { signal: signal ?? undefined });
+  } catch (error) {
+    signal?.throwIfAborted();
+    throw error;
+  }
 }
 
 function extractAuthCookie(response: Response): string | null {
@@ -117,6 +135,7 @@ function extractAuthCookie(response: Response): string | null {
 async function loginWithConfig(
   config: NineRouterResolvedConfig,
   cookieRef: { value: string | null },
+  generation: object,
   options?: { timeoutMs?: number; signal?: AbortSignal | null },
 ) {
   if (!config.password) throw new Error("9Router dashboard password is not configured");
@@ -152,7 +171,7 @@ async function loginWithConfig(
     }
     const cookie = extractAuthCookie(response);
     if (!cookie) throw new Error("9Router login succeeded but no auth cookie was returned");
-    if (config.url) {
+    if (config.url && sessionGenerations.get(config.url) === generation) {
       authCookiesByUrl.set(config.url, cookie);
     }
     return cookie;
@@ -163,13 +182,14 @@ async function loginWithConfig(
     const cookie = await loginPromise;
     cookieRef.value = cookie;
   } finally {
-    inFlightLoginsByUrl.delete(key);
+    if (inFlightLoginsByUrl.get(key) === loginPromise) inFlightLoginsByUrl.delete(key);
   }
 }
 
 async function buildHeaders(
   config: NineRouterResolvedConfig,
   cookieRef: { value: string | null },
+  generation: object,
   options?: { timeoutMs?: number; signal?: AbortSignal | null },
 ): Promise<Record<string, string>> {
   if (config.password) {
@@ -178,7 +198,7 @@ async function buildHeaders(
       if (cached) {
         cookieRef.value = cached;
       } else {
-        await loginWithConfig(config, cookieRef, options);
+        await loginWithConfig(config, cookieRef, generation, options);
       }
     }
     return {
@@ -203,53 +223,89 @@ async function request<T>(
   retry = true,
   overrides?: NineRouterRequestOverrides,
   cookieRef?: { value: string | null },
+  generation?: object,
 ): Promise<T> {
   const config = readConfig(overrides);
+  const requestGeneration = generation ?? sessionGeneration(config.url);
   const timeoutMs = options.timeoutMs ?? overrides?.timeoutMs ?? 10_000;
   const effectiveCookieRef = cookieRef ?? { value: authCookiesByUrl.get(config.url) ?? null };
-  const headers = await buildHeaders(config, effectiveCookieRef, {
+  const headers = await buildHeaders(config, effectiveCookieRef, requestGeneration, {
     timeoutMs,
     signal: options.signal,
   });
   const method = (options.method ?? "GET").toUpperCase();
-  // ponytail: one retry for reads only; mutations are never replayed (could double-apply).
   const attempts = method === "GET" ? 2 : 1;
-  let response: Response | undefined;
+  let response!: Response;
+  let text: string;
   for (let attempt = 1; ; attempt++) {
-    const signal = combineSignals(timeoutMs, options.signal);
-    try {
-      response = await fetchWithSignal(
-        `${config.url}${path}`,
-        {
-          ...options,
-          headers: { ...headers, ...(options.headers as Record<string, string>) },
-        },
-        signal,
-      );
-    } catch (error) {
-      if (attempt >= attempts || signal.aborted) throw error;
-      await delay(500, options.signal);
-      continue;
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 4_294_967_295) {
+      AbortSignal.timeout(timeoutMs);
     }
-    if (attempt >= attempts || ![502, 503, 504].includes(response.status)) break;
-    await response.body?.cancel();
+    const controller = new AbortController();
+    let remaining = timeoutMs;
+    let timer!: NodeJS.Timeout;
+    const scheduleTimeout = () => {
+      const duration = Math.min(remaining, 2_147_483_647);
+      remaining -= duration;
+      timer = setTimeout(() => {
+        if (remaining > 0) scheduleTimeout();
+        else
+          controller.abort(
+            new DOMException("The operation was aborted due to timeout", "TimeoutError"),
+          );
+      }, duration);
+      timer.unref();
+    };
+    scheduleTimeout();
+    const signal = options.signal
+      ? AbortSignal.any([controller.signal, options.signal])
+      : controller.signal;
+    let retryFetch = false;
+    try {
+      try {
+        response = await fetchWithSignal(
+          `${config.url}${path}`,
+          {
+            ...options,
+            headers: { ...headers, ...(options.headers as Record<string, string>) },
+          },
+          signal,
+        );
+      } catch (error) {
+        if (attempt >= attempts || signal.aborted) throw error;
+        retryFetch = true;
+      }
+      if (!retryFetch) {
+        if (attempt >= attempts || ![502, 503, 504].includes(response.status)) {
+          text = await response.text();
+          break;
+        }
+        await response.body?.cancel();
+      }
+    } finally {
+      clearTimeout(timer);
+    }
     await delay(500, options.signal);
   }
-  const text = await response.text();
   let body: Record<string, unknown>;
   try {
     body = text ? (JSON.parse(text) as Record<string, unknown>) : {};
   } catch {
     body = { error: text || response.statusText };
   }
-  if (response.status === 401 && config.password && retry) {
+  if (
+    response.status === 401 &&
+    config.password &&
+    retry &&
+    sessionGenerations.get(config.url) === requestGeneration
+  ) {
     effectiveCookieRef.value = null;
     authCookiesByUrl.delete(config.url);
-    await loginWithConfig(config, effectiveCookieRef, {
+    await loginWithConfig(config, effectiveCookieRef, requestGeneration, {
       timeoutMs,
       signal: options.signal,
     });
-    return request<T>(path, options, false, overrides, effectiveCookieRef);
+    return request<T>(path, options, false, overrides, effectiveCookieRef, requestGeneration);
   }
   if (!response.ok) {
     const message =
@@ -258,7 +314,11 @@ async function request<T>(
     error.status = response.status;
     throw error;
   }
-  if (effectiveCookieRef.value && config.url) {
+  if (
+    effectiveCookieRef.value &&
+    config.url &&
+    sessionGenerations.get(config.url) === requestGeneration
+  ) {
     authCookiesByUrl.set(config.url, effectiveCookieRef.value);
   }
   return body as T;
@@ -321,7 +381,6 @@ export async function testNineRouterConnection(overrides?: {
     }
   }
 
-  // Multiple URLs: test all in parallel
   const results = await Promise.allSettled(
     targetUrls.map(async (url) => {
       const accounts = await listConnectionPages({ ...overrides, url }, { value: null });
@@ -369,13 +428,18 @@ export interface NineRouterConnectionItem {
   providerSpecificData?: Record<string, unknown>;
 }
 
-type ConnectionListOptions = NineRouterRequestOverrides & { page?: number; pageSize?: number };
+type ConnectionListOptions = NineRouterRequestOverrides & {
+  page?: number;
+  pageSize?: number;
+  provider?: RotationProvider;
+};
 
 async function listConnectionPages(
   overrides?: ConnectionListOptions,
   cookieRef?: { value: string | null },
 ): Promise<NineRouterConnectionItem[]> {
   const pageSize = overrides?.pageSize ?? 50;
+  const provider = overrides?.provider ?? "antigravity";
   if (
     !Number.isSafeInteger(pageSize) ||
     pageSize < 1 ||
@@ -392,7 +456,7 @@ async function listConnectionPages(
       connections?: NineRouterConnectionItem[];
       pagination?: { page: number; total: number; totalPages: number };
     }>(
-      `/api/providers/client?pageSize=${pageSize}${pageParam}&provider=antigravity`,
+      `/api/providers/client?pageSize=${pageSize}${pageParam}&provider=${provider}`,
       {},
       true,
       overrides,
@@ -400,6 +464,7 @@ async function listConnectionPages(
     );
     if (!Array.isArray(body.connections)) throw new Error("Invalid 9Router connections response");
     for (const account of body.connections) {
+      if (account.provider !== provider) throw new Error("Unexpected 9Router account provider");
       if (typeof account.id !== "string" || !account.id || seen.has(account.id)) {
         throw new Error("Invalid or duplicate 9Router account in paginated response");
       }

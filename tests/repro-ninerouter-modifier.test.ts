@@ -3,12 +3,10 @@ import assert from "node:assert/strict";
 import { formatTokens } from "../src/components/ninerouter/mini-usage-card.js";
 
 test("REGRESSION-01: formatTokens safely handles null, undefined, NaN, and negative values", () => {
-  // Safe handling of null and undefined
   assert.equal(formatTokens(null), "0");
   assert.equal(formatTokens(undefined), "0");
   assert.equal(formatTokens(NaN), "0");
 
-  // Standard token values
   assert.equal(formatTokens(0), "0");
   assert.equal(formatTokens(500), "500");
   assert.equal(formatTokens(1500), "1.5K");
@@ -20,8 +18,6 @@ test("REGRESSION-02: SSE init event replaces logs buffer instead of duplicating 
   const existingLogs = ["Line 1", "Line 2"];
   const initPayload = { type: "init", logs: ["Line 1", "Line 2", "Line 3"] };
 
-  // Fixed implementation:
-  // if (payload.type === "init" && Array.isArray(payload.logs)) setLogs(payload.logs.slice(-1000))
   let currentLogs = existingLogs;
   if (initPayload.type === "init" && Array.isArray(initPayload.logs)) {
     currentLogs = initPayload.logs.slice(-1000);

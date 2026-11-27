@@ -22,6 +22,7 @@ async function main() {
   if (command === "restore") {
     console.log("Restoring backup from backups/ to data/ ...");
     const res = restoreBackup();
+    for (const warning of res.warnings) console.warn(`Restore warning: ${warning}`);
     if (!res.ok) {
       console.error("Restore encountered errors:", res.errors);
       process.exitCode = 1;
@@ -39,7 +40,7 @@ async function main() {
       process.exitCode = 1;
       return;
     }
-    console.log(`Snapshot complete. Files: ${snap.manifest.files.length}`);
+    console.log(`Snapshot complete. Payload files: ${snap.manifest.files.length}`);
     return;
   }
 
@@ -51,7 +52,7 @@ async function main() {
       process.exitCode = 1;
       return;
     }
-    console.log(`Snapshot complete. Files: ${snap.manifest.files.length}`);
+    console.log(`Snapshot complete. Payload files: ${snap.manifest.files.length}`);
 
     console.log("Syncing to Git repo ...");
     const git = await syncBackupToGit({ push: true });

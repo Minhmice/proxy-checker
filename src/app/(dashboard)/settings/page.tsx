@@ -32,6 +32,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { SpotifyLinkCard } from "@/components/spotify-link-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { motion, useReducedMotion } from "motion/react";
@@ -46,6 +47,7 @@ import {
 } from "@/lib/api";
 import { isAbortError } from "@/lib/request-lifecycle";
 import { cn } from "@/lib/utils";
+import { ROTATION_POLICY } from "@/lib/types";
 import type {
   AppSettingsPublic,
   NineRouterTestResult,
@@ -63,6 +65,41 @@ type FormState = {
   newPassword: string;
   confirmPassword: string;
 };
+type InMemorySettingsDraft = {
+  form: FormState;
+  selectedTab: string;
+};
+
+let inMemorySettingsDraft: InMemorySettingsDraft | null = null;
+
+function cacheSettingsDraft(form: FormState, selectedTab: string) {
+  inMemorySettingsDraft = { form: { ...form }, selectedTab };
+}
+
+function clearSettingsDraft() {
+  inMemorySettingsDraft = null;
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeunload", (event) => {
+    if (!inMemorySettingsDraft) return;
+    event.preventDefault();
+    event.returnValue = "";
+  });
+  window.addEventListener("settings:before-navigate", (event) => {
+    if (!inMemorySettingsDraft) return;
+    if (!window.confirm("Unsaved Settings changes will stay in memory while you navigate.")) {
+      event.preventDefault();
+    }
+  });
+  window.addEventListener("dashboard:before-session-clear", (event) => {
+    if (!inMemorySettingsDraft) return;
+    if (!window.confirm("Unsaved Settings changes will be discarded when you sign out.")) {
+      event.preventDefault();
+    }
+  });
+  window.addEventListener("dashboard:session-cleared", clearSettingsDraft);
+}
 
 function toForm(settings: AppSettingsPublic): FormState {
   return {
@@ -81,13 +118,15 @@ function FieldInfo({ content, label }: { content: string; label?: string }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="icon-xs"
           aria-label={label ? `Help for ${label}` : "More information"}
-          className="inline-flex items-center text-[#9E9EA8]/70 hover:text-[#FF5B22] transition-colors cursor-help p-0.5 focus-visible:ring-1 focus-visible:ring-[#FF5B22] rounded-sm"
+          className="cursor-help"
         >
           <HelpCircle className="size-3.5" />
-        </button>
+        </Button>
       </TooltipTrigger>
       <TooltipContent
         side="top"
@@ -120,6 +159,8 @@ export default function SettingsPage() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<NineRouterTestResult | null>(null);
   const [backupStatus, setBackupStatus] = useState<BackupStatusResponse["status"] | null>(null);
+  const [backupStatusError, setBackupStatusError] = useState<string | null>(null);
+  const [backupStatusUpdatedAt, setBackupStatusUpdatedAt] = useState<number | null>(null);
   const [backupLoading, setBackupLoading] = useState(false);
   const [restoreLoading, setRestoreLoading] = useState(false);
 
@@ -150,19 +191,18 @@ export default function SettingsPage() {
     [form, baselineForm],
   );
 
-  const isAnyDirty =
-    isSectionDirty("ninerouter") || isSectionDirty("antigravity") || isSectionDirty("access");
+  const dirtySectionNames = [
+    isSectionDirty("ninerouter") ? "9Router" : null,
+    isSectionDirty("antigravity") ? "Antigravity & Codex" : null,
+    isSectionDirty("access") ? "Access & Security" : null,
+  ].filter((name): name is string => Boolean(name));
+  const isAnyDirty = dirtySectionNames.length > 0;
 
   useEffect(() => {
-    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (isAnyDirty) {
-        event.preventDefault();
-        event.returnValue = "";
-      }
-    };
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [isAnyDirty]);
+    if (!form || !baselineForm) return;
+    if (isAnyDirty) cacheSettingsDraft(form, selectedTab);
+    else clearSettingsDraft();
+  }, [form, baselineForm, isAnyDirty, selectedTab]);
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -182,8 +222,10 @@ export default function SettingsPage() {
           nineRouterApiKeySet: data.settings.nineRouterApiKeySet,
         });
         const initial = toForm(data.settings);
-        setForm(initial);
+        const cached = inMemorySettingsDraft;
+        setForm(cached?.form ?? initial);
         setBaselineForm(initial);
+        if (cached) setSelectedTab(cached.selectedTab);
       } catch (error) {
         if (signal?.aborted || isAbortError(error)) return;
         const message = (error as Error).message || "Failed to load configuration";
@@ -218,12 +260,18 @@ export default function SettingsPage() {
   }, [load]);
 
   const loadBackupStatus = useCallback(async () => {
+    setBackupLoading(true);
     try {
       const res = await fetchBackupStatus(password || undefined);
-      if (res.ok && res.status) {
-        setBackupStatus(res.status);
-      }
-    } catch {}
+      if (!res.ok || !res.status) throw new Error(res.error || "Backup status unavailable");
+      setBackupStatus(res.status);
+      setBackupStatusUpdatedAt(Date.now());
+      setBackupStatusError(null);
+    } catch (error) {
+      setBackupStatusError((error as Error).message || "Backup status unavailable");
+    } finally {
+      setBackupLoading(false);
+    }
   }, [password]);
 
   useEffect(() => {
@@ -253,14 +301,18 @@ export default function SettingsPage() {
 
   async function handleRestoreNow() {
     if ((!password && !authenticated) || isActionPending) return;
+    const draftWarning = isAnyDirty
+      ? `\n\nUnsaved drafts in ${dirtySectionNames.join(", ")} will also be discarded.`
+      : "";
     const confirmed = window.confirm(
-      "CRITICAL ACTION: Restoring settings and database from Git backups will overwrite settings.json and application registries. Any uncommitted data will be permanently lost.\n\nAre you sure you want to proceed with restore?",
+      `CRITICAL ACTION: Restoring settings and database from Git backups will overwrite settings.json and application registries. Any uncommitted data will be permanently lost.${draftWarning}\n\nAre you sure you want to proceed with restore?`,
     );
     if (!confirmed) return;
     setRestoreLoading(true);
     try {
       const res = await restoreBackup(password || undefined);
       if (!res.ok) throw new Error(res.error || res.errors?.[0] || "Restore failed");
+      clearSettingsDraft();
       toast.success(`Restored ${res.restoredFiles?.length ?? 0} files from backup`);
       await loadBackupStatus();
       void load();
@@ -363,7 +415,6 @@ export default function SettingsPage() {
         setPassword(payload.controlPassword);
       }
 
-      // Surgical section merge to avoid clobbering dirty edits in other tabs
       setForm((current) => {
         if (!current) return current;
         const next = { ...current };
@@ -417,8 +468,8 @@ export default function SettingsPage() {
   if (loading && !form) {
     return (
       <div className="space-y-6 max-w-5xl mx-auto p-4 sm:p-6">
-        <Skeleton className="h-10 w-48 bg-[#181820]" />
-        <Skeleton className="h-64 w-full bg-[#181820]" />
+        <Skeleton className="h-10 w-48" />
+        <Skeleton className="h-64 w-full" />
       </div>
     );
   }
@@ -426,14 +477,13 @@ export default function SettingsPage() {
   return (
     <TooltipProvider delayDuration={200}>
       <div className="space-y-6 max-w-5xl mx-auto pb-16 text-foreground">
-        {/* Page Header */}
-        <div className="border-b border-[#23232C] pb-4">
+        <div className="pb-4">
           <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-zinc-100">
             Settings &amp; Configuration
           </h1>
           <p className="text-xs sm:text-sm text-zinc-400 mt-1">
-            Configure 9Router endpoints, autonomous Antigravity account rotation, Git backups, and
-            access security.
+            Configure 9Router endpoints, autonomous Antigravity and Codex account rotation, Git
+            backups, and access security.
           </p>
         </div>
 
@@ -443,13 +493,21 @@ export default function SettingsPage() {
             <AlertDescription className="text-xs">{loadError}</AlertDescription>
           </Alert>
         )}
+        {isAnyDirty && (
+          <Alert>
+            <AlertCircle className="size-4" />
+            <AlertDescription>
+              Unsaved changes: {dirtySectionNames.join(", ")}. Drafts stay in memory during internal
+              navigation, but are lost on reload or sign out. Save each section to apply changes.
+            </AlertDescription>
+          </Alert>
+        )}
 
-        {/* High-Contrast Clear Tabs Navigation */}
         <Tabs value={selectedTab} onValueChange={setSelectedTab} className="space-y-6">
-          <TabsList className="flex flex-wrap sm:flex-nowrap w-full h-auto p-1.5 bg-[#121217] border border-[#23232C] rounded-xl gap-1.5 shadow-sm 3xl:p-2 3xl:max-w-4xl">
+          <TabsList className="flex flex-wrap sm:flex-nowrap w-full group-data-[orientation=horizontal]/tabs:h-auto p-1.5 bg-surface border border-border rounded-xl gap-1.5 shadow-sm 3xl:p-2 3xl:max-w-4xl [&>[role=tab]]:h-auto [&>[role=tab]]:min-h-11 sm:[&>[role=tab]]:min-h-9">
             <TabsTrigger
               value="ninerouter"
-              className="relative flex-1 min-w-[130px] flex items-center justify-center gap-2 py-2.5 px-3 text-xs sm:text-sm font-semibold rounded-lg border border-transparent transition-all text-[#9E9EA8] hover:text-white z-10 data-[state=active]:bg-[#FF5B22] data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:shadow-[#FF5B22]/25"
+              className="relative min-w-[130px] flex-1 gap-2 px-3 text-xs sm:text-sm font-semibold data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
             >
               {selectedTab === "ninerouter" && (
                 <motion.span
@@ -470,7 +528,7 @@ export default function SettingsPage() {
 
             <TabsTrigger
               value="antigravity"
-              className="relative flex-1 min-w-[130px] flex items-center justify-center gap-2 py-2.5 px-3 text-xs sm:text-sm font-semibold rounded-lg border border-transparent transition-all text-[#9E9EA8] hover:text-white z-10 data-[state=active]:bg-[#FF5B22] data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:shadow-[#FF5B22]/25"
+              className="relative min-w-[130px] flex-1 gap-2 px-3 text-xs sm:text-sm font-semibold data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
             >
               {selectedTab === "antigravity" && (
                 <motion.span
@@ -480,7 +538,7 @@ export default function SettingsPage() {
                 />
               )}
               <Cpu className="size-4 shrink-0" />
-              <span>Antigravity</span>
+              <span>Antigravity &amp; Codex</span>
               {isSectionDirty("antigravity") && (
                 <span
                   className="size-1.5 rounded-full bg-amber-400 ring-2 ring-background animate-pulse"
@@ -491,7 +549,7 @@ export default function SettingsPage() {
 
             <TabsTrigger
               value="backup"
-              className="relative flex-1 min-w-[130px] flex items-center justify-center gap-2 py-2.5 px-3 text-xs sm:text-sm font-semibold rounded-lg border border-transparent transition-all text-[#9E9EA8] hover:text-white z-10 data-[state=active]:bg-[#FF5B22] data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:shadow-[#FF5B22]/25"
+              className="relative min-w-[130px] flex-1 gap-2 px-3 text-xs sm:text-sm font-semibold data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
             >
               {selectedTab === "backup" && (
                 <motion.span
@@ -506,7 +564,7 @@ export default function SettingsPage() {
 
             <TabsTrigger
               value="access"
-              className="relative flex-1 min-w-[130px] flex items-center justify-center gap-2 py-2.5 px-3 text-xs sm:text-sm font-semibold rounded-lg border border-transparent transition-all text-[#9E9EA8] hover:text-white z-10 data-[state=active]:bg-[#FF5B22] data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:shadow-[#FF5B22]/25"
+              className="relative min-w-[130px] flex-1 gap-2 px-3 text-xs sm:text-sm font-semibold data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
             >
               {selectedTab === "access" && (
                 <motion.span
@@ -526,7 +584,6 @@ export default function SettingsPage() {
             </TabsTrigger>
           </TabsList>
 
-          {/* 1. 9ROUTER TAB */}
           <TabsContent
             value="ninerouter"
             forceMount
@@ -657,7 +714,7 @@ export default function SettingsPage() {
                 <span className="text-xs text-muted-foreground order-2 sm:order-1">
                   Changes take effect immediately on next connection attempt.
                 </span>
-                <div className="flex items-center gap-2 order-1 sm:order-2">
+                <div className="flex flex-wrap items-center gap-2 order-1 sm:order-2">
                   <Button
                     type="button"
                     variant="outline"
@@ -694,7 +751,6 @@ export default function SettingsPage() {
             </Card>
           </TabsContent>
 
-          {/* 2. ANTIGRAVITY TAB */}
           <TabsContent
             value="antigravity"
             forceMount
@@ -708,9 +764,12 @@ export default function SettingsPage() {
                       <Cpu className="size-4" />
                     </div>
                     <div>
-                      <CardTitle className="text-base">Antigravity Account Rotator</CardTitle>
+                      <CardTitle className="text-base">
+                        Antigravity &amp; Codex Account Rotator
+                      </CardTitle>
                       <CardDescription>
-                        Autonomous single-account rotation based strictly on Gemini session quota.
+                        Independent two-account rotation per provider, based strictly on session
+                        quota.
                       </CardDescription>
                     </div>
                   </div>
@@ -731,18 +790,18 @@ export default function SettingsPage() {
               <CardContent className="space-y-6">
                 <div className="grid grid-cols-1 3xl:grid-cols-12 gap-6 items-start">
                   <div className="3xl:col-span-8 space-y-6">
-                    {/* Rotator Toggle */}
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-lg border bg-muted/20 p-4 transition-colors">
                       <div className="space-y-1">
                         <Label
                           htmlFor="ag-rotator-toggle"
                           className="text-sm font-semibold cursor-pointer"
                         >
-                          Automatic Account Rotation
+                          Automatic Account Rotation (Antigravity &amp; Codex)
                         </Label>
                         <p className="text-xs text-muted-foreground">
-                          Rotate the active account when Gemini session quota reaches sampled
-                          threshold (10–20%) or an account error occurs.
+                          One shared toggle and schedule cover both providers. Each provider rotates
+                          its own active account when its session quota reaches the sampled
+                          threshold (5–10%) or an account error occurs.
                         </p>
                       </div>
                       <Switch
@@ -759,7 +818,7 @@ export default function SettingsPage() {
                         <Label htmlFor="ag-rotate-minutes" className="text-xs font-semibold">
                           Check Interval (Minutes)
                         </Label>
-                        <FieldInfo content="Frequency in minutes that the background daemon evaluates Gemini session quota (default: 10m, range: 1 - 60m)." />
+                        <FieldInfo content="Frequency in minutes that the background daemon evaluates session quota for both Antigravity and Codex accounts (default: 10m, range: 1 - 60m)." />
                       </div>
                       <Input
                         id="ag-rotate-minutes"
@@ -778,20 +837,26 @@ export default function SettingsPage() {
 
                   <div className="3xl:col-span-4 rounded-xl border border-border/70 bg-muted/20 p-4 space-y-3">
                     <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                      <Cpu className="size-3.5 text-primary" /> Single-Account Policy
+                      <Cpu className="size-3.5 text-primary" /> Two-Account Policy
                     </span>
                     <p className="text-xs text-muted-foreground">
-                      Keeps exactly 1 Antigravity account active globally across configured 9Router
-                      endpoints. Evaluates Gemini session quota only.
+                      Keeps 2 Antigravity and 2 Codex accounts active independently when eligible
+                      accounts are available. Evaluates session quota only; weekly quota is display
+                      only and never used for decisions.
                     </p>
                     <div className="text-[11px] font-mono text-slate-300 space-y-1.5 p-3 rounded-lg border border-border/50 bg-background/50">
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Active tenure:</span>
-                        <span className="text-emerald-400 font-semibold">1 active account</span>
+                        <span className="text-emerald-400 font-semibold">
+                          2 Antigravity + 2 Codex
+                        </span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Sampled threshold:</span>
-                        <span className="text-amber-400 font-semibold">10% – 20% (uniform)</span>
+                        <span className="text-amber-400 font-semibold">
+                          {ROTATION_POLICY.thresholdMin}% – {ROTATION_POLICY.thresholdMax}%
+                          (uniform)
+                        </span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Handoff guarantee:</span>
@@ -799,7 +864,10 @@ export default function SettingsPage() {
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Promotion sort:</span>
-                        <span className="text-foreground">Earliest reset duration</span>
+                        <span className="text-foreground">
+                          Candidate session &gt; {ROTATION_POLICY.standbyQuotaExclusive}%, highest
+                          session, then earliest session reset
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -829,7 +897,6 @@ export default function SettingsPage() {
             </Card>
           </TabsContent>
 
-          {/* 3. BACKUP TAB */}
           <TabsContent value="backup" forceMount className="data-[state=inactive]:hidden space-y-6">
             <Card className="shadow-sm">
               <CardHeader>
@@ -860,15 +927,29 @@ export default function SettingsPage() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
+                {backupStatusError && (
+                  <Alert variant="destructive" className="py-2">
+                    <AlertCircle className="size-4" />
+                    <AlertDescription className="text-xs">
+                      Backup status refresh failed: {backupStatusError}.{" "}
+                      {backupStatusUpdatedAt
+                        ? `Showing stale data last read ${new Date(backupStatusUpdatedAt).toLocaleString()}.`
+                        : "No backup status is available."}{" "}
+                      Retry using Refresh Backup Status.
+                    </AlertDescription>
+                  </Alert>
+                )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div className="rounded-lg border bg-muted/20 p-3 space-y-1">
                     <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
                       Last Backup
                     </span>
                     <div className="text-sm font-semibold truncate">
-                      {backupStatus?.lastBackupTime
-                        ? new Date(backupStatus.lastBackupTime).toLocaleString()
-                        : "Never"}
+                      {!backupStatus
+                        ? "Unavailable"
+                        : backupStatus.lastBackupTime
+                          ? new Date(backupStatus.lastBackupTime).toLocaleString()
+                          : "Never"}
                     </div>
                   </div>
                   <div className="rounded-lg border bg-muted/20 p-3 space-y-1">
@@ -881,7 +962,9 @@ export default function SettingsPage() {
                           {backupStatus.lastCommitSha}
                         </Badge>
                       ) : (
-                        <span className="text-sm text-muted-foreground">None</span>
+                        <span className="text-sm text-muted-foreground">
+                          {backupStatus ? "None" : "Unavailable"}
+                        </span>
                       )}
                     </div>
                   </div>
@@ -890,7 +973,9 @@ export default function SettingsPage() {
                       Git Working Tree
                     </span>
                     <div>
-                      {backupStatus?.hasUncommittedChanges ? (
+                      {!backupStatus ? (
+                        <span className="text-sm text-muted-foreground">Unavailable</span>
+                      ) : backupStatus.hasUncommittedChanges ? (
                         <Badge
                           variant="outline"
                           className="text-amber-400 border-amber-500/30 bg-amber-500/10 text-xs"
@@ -912,7 +997,7 @@ export default function SettingsPage() {
                       Backed-up Files
                     </span>
                     <div className="text-sm font-semibold">
-                      {backupStatus?.backupFileCount ?? 0} files
+                      {backupStatus ? `${backupStatus.backupFileCount} files` : "Unavailable"}
                     </div>
                   </div>
                 </div>
@@ -934,7 +1019,7 @@ export default function SettingsPage() {
                 <span className="text-xs text-muted-foreground order-2 sm:order-1">
                   Automatic backups run on maintenance intervals and setting updates.
                 </span>
-                <div className="flex items-center gap-2 order-1 sm:order-2">
+                <div className="flex flex-wrap items-center gap-2 order-1 sm:order-2">
                   <Button
                     type="button"
                     variant="outline"
@@ -974,7 +1059,6 @@ export default function SettingsPage() {
             </Card>
           </TabsContent>
 
-          {/* 4. ACCESS TAB */}
           <TabsContent value="access" forceMount className="data-[state=inactive]:hidden space-y-6">
             <Card className="shadow-sm">
               <CardHeader>
@@ -1069,10 +1153,11 @@ export default function SettingsPage() {
                 </Button>
               </CardFooter>
             </Card>
+
+            <SpotifyLinkCard />
           </TabsContent>
         </Tabs>
 
-        {/* Footnote */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-2 border-t pt-4 text-xs text-muted-foreground">
           <div>
             Configuration source:{" "}

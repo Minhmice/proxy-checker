@@ -1,11 +1,11 @@
 import crypto from "node:crypto";
 
-const MAGIC = Buffer.from("9RCE", "ascii"); // 9Router Crypto Envelope
+const MAGIC = Buffer.from("9RCE", "ascii");
 const VERSION = 0x01;
 const IV_LENGTH = 12;
 const TAG_LENGTH = 16;
 const KEY_LENGTH = 32;
-const HEADER_LENGTH = MAGIC.length + 1 + IV_LENGTH + TAG_LENGTH; // 4 + 1 + 12 + 16 = 33
+const HEADER_LENGTH = MAGIC.length + 1 + IV_LENGTH + TAG_LENGTH;
 
 function validateKey(key: Uint8Array): void {
   if (!key || key.byteLength !== KEY_LENGTH) {
@@ -15,33 +15,26 @@ function validateKey(key: Uint8Array): void {
   }
 }
 
-/**
- * Seals snapshot plaintext into an authenticated encrypted envelope.
- * Envelope layout: MAGIC (4B) + VERSION (1B) + IV (12B) + TAG (16B) + CIPHERTEXT
- */
 export function sealSnapshot(plaintext: Uint8Array, key: Uint8Array): Uint8Array {
   validateKey(key);
 
   const iv = crypto.randomBytes(IV_LENGTH);
   const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
-  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  const ciphertext = cipher.update(plaintext);
+  const final = cipher.final();
   const tag = cipher.getAuthTag();
 
-  const envelope = Buffer.allocUnsafe(HEADER_LENGTH + ciphertext.length);
+  const envelope = Buffer.allocUnsafe(HEADER_LENGTH + ciphertext.length + final.length);
   MAGIC.copy(envelope, 0);
   envelope[4] = VERSION;
   iv.copy(envelope, 5);
   tag.copy(envelope, 5 + IV_LENGTH);
   ciphertext.copy(envelope, HEADER_LENGTH);
+  final.copy(envelope, HEADER_LENGTH + ciphertext.length);
 
-  // ponytail: return Buffer directly as Uint8Array subtype. No unnecessary array copy.
   return new Uint8Array(envelope.buffer, envelope.byteOffset, envelope.byteLength);
 }
 
-/**
- * Opens and verifies authenticated snapshot envelope.
- * Throws on invalid magic, version, key length, truncation, or auth tag failure.
- */
 export function openSnapshot(envelope: Uint8Array, key: Uint8Array): Uint8Array {
   validateKey(key);
 
@@ -73,7 +66,6 @@ export function openSnapshot(envelope: Uint8Array, key: Uint8Array): Uint8Array 
 
   try {
     const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-    // ponytail: return Uint8Array view over decrypted Buffer without extra copy.
     return new Uint8Array(plaintext.buffer, plaintext.byteOffset, plaintext.byteLength);
   } catch (err) {
     throw new Error(

@@ -6,7 +6,7 @@ import { useReducedMotion } from "motion/react";
 import { cn } from "@/lib/utils";
 
 export interface GlobeMarker {
-  location: [number, number]; // [lat, lng]
+  location: [number, number];
   size: number;
 }
 
@@ -28,7 +28,6 @@ export function CobeGlobe({ markers = [], className, size = 300 }: CobeGlobeProp
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    // Check WebGL availability
     const gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
     if (!gl) {
       setHasWebGL(false);
@@ -36,14 +35,21 @@ export function CobeGlobe({ markers = [], className, size = 300 }: CobeGlobeProp
     }
 
     let globe: Globe | null = null;
-    let isVisible = true;
-    let rafId: number;
-
-    // IntersectionObserver to pause rendering when offscreen
+    let rafId: number | undefined;
     const observer = new IntersectionObserver(([entry]) => {
-      isVisible = entry.isIntersecting;
+      if (entry.isIntersecting && globe) {
+        rafId ??= requestAnimationFrame(render);
+      } else if (rafId !== undefined) {
+        cancelAnimationFrame(rafId);
+        rafId = undefined;
+      }
     });
-    observer.observe(canvas);
+
+    function render() {
+      if (!pointerInteracting.current && !isReduced) phi += 0.004;
+      globe?.update({ phi: phi + pointerInteractionMovement.current });
+      rafId = requestAnimationFrame(render);
+    }
 
     try {
       globe = createGlobe(canvas, {
@@ -62,25 +68,14 @@ export function CobeGlobe({ markers = [], className, size = 300 }: CobeGlobeProp
         markers,
       });
 
-      const render = () => {
-        if (isVisible && globe) {
-          if (!pointerInteracting.current && !isReduced) {
-            phi += 0.004;
-          }
-          globe.update({
-            phi: phi + pointerInteractionMovement.current,
-          });
-        }
-        rafId = requestAnimationFrame(render);
-      };
-      rafId = requestAnimationFrame(render);
+      observer.observe(canvas);
     } catch {
       setHasWebGL(false);
     }
 
     return () => {
       observer.disconnect();
-      cancelAnimationFrame(rafId);
+      if (rafId !== undefined) cancelAnimationFrame(rafId);
       if (globe) {
         globe.destroy();
       }

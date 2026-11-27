@@ -13,6 +13,7 @@ export interface UnifiedSyncReport {
   completedAt?: number;
   error?: string;
   rotationSkipped?: boolean;
+  rotationSkipReason?: "already-running";
 }
 
 export interface UnifiedSyncCoordinator {
@@ -41,7 +42,7 @@ export function createUnifiedSyncCoordinator(
     }
 
     isRunning = true;
-    const start = Date.now();
+    const start = performance.now();
     const shouldRunRotation = options.rotation !== false && !deps.antigravityRotator.isRunning;
     try {
       const report: UnifiedSyncReport = { started: true, running: false };
@@ -61,8 +62,11 @@ export function createUnifiedSyncCoordinator(
         }
       } else {
         report.rotationSkipped = true;
+        if (options.rotation !== false) {
+          report.rotationSkipReason = "already-running";
+        }
       }
-      report.durationMs = Date.now() - start;
+      report.durationMs = Math.round(performance.now() - start);
       report.completedAt = Date.now();
       return report;
     } finally {

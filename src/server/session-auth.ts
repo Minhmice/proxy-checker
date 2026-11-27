@@ -4,7 +4,7 @@ import { verifyControlPassword } from "./app-config.js";
 
 export const SESSION_COOKIE_NAME = "minhmiceproxy-session";
 export const LEGACY_COOKIE_NAME = "minhmiceproxy-auth";
-export const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+export const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
 export interface DashboardSession {
   token: string;
@@ -25,7 +25,13 @@ function parseCookie(cookieHeader: string | undefined, name: string): string | n
   if (!cookieHeader) return null;
   const match = cookieHeader.split("; ").find((c) => c.startsWith(`${name}=`));
   if (!match) return null;
-  return decodeURIComponent(match.slice(name.length + 1));
+  const value = match.slice(name.length + 1);
+  if (name === SESSION_COOKIE_NAME) return /^[0-9a-f]{64}$/.test(value) ? value : null;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
 }
 
 export function createSession(now = Date.now()): DashboardSession {
@@ -76,12 +82,10 @@ export function requireDashboardAuth(
   request: IncomingMessage,
   now = Date.now(),
 ): { authenticated: boolean } {
-  // 1. Primary: Session cookie
   if (readSession(request.headers.cookie, now)) {
     return { authenticated: true };
   }
 
-  // 2. Compatibility: Basic admin:<password>
   const authHeader = request.headers.authorization;
   if (authHeader?.startsWith("Basic ")) {
     try {
@@ -96,7 +100,6 @@ export function requireDashboardAuth(
     } catch {}
   }
 
-  // 3. Compatibility: Bearer <password>
   if (authHeader?.startsWith("Bearer ")) {
     const pass = authHeader.slice(7).trim();
     if (verifyControlPassword(pass)) {
@@ -104,7 +107,6 @@ export function requireDashboardAuth(
     }
   }
 
-  // 4. Compatibility: Legacy cookie
   const legacyPass = parseCookie(request.headers.cookie, LEGACY_COOKIE_NAME);
   if (legacyPass && verifyControlPassword(legacyPass)) {
     return { authenticated: true };

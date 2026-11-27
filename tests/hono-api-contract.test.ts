@@ -71,7 +71,6 @@ test("hono contract: login succeeds with valid password and issues session cooki
   assert.ok(setCookie);
   assert.ok(setCookie.includes(SESSION_COOKIE_NAME));
 
-  // Extract session token and verify authenticated session
   const tokenMatch = setCookie.match(new RegExp(`${SESSION_COOKIE_NAME}=([^;]+)`));
   assert.ok(tokenMatch);
   const cookieValue = `${SESSION_COOKIE_NAME}=${tokenMatch[1]}`;
@@ -83,7 +82,6 @@ test("hono contract: login succeeds with valid password and issues session cooki
   const sessionData = await sessionRes.json();
   assert.deepEqual(sessionData, { authenticated: true });
 
-  // Logout clears session
   const logoutRes = await app.request("/api/auth/logout", {
     method: "POST",
     headers: { Cookie: cookieValue },
@@ -217,6 +215,59 @@ test("hono contract: login rejects payload exceeding 10 KB with 413", async () =
   assert.equal(res.status, 413);
   const data = await res.json();
   assert.deepEqual(data, { error: "Payload too large" });
+});
+
+test("login enforces 10000-byte limit for chunked Node requests", async () => {
+  const app = createApiApp(createMockDeps());
+  const server = http.createServer(getRequestListener(app.fetch));
+  const listening = Promise.withResolvers<void>();
+  server.listen(0, "127.0.0.1", listening.resolve);
+  await listening.promise;
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const port = address.port;
+  const request = (body: string) => {
+    const { promise, resolve, reject } = Promise.withResolvers<{
+      status: number | undefined;
+      body: string;
+    }>();
+    const req = http.request(
+      {
+        host: "127.0.0.1",
+        port,
+        path: "/api/auth/login",
+        method: "POST",
+        headers: { "content-type": "application/json", "transfer-encoding": "chunked" },
+      },
+      (res) => {
+        let response = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk: string) => {
+          response += chunk;
+        });
+        res.on("end", () => resolve({ status: res.statusCode, body: response }));
+        res.on("error", reject);
+      },
+    );
+    req.on("error", reject);
+    req.end(body);
+    return promise;
+  };
+  try {
+    const prefix = '{"password":"test-control-pass-123","padding":"';
+    const suffix = '"}';
+    const body = prefix + "a".repeat(10_000 - Buffer.byteLength(prefix + suffix)) + suffix;
+    const normal = await request(body);
+    assert.equal(normal.status, 200);
+    assert.equal(JSON.parse(normal.body).authenticated, true);
+    const oversized = await request(body + " ");
+    assert.equal(oversized.status, 413);
+    assert.deepEqual(JSON.parse(oversized.body), { error: "Payload too large" });
+  } finally {
+    const closed = Promise.withResolvers<void>();
+    server.close((error) => (error ? closed.reject(error) : closed.resolve()));
+    await closed.promise;
+  }
 });
 
 test("hono contract: getRequestListener handles legacy handlers writing directly to outgoing response", async () => {

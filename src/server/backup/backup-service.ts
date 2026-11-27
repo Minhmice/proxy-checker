@@ -3,7 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import Database from "better-sqlite3";
 import { fileURLToPath } from "node:url";
-import { replaceFileAtomicSync } from "../fs-atomic.js";
+import { replaceFileAtomicSync, writeJsonAtomicSync } from "../fs-atomic.js";
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const repoRoot = path.resolve(here, "../../..");
 
@@ -40,59 +40,68 @@ export interface RestoreBackupResult {
   ok: boolean;
   restoredFiles: string[];
   errors: string[];
+  warnings: string[];
 }
 
 function computeSha256(filePath: string): string {
   const hash = crypto.createHash("sha256");
-  const data = fs.readFileSync(filePath);
-  hash.update(data);
+  const buffer = Buffer.allocUnsafe(64 * 1024);
+  const fd = fs.openSync(filePath, "r");
+  try {
+    while (true) {
+      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
   return hash.digest("hex");
 }
 
 function vacuumSnapshot(sourceDbPath: string, targetDbPath: string): void {
   if (!fs.existsSync(sourceDbPath)) throw new Error(`Database not found: ${sourceDbPath}`);
 
-  const tempTarget = `${targetDbPath}.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  if (fs.existsSync(tempTarget)) {
-    try {
-      fs.unlinkSync(tempTarget);
-    } catch {}
-  }
-
-  let db: Database.Database | null = null;
   let lastErr: unknown = null;
   for (let attempt = 0; attempt < 3; attempt += 1) {
+    const tempTarget = `${targetDbPath}.tmp-${crypto.randomUUID()}`;
+    let db: Database.Database | null = null;
+    let completed = false;
     try {
       db = new Database(sourceDbPath, { readonly: true, timeout: 3000, fileMustExist: true });
       db.prepare("VACUUM INTO ?").run(path.resolve(tempTarget));
-      lastErr = null;
-      break;
+      completed = true;
     } catch (err) {
       lastErr = err;
-      if (attempt < 2) {
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
-      }
     } finally {
       if (db) {
         try {
           db.close();
         } catch {}
-        db = null;
+      }
+      if (!completed) {
+        try {
+          fs.unlinkSync(tempTarget);
+        } catch {}
       }
     }
-  }
 
-  if (lastErr) {
-    if (fs.existsSync(tempTarget)) {
+    if (completed) {
       try {
-        fs.unlinkSync(tempTarget);
-      } catch {}
+        fs.mkdirSync(path.dirname(targetDbPath), { recursive: true });
+        replaceFileAtomicSync(tempTarget, targetDbPath);
+      } finally {
+        try {
+          fs.unlinkSync(tempTarget);
+        } catch {}
+      }
+      return;
     }
-    throw lastErr;
+    if (attempt < 2) {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+    }
   }
-
-  fs.mkdirSync(path.dirname(targetDbPath), { recursive: true });
-  replaceFileAtomicSync(tempTarget, targetDbPath);
+  throw lastErr;
 }
 
 export function createBackupSnapshot(options?: {
@@ -109,7 +118,6 @@ export function createBackupSnapshot(options?: {
 
   const files: BackupFileEntry[] = [];
 
-  // 1. Backup settings.json
   const settingsSrc = process.env.APP_CONFIG_PATH || path.join(dataDir, "settings.json");
   const settingsDest = path.join(backupDir, "settings.json");
   try {
@@ -127,7 +135,6 @@ export function createBackupSnapshot(options?: {
     errors.push(`Failed to backup settings.json: ${(err as Error).message}`);
   }
 
-  // 2. Backup SQLite databases via VACUUM INTO
   const sqliteFiles = ["antigravity-rotation.sqlite3", "router-sync.sqlite3"];
   for (const name of sqliteFiles) {
     const srcPath = path.join(dataDir, name);
@@ -146,7 +153,6 @@ export function createBackupSnapshot(options?: {
     }
   }
 
-  // 3. Backup 9Router / rotator state files if present
   const stateFiles = ["antigravity-rotator.json"];
   for (const name of stateFiles) {
     const srcPath = path.join(dataDir, name);
@@ -165,7 +171,6 @@ export function createBackupSnapshot(options?: {
     }
   }
 
-  // 4. Generate manifest.json
   const timestamp = new Date().toISOString();
   const manifest: BackupManifest = {
     version: 1,
@@ -175,15 +180,12 @@ export function createBackupSnapshot(options?: {
   };
 
   const manifestPath = path.join(backupDir, "manifest.json");
-  try {
-    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
-    files.push({
-      name: "manifest.json",
-      size: fs.statSync(manifestPath).size,
-      sha256: computeSha256(manifestPath),
-    });
-  } catch (err) {
-    errors.push(`Failed to write manifest.json: ${(err as Error).message}`);
+  if (errors.length === 0) {
+    try {
+      writeJsonAtomicSync(manifestPath, manifest);
+    } catch (err) {
+      errors.push(`Failed to write manifest.json: ${(err as Error).message}`);
+    }
   }
 
   return {
@@ -204,25 +206,105 @@ export function restoreBackup(options?: {
   const databasesDir = path.join(backupDir, "databases");
   const restoredFiles: string[] = [];
   const errors: string[] = [];
+  const warnings: string[] = [];
+  const manifestPath = path.join(backupDir, "manifest.json");
+  const payloads: Record<string, string> = {
+    "settings.json": path.join(backupDir, "settings.json"),
+    "databases/antigravity-rotation.sqlite3": path.join(
+      databasesDir,
+      "antigravity-rotation.sqlite3",
+    ),
+    "databases/router-sync.sqlite3": path.join(databasesDir, "router-sync.sqlite3"),
+    "antigravity-rotator.json": path.join(backupDir, "antigravity-rotator.json"),
+  };
+  try {
+    let manifestExists = true;
+    try {
+      fs.lstatSync(manifestPath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      manifestExists = false;
+    }
+    if (!manifestExists) {
+      warnings.push("Legacy backup has no manifest; payload integrity cannot be verified.");
+    } else {
+      const manifest: unknown = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+      if (
+        !manifest ||
+        typeof manifest !== "object" ||
+        (manifest as BackupManifest).version !== 1 ||
+        !Array.isArray((manifest as BackupManifest).files)
+      ) {
+        throw new Error("Invalid or unsupported backup manifest");
+      }
+      const listed = new Map<string, BackupFileEntry>();
+      for (const entry of (manifest as BackupManifest).files) {
+        if (
+          !entry ||
+          typeof entry !== "object" ||
+          typeof entry.name !== "string" ||
+          !Object.hasOwn(payloads, entry.name) ||
+          listed.has(entry.name) ||
+          !Number.isSafeInteger(entry.size) ||
+          entry.size < 0 ||
+          typeof entry.sha256 !== "string" ||
+          !/^[a-f0-9]{64}$/.test(entry.sha256)
+        ) {
+          throw new Error("Invalid or duplicate manifest payload entry");
+        }
+        listed.set(entry.name, entry);
+      }
+      for (const [name, payloadPath] of Object.entries(payloads)) {
+        let stat: fs.Stats | undefined;
+        try {
+          stat = fs.lstatSync(payloadPath);
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+        }
+        const entry = listed.get(name);
+        if (!entry) {
+          if (stat) throw new Error(`Unlisted restore payload: ${name}`);
+          continue;
+        }
+        if (!stat?.isFile()) throw new Error(`Missing or invalid restore payload: ${name}`);
+        if (name.startsWith("databases/") && !fs.lstatSync(databasesDir).isDirectory()) {
+          throw new Error("Invalid databases directory");
+        }
+        if (stat.size !== entry.size) throw new Error(`Size mismatch for restore payload: ${name}`);
+        if (computeSha256(payloadPath) !== entry.sha256)
+          throw new Error(`SHA-256 mismatch for restore payload: ${name}`);
+      }
+    }
+  } catch (err) {
+    errors.push(`Backup manifest verification failed: ${(err as Error).message}`);
+    return { ok: false, restoredFiles, errors, warnings };
+  }
 
   fs.mkdirSync(dataDir, { recursive: true });
   const databaseFiles = ["antigravity-rotation.sqlite3", "router-sync.sqlite3"].filter((name) =>
     fs.existsSync(path.join(databasesDir, name)),
   );
 
-  // 1. Restore settings.json
   const settingsBackup = path.join(backupDir, "settings.json");
   const settingsDest = process.env.APP_CONFIG_PATH || path.join(dataDir, "settings.json");
   if (fs.existsSync(settingsBackup)) {
     try {
-      fs.copyFileSync(settingsBackup, settingsDest);
+      const stagingDir = fs.mkdtempSync(
+        path.join(path.dirname(settingsDest), ".settings-restore-"),
+      );
+      try {
+        const stagedSettings = path.join(stagingDir, "settings.json");
+        fs.copyFileSync(settingsBackup, stagedSettings);
+        replaceFileAtomicSync(stagedSettings, settingsDest);
+      } finally {
+        fs.rmSync(stagingDir, { recursive: true, force: true });
+      }
       restoredFiles.push("settings.json");
     } catch (err) {
       errors.push(`Failed to restore settings.json: ${(err as Error).message}`);
     }
   }
 
-  // 2. Restore SQLite databases
   for (const name of databaseFiles) {
     const src = path.join(databasesDir, name);
     const dest = path.join(dataDir, name);
@@ -238,7 +320,6 @@ export function restoreBackup(options?: {
     }
   }
 
-  // 3. Restore rotator / pool state JSON if exists
   const stateFiles = ["antigravity-rotator.json"];
   for (const name of stateFiles) {
     const src = path.join(backupDir, name);
@@ -257,5 +338,6 @@ export function restoreBackup(options?: {
     ok: errors.length === 0,
     restoredFiles,
     errors,
+    warnings,
   };
 }

@@ -45,14 +45,12 @@ test("Sidebar dimensions are enlarged to standard 17.5rem expanded and 4rem icon
 test("AppSidebar uses Cyber Flame lively effect and removes all pulse dots", () => {
   const sidebarContent = fs.readFileSync("src/components/app-sidebar.tsx", "utf8");
 
-  // Removed all static/pulse dots
   assert.ok(!sidebarContent.includes("animate-ping rounded-full"), "Ping dots must be removed");
   assert.ok(
     !sidebarContent.includes("rounded-full bg-amber-500 shrink-0"),
     "Amber section dot must be removed",
   );
 
-  // Active Cyber Flame effects applied
   assert.ok(
     sidebarContent.includes("flame-border-beam"),
     "Active item must have flame-border-beam",

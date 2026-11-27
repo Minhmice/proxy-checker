@@ -20,13 +20,6 @@
   --error: oklch(0.62 0.22 25);
   --border: oklch(0.24 0.012 260);
   --border-subtle: oklch(0.18 0.008 260);
-  --gradient-primary: linear-gradient(135deg, #ff6633 0%, #ff3d00 100%);
-  --gradient-nav-active: linear-gradient(
-    135deg,
-    rgba(255, 91, 34, 0.22) 0%,
-    rgba(255, 61, 0, 0.12) 100%
-  );
-  --gradient-flame-card: linear-gradient(135deg, #ff5b22 0%, #ff3d00 50%, #d82600 100%);
   --sidebar-width: 240px;
   --sidebar-collapsed: 64px;
   --topbar-height: 64px;
@@ -127,28 +120,93 @@ input {
   border: 0;
 }
 
-:where(a, button, input, [tabindex]):focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
+@layer base {
+  :where(a, button, input, [tabindex]):focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+  :root {
+    --dither-ink: var(--primary);
+    --dither-paper: var(--background);
+    --dither-cell: 3px;
+    --dither-color-blue: oklch(0.56 0.18 248);
+    --dither-color-purple: oklch(0.53 0.22 302);
+    --dither-color-green: oklch(0.58 0.15 152);
+    --dither-color-pink: oklch(0.58 0.21 355);
+    --dither-color-orange: oklch(0.64 0.17 52);
+    --dither-color-red: oklch(0.55 0.21 27);
+    --dither-color-grey: oklch(0.55 0 0);
+    --dither-bloom: 0.6;
+  }
+  .dark {
+    --dither-ink: var(--primary);
+    --dither-paper: var(--background);
+    --dither-cell: 3px;
+    --dither-color-blue: oklch(0.72 0.14 240);
+    --dither-color-purple: oklch(0.7 0.18 304);
+    --dither-color-green: oklch(0.78 0.17 152);
+    --dither-color-pink: oklch(0.74 0.17 354);
+    --dither-color-orange: oklch(0.79 0.15 62);
+    --dither-color-red: oklch(0.68 0.2 25);
+    --dither-color-grey: oklch(0.66 0 0);
+    --dither-bloom: 1;
+  }
 }
 
-/* Intentional reduced-motion rules: suppress decorative & spatial motion while keeping functional states readable */
+/* One entrance for every dashboard section: rise, fade and un-blur, 80ms apart. Only the
+   pending state hides content, so a missing observer never leaves a blank page. */
+[data-reveal="pending"] {
+  opacity: 0;
+  transform: translateY(14px);
+  filter: blur(4px);
+}
+[data-reveal="shown"] {
+  transition:
+    opacity 600ms var(--ease-out-quint),
+    transform 600ms var(--ease-out-quint),
+    filter 600ms var(--ease-out-quint);
+  transition-delay: calc(var(--reveal-order, 0) * 80ms);
+}
+
+/* Provider rows and account rows share this: content steps in from the left on a stagger. */
+@keyframes row-enter {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+}
+.row-enter {
+  animation: row-enter 480ms var(--ease-out-quint) both;
+  animation-delay: calc(var(--row-order, 0) * 70ms + 120ms);
+}
+
+/* Live feed row: the tint that marks a just-arrived request, then settles to the row's own state. */
+@keyframes request-flash {
+  from {
+    background-color: color-mix(in oklch, var(--flash, var(--primary)) 24%, transparent);
+  }
+}
+.request-flash {
+  animation: request-flash 1400ms var(--ease-out-quint) backwards;
+}
+.request-flash[data-large="true"] {
+  --flash: var(--warning);
+  animation-iteration-count: 2;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html:focus-within {
     scroll-behavior: auto;
   }
 
-  /* Decorative loops disabled */
   :is(.animate-ping, .animate-pulse, .skeleton, .shimmer) {
     animation: none !important;
   }
 
-  /* Operational spinner: static busy icon; accessible text & ARIA preserve meaning */
   :is(.animate-spin, .ops-spin) {
     animation: none !important;
   }
 
-  /* Suppress disorienting zoom and slide spatial transitions on overlays */
   :is(
     [class*="zoom-in-"],
     [class*="zoom-out-"],
@@ -158,9 +216,18 @@ input {
     animation-name: none !important;
     transform: none !important;
   }
+
+  [data-reveal],
+  .row-enter,
+  .request-flash {
+    transition: none !important;
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+  }
 }
 
-/* Consolidate sidebar tokens with OKLCH control-room identity */
 .dark {
   --sidebar: var(--surface);
   --sidebar-foreground: var(--ink);
@@ -211,6 +278,34 @@ input {
   --breakpoint-3xl: 120rem;
   --breakpoint-4xl: 160rem;
   --breakpoint-5xl: 240rem;
+  --color-dither-ink: var(--dither-ink);
+  --color-dither-paper: var(--dither-paper);
+  --color-dither-blue: var(--dither-color-blue);
+  --color-dither-purple: var(--dither-color-purple);
+  --color-dither-green: var(--dither-color-green);
+  --color-dither-pink: var(--dither-color-pink);
+  --color-dither-orange: var(--dither-color-orange);
+  --color-dither-red: var(--dither-color-red);
+  --color-dither-grey: var(--dither-color-grey);
+}
+
+@keyframes bar-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(400%);
+  }
+}
+
+@keyframes bar-tip {
+  0%,
+  100% {
+    opacity: 0.2;
+  }
+  50% {
+    opacity: 0.9;
+  }
 }
 
 @keyframes spotlight {
@@ -224,136 +319,88 @@ input {
   }
 }
 
-@keyframes cyber-flame-flow {
-  0% {
-    background-position: 0% 50%;
-  }
-  50% {
-    background-position: 100% 50%;
-  }
-  100% {
-    background-position: 0% 50%;
-  }
-}
-
-@keyframes cyber-flame-pulse {
+@keyframes dither-ignite {
   0%,
   100% {
-    box-shadow:
-      0 0 16px -2px rgba(255, 91, 34, 0.45),
-      0 0 28px -4px rgba(255, 61, 0, 0.25);
-    border-color: rgba(255, 91, 34, 0.6);
+    opacity: 1;
   }
   50% {
-    box-shadow:
-      0 0 24px -1px rgba(255, 170, 0, 0.6),
-      0 0 38px -2px rgba(255, 91, 34, 0.4);
-    border-color: rgba(255, 170, 0, 0.85);
+    opacity: 0.45;
   }
 }
 
-@keyframes cyber-flame-flicker {
-  0%,
-  100% {
-    transform: scale(1);
-    opacity: 1;
-    filter: drop-shadow(0 0 6px rgba(255, 170, 0, 0.8)) drop-shadow(0 0 12px rgba(255, 91, 34, 0.5));
-  }
-  25% {
-    transform: scale(1.08) translateY(-0.5px);
-    opacity: 0.92;
-    filter: drop-shadow(0 0 8px rgba(255, 91, 34, 0.9)) drop-shadow(0 0 16px rgba(255, 61, 0, 0.6));
-  }
-  50% {
-    transform: scale(0.96) translateY(0.5px);
-    opacity: 1;
-    filter: drop-shadow(0 0 5px rgba(255, 215, 0, 0.8)) drop-shadow(0 0 10px rgba(255, 170, 0, 0.5));
-  }
-  75% {
-    transform: scale(1.04) translateY(-0.5px);
-    opacity: 0.95;
-    filter: drop-shadow(0 0 7px rgba(255, 91, 34, 0.85))
-      drop-shadow(0 0 14px rgba(255, 61, 0, 0.55));
-  }
-}
-
+/* Active nav row: a static Bayer-dithered flame wash. Class names kept for the
+   nav contract (tests/app-sidebar-nav.test.ts). */
 .flame-gradient-active {
-  background: linear-gradient(
-    135deg,
-    rgba(255, 91, 34, 0.22) 0%,
-    rgba(255, 61, 0, 0.16) 45%,
-    rgba(255, 170, 0, 0.24) 80%,
-    rgba(255, 91, 34, 0.22) 100%
-  );
-  background-size: 250% 250%;
-  animation: cyber-flame-flow 3.5s ease infinite;
+  position: relative;
+  isolation: isolate;
+  background: transparent;
+}
+.flame-gradient-active::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-color: var(--primary);
+  opacity: 0.34;
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%204%204%22%20shape-rendering%3D%22crispEdges%22%3E%3Cpath%20d%3D%22M0%200h1v1h-1zM2%200h1v1h-1zM1%201h1v1h-1zM3%201h1v1h-1zM0%202h1v1h-1zM2%202h1v1h-1zM1%203h1v1h-1zM3%203h1v1h-1z%22%2F%3E%3C%2Fsvg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%204%204%22%20shape-rendering%3D%22crispEdges%22%3E%3Cpath%20d%3D%22M0%200h1v1h-1zM2%200h1v1h-1zM1%201h1v1h-1zM3%201h1v1h-1zM0%202h1v1h-1zM2%202h1v1h-1zM1%203h1v1h-1zM3%203h1v1h-1z%22%2F%3E%3C%2Fsvg%3E");
+  -webkit-mask-size: calc(var(--dither-cell) * 4);
+  mask-size: calc(var(--dither-cell) * 4);
 }
 
+/* Active marker: solid and crisp, no glow. */
 .flame-border-beam {
-  background: linear-gradient(
-    180deg,
-    #ff1e00 0%,
-    #ff5b22 25%,
-    #ffaa00 50%,
-    #ffd700 75%,
-    #ff5b22 100%
-  );
-  background-size: 100% 250%;
-  animation: cyber-flame-flow 2.2s ease infinite;
-  box-shadow:
-    0 0 10px rgba(255, 91, 34, 0.8),
-    0 0 18px rgba(255, 61, 0, 0.5);
+  background: var(--primary);
 }
 
+/* Logo tile: a Bayer-dithered dark overlay shades it. */
 .flame-logo-core {
-  animation: cyber-flame-pulse 3s ease-in-out infinite;
+  position: relative;
+  overflow: hidden;
+}
+.flame-logo-core::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-color: #000;
+  opacity: 0.45;
+  -webkit-mask-image: var(--dither-hover-mask);
+  mask-image: var(--dither-hover-mask);
+  -webkit-mask-size: calc(var(--dither-cell) * 4);
+  mask-size: calc(var(--dither-cell) * 4);
 }
 
+/* Click ignition: a stepped blink, not a smooth glow. */
 .flame-flicker-active {
-  animation: cyber-flame-flicker 2s ease-in-out infinite;
+  animation: dither-ignite 0.9s steps(3, end) infinite;
 }
+@media (prefers-reduced-motion: reduce) {
+  .flame-flicker-active {
+    animation: none;
+  }
+}
+
 .animate-spotlight {
   animation: spotlight 2s ease 0.75s 1 forwards;
 }
 
-/* Cyberpunk NOC Aesthetics */
 .cyber-grid-bg {
-  background-image:
-    radial-gradient(ellipse 70% 35% at 50% -5%, rgba(255, 91, 34, 0.08) 0%, transparent 65%),
-    radial-gradient(ellipse 50% 25% at 100% 100%, rgba(255, 61, 0, 0.04) 0%, transparent 55%);
+  background-image: none;
 }
 
-.neon-glow-cyan,
-.flame-glow {
-  box-shadow: 0 0 25px -4px rgba(255, 91, 34, 0.35);
-}
-
-.neon-glow-magenta {
-  box-shadow: 0 0 25px -4px rgba(255, 61, 0, 0.35);
-}
-
-.neon-glow-green {
-  box-shadow: 0 0 25px -4px rgba(16, 185, 129, 0.35);
-}
-
+/* Card hover: border sharpens; no lift, no glow. */
 .obsidian-card,
 .cyber-card {
   position: relative;
-  transition:
-    border-color 0.2s cubic-bezier(0.22, 1, 0.36, 1),
-    box-shadow 0.2s cubic-bezier(0.22, 1, 0.36, 1),
-    transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: border-color 150ms var(--ease-out-quart);
 }
-
 .obsidian-card:hover,
 .cyber-card:hover {
-  border-color: rgba(255, 255, 255, 0.16);
-  box-shadow:
-    0 12px 32px -8px rgba(0, 0, 0, 0.65),
-    0 0 20px -4px rgba(255, 91, 34, 0.15);
-  transform: translateY(-2px);
+  border-color: color-mix(in oklch, var(--primary) 55%, var(--border));
 }
-/* High-density & ultra-wide 4K control room viewports */
 @media (min-width: 1920px) {
   :root {
     --sidebar-width: 260px;
@@ -374,5 +421,62 @@ input {
     --sidebar-width: 320px;
     --right-panel-width: 460px;
     --topbar-height: 72px;
+  }
+}
+
+@layer base {
+  /* App is dark-only (no theme switcher), so :root carries the dark-tuned values.
+     --dither-ink is a quiet cool neutral for ambient texture; --primary (flame) is
+     reserved for data and active state, passed per component. */
+  :root,
+  .dark {
+    --dither-ink: oklch(0.42 0.012 260);
+    --dither-paper: var(--background);
+    --dither-cell: 3px;
+    --dither-color-blue: oklch(0.72 0.14 240);
+    --dither-color-purple: oklch(0.7 0.18 304);
+    --dither-color-green: oklch(0.78 0.17 152);
+    --dither-color-pink: oklch(0.74 0.17 354);
+    --dither-color-orange: oklch(0.79 0.15 62);
+    --dither-color-red: oklch(0.68 0.2 25);
+    --dither-color-grey: oklch(0.52 0.01 260);
+    --dither-bloom: 0.5;
+  }
+}
+
+/* Dither hover states. --dither-hover-mask is the engine's level 0.25 bayer4
+   tile (ditherMask(0.25)); inlined so CSS-only components need no JS. */
+:root {
+  --dither-hover-mask: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%204%204%22%20shape-rendering%3D%22crispEdges%22%3E%3Cpath%20d%3D%22M0%200h1v1h-1zM2%200h1v1h-1zM0%202h1v1h-1zM2%202h1v1h-1z%22%2F%3E%3C%2Fsvg%3E");
+}
+@layer components {
+  .dither-hover {
+    position: relative;
+    isolation: isolate;
+  }
+}
+.dither-hover::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  background-color: var(--dither-hover-color, var(--primary));
+  -webkit-mask-image: var(--dither-hover-mask);
+  mask-image: var(--dither-hover-mask);
+  -webkit-mask-size: calc(var(--dither-cell) * 4);
+  mask-size: calc(var(--dither-cell) * 4);
+  transition: opacity 150ms var(--ease-out-quart);
+}
+.dither-hover:hover::after,
+.dither-hover:focus-visible::after,
+.dither-hover[data-active="true"]::after {
+  opacity: 0.22;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dither-hover::after {
+    transition: none;
   }
 }

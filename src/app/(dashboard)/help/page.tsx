@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { ROTATION_POLICY } from "@/lib/types";
 
 export default function HelpPage() {
   return (
@@ -8,7 +9,7 @@ export default function HelpPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Help &amp; Operations Reference</h1>
           <p className="text-sm text-muted-foreground">
-            Runbook for router synchronization, single-account quota rotation, and telemetry.
+            Runbook for router synchronization, account quota rotation, and telemetry.
           </p>
         </div>
         <nav aria-label="Quick routes" className="flex flex-wrap gap-2">
@@ -24,26 +25,25 @@ export default function HelpPage() {
         </nav>
       </header>
 
-      {/* 1. Antigravity Single-Account Rotation Policy */}
       <section className="space-y-3">
         <h2 className="text-lg font-semibold tracking-tight">
-          Antigravity Single-Account Rotation
+          Antigravity &amp; Codex Account Rotation
         </h2>
         <div className="space-y-2 text-xs text-muted-foreground">
           <p>
-            Rotation evaluates{" "}
-            <strong className="text-foreground">Gemini session quota only</strong>. Claude, GPT, and
-            weekly quotas are informational and do not influence rotation.
+            Rotation uses Gemini session quota for Antigravity and Codex session quota for Codex.
+            Weekly quota does not influence rotation.
           </p>
           <ul className="list-disc list-inside space-y-1">
             <li>
-              <strong className="text-foreground">Single active account:</strong> Exactly one
-              Antigravity account remains active globally across configured 9Router endpoints at
-              steady state.
+              <strong className="text-foreground">Two active accounts per provider:</strong>{" "}
+              Antigravity and Codex rotate independently and each keep two accounts active when
+              eligible replacements are available.
             </li>
             <li>
               <strong className="text-foreground">Sampled rotation threshold:</strong> Each account
-              activation receives a uniformly sampled threshold between 10% and 20% inclusive,
+              activation receives a uniformly sampled threshold between{" "}
+              {ROTATION_POLICY.thresholdMin}% and {ROTATION_POLICY.thresholdMax}% inclusive,
               persisted across restarts and forced refreshes.
             </li>
             <li>
@@ -53,8 +53,9 @@ export default function HelpPage() {
             </li>
             <li>
               <strong className="text-foreground">Activation candidate:</strong> Eligible standby
-              accounts must have valid available quota strictly greater than 20% and no active
-              error, prioritized by earliest reset time.
+              accounts must have valid available session quota strictly greater than{" "}
+              {ROTATION_POLICY.standbyQuotaExclusive}% and no active error. Highest session quota
+              wins, then earliest session reset.
             </li>
             <li>
               <strong className="text-foreground">Activate-before-deactivate handoff:</strong> A
@@ -65,7 +66,6 @@ export default function HelpPage() {
         </div>
       </section>
 
-      {/* 2. Router Synchronization & Concurrency */}
       <section className="space-y-3">
         <h2 className="text-lg font-semibold tracking-tight">
           9Router Synchronization &amp; Transport
@@ -87,7 +87,6 @@ export default function HelpPage() {
         </ul>
       </section>
 
-      {/* 3. Session Authentication */}
       <section className="space-y-3">
         <h2 className="text-lg font-semibold tracking-tight">Authentication &amp; Sessions</h2>
         <p className="text-xs text-muted-foreground">

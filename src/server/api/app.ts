@@ -7,6 +7,7 @@ import { createNineRouterRoutes } from "./routes/ninerouter.js";
 import { createAntigravityRoutes } from "./routes/antigravity.js";
 import { createSettingsRoutes } from "./routes/settings.js";
 import { createBackupRoutes } from "./routes/backup.js";
+import { createSpotifyRoutes } from "./routes/spotify.js";
 
 export function createAlreadySentResponse(): Response {
   return {
@@ -19,7 +20,6 @@ export function createAlreadySentResponse(): Response {
 export function createApiApp(deps: ApiDependencies): Hono<ApiEnv> {
   const app = new Hono<ApiEnv>();
 
-  // Global error handler
   app.onError((err, c) => {
     let status: ContentfulStatusCode = 500;
     if (
@@ -34,13 +34,10 @@ export function createApiApp(deps: ApiDependencies): Hono<ApiEnv> {
     return c.json({ error: message }, status);
   });
 
-  // Health check
   app.get("/api/health", (c) => {
     return c.json({ ok: true });
   });
 
-  // Auth middleware for all API endpoints
-  // Intercept responses already handled directly on Node outgoing response
   app.use("*", async (c, next) => {
     await next();
     if (c.env?.outgoing?.writableEnded) {
@@ -50,14 +47,13 @@ export function createApiApp(deps: ApiDependencies): Hono<ApiEnv> {
 
   app.use("/api/*", createAuthMiddleware(deps));
 
-  // Route modules
   app.route("/api/auth", createAuthRoutes(deps));
   app.route("/api/ninerouter", createNineRouterRoutes(deps));
   app.route("/api/antigravity", createAntigravityRoutes(deps));
   app.route("/api/settings", createSettingsRoutes(deps));
   app.route("/api/backup", createBackupRoutes(deps));
+  app.route("/api/spotify", createSpotifyRoutes());
 
-  // Catch-all 404 for unknown /api routes
   app.notFound((c) => {
     return c.json({ error: "not found" }, 404);
   });

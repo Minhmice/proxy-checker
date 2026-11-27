@@ -29,7 +29,6 @@ test("stale lease with dead pid is reclaimed automatically", () => {
     fs.mkdirSync(leaseDir, { recursive: true });
     fs.writeFileSync(path.join(leaseDir, "owner"), "application\n999999\n", "utf8");
 
-    // Should reclaim stale lease without error
     const release = acquireDataLease(dir, "application");
     assert.ok(fs.existsSync(path.join(leaseDir, "owner")));
     release();

@@ -7,19 +7,16 @@ test("msw node contract: intercepts handled requests with fixtures", async () =>
   server.listen({ onUnhandledFrame: "error" });
 
   try {
-    // 1. Health
     const healthRes = await fetch("http://localhost/api/health");
     assert.equal(healthRes.status, 200);
     const healthData = await healthRes.json();
     assert.deepEqual(healthData, { ok: true });
 
-    // 2. Auth session
     const sessionRes = await fetch("http://localhost/api/auth/session");
     assert.equal(sessionRes.status, 200);
     const sessionData = await sessionRes.json();
     assert.deepEqual(sessionData, { authenticated: true });
 
-    // 3. Login failure
     const loginFailRes = await fetch("http://localhost/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -27,7 +24,6 @@ test("msw node contract: intercepts handled requests with fixtures", async () =>
     });
     assert.equal(loginFailRes.status, 401);
 
-    // 4. Login success
     const loginSuccessRes = await fetch("http://localhost/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -37,26 +33,22 @@ test("msw node contract: intercepts handled requests with fixtures", async () =>
     const loginData = (await loginSuccessRes.json()) as { authenticated: boolean };
     assert.equal(loginData.authenticated, true);
 
-    // 5. 9Router status
     const nrRes = await fetch("http://localhost/api/ninerouter/status");
     assert.equal(nrRes.status, 200);
     const nrData = (await nrRes.json()) as { status: string };
     assert.equal(nrData.status, "connected");
 
-    // 6. Settings
     const settingsRes = await fetch("http://localhost/api/settings");
     assert.equal(settingsRes.status, 200);
     const settingsData = (await settingsRes.json()) as { settings: Record<string, unknown> };
     assert.ok(settingsData.settings);
 
-    // 7. Antigravity status
     const agRes = await fetch("http://localhost/api/antigravity/status");
     assert.equal(agRes.status, 200);
     const agData = (await agRes.json()) as { totalAccounts: number; accounts: unknown[] };
     assert.equal(agData.totalAccounts, 2);
     assert.equal(agData.accounts.length, 2);
 
-    // 8. Handler override and reset
     server.use(
       http.get("*/api/health", () => {
         return HttpResponse.json({ ok: false, overridden: true });

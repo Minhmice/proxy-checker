@@ -1,22 +1,5 @@
 "use client";
 
-/**
- * Composable card with animated gradient rim, frosted surface, and Obsidian Flame theme:
- * Animated gradient rim, frosted fill, layered shadow, and fine-hover polish.
- *
- * @example
- * <HaloCard aria-label="Example">
- *   <HaloCardHeader>
- *     <HaloCardTitle>Title</HaloCardTitle>
- *     <HaloCardDescription>Body copy.</HaloCardDescription>
- *   </HaloCardHeader>
- *   <HaloCardContent>Optional main area.</HaloCardContent>
- *   <HaloCardFooter>
- *     <HaloCardButton variant="secondary">Cancel</HaloCardButton>
- *     <HaloCardButton variant="primary">Continue</HaloCardButton>
- *   </HaloCardFooter>
- * </HaloCard>
- */
 import * as React from "react";
 import {
   forwardRef,
@@ -30,6 +13,7 @@ import {
 import { motion, useMotionValue, useReducedMotion, useTransform } from "motion/react";
 
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 
 export type HaloThemeVariant = "flame" | "amber" | "emerald" | "rose";
 
@@ -143,7 +127,6 @@ function borderGlowConfig(
     };
   }
 
-  // Default: Signature Theme "flame" (Obsidian Flame from globals.css: #FF5B22, #FF3D00, #FF6830, #FF8A50)
   return {
     opacityIdle: idleOpacity,
     primaryBg: "linear-gradient(90deg, #FF5B22, #FF3D00, #FF8A50, #D82600)",
@@ -166,7 +149,6 @@ function borderGlowConfig(
     ringShadow: "rgba(255,91,34,0.28)",
   };
 }
-/** Moving rim highlight along the card edge (mask = border band only). */
 function HaloCardBorderTrail({ active, config }: { active: boolean; config: BorderGlowConfig }) {
   const progress = useMotionValue(0);
   const offsetDistance = useTransform(progress, (v: number) => {
@@ -208,7 +190,6 @@ function HaloCardBorderTrail({ active, config }: { active: boolean; config: Bord
         active ? "visible opacity-100" : "invisible opacity-0 transition-opacity duration-300",
       )}
     >
-      {/* Wide soft bloom — ties into frosted card edge */}
       <motion.div
         className="absolute opacity-95 dark:opacity-[0.98]"
         style={{
@@ -225,7 +206,6 @@ function HaloCardBorderTrail({ active, config }: { active: boolean; config: Bord
           }}
         />
       </motion.div>
-      {/* Brighter core — higher-opacity read without a hard capsule edge */}
       <motion.div
         className="absolute dark:opacity-[0.94]"
         style={{
@@ -324,13 +304,9 @@ function fillBackgroundFor(translucent: boolean, interactive: boolean, rimEmphas
 
 export interface HaloCardProps extends ComponentProps<"div"> {
   children: ReactNode;
-  /** Frosted inner surface so gradient blobs read through. */
   translucent?: boolean;
-  /** Hover + rim emphasis on the animated edge. */
   interactive?: boolean;
-  /** Padding inside the card surface. */
   padding?: keyof typeof paddingClass;
-  /** Color theme variant matching globals.css (default: "flame") */
   variant?: HaloThemeVariant;
 }
 
@@ -402,7 +378,6 @@ const HaloCard = forwardRef<HTMLDivElement, HaloCardProps>(function HaloCard(
       {...props}
     >
       <div className="relative rounded-2xl p-px">
-        {/* Animated Gradient Blobs in Bottom Rim */}
         <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-2xl">
           <motion.div
             animate={{
@@ -456,7 +431,6 @@ const HaloCard = forwardRef<HTMLDivElement, HaloCardProps>(function HaloCard(
           </motion.div>
         </div>
 
-        {/* Frosted Card Surface */}
         <div
           className={cn(
             "relative z-0 flex flex-col gap-6 rounded-[15px] border border-border/80",
@@ -475,7 +449,6 @@ const HaloCard = forwardRef<HTMLDivElement, HaloCardProps>(function HaloCard(
           {children}
         </div>
 
-        {/* Moving Border Trail */}
         {showTrailChrome ? (
           <div className="pointer-events-none absolute inset-0 z-10 rounded-2xl">
             <HaloCardBorderTrail active={trailActive} config={borderGlow} />
@@ -574,10 +547,6 @@ HaloCardFooter.displayName = "HaloCardFooter";
 
 export interface HaloCardButtonProps extends ComponentProps<"button"> {
   children: ReactNode;
-  /**
-   * `primary` — animated gradient rim + frosted fill (matches card chrome).
-   * `secondary` — muted surface, high-contrast `text-foreground`, subtle gradient ring.
-   */
   variant?: "primary" | "secondary";
   size?: "default" | "icon";
   glowVariant?: HaloThemeVariant;
@@ -628,7 +597,8 @@ const HaloCardButton = forwardRef<HTMLButtonElement, HaloCardButtonProps>(functi
             "[background:linear-gradient(135deg,rgba(255,91,34,0.38),rgba(255,61,0,0.28),rgba(255,181,34,0.35))]",
           )}
         >
-          <button
+          <Button
+            variant="secondary"
             className={cn(
               "relative flex min-w-0 select-none items-center justify-center rounded-full cursor-pointer",
               "border border-border/80 bg-surface-raised font-medium text-foreground text-sm tracking-tight antialiased",
@@ -662,7 +632,7 @@ const HaloCardButton = forwardRef<HTMLButtonElement, HaloCardButtonProps>(functi
             {...props}
           >
             {children}
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -676,7 +646,8 @@ const HaloCardButton = forwardRef<HTMLButtonElement, HaloCardButtonProps>(functi
     >
       <div className="relative rounded-full p-px">
         <GradientRimPillBlobs borderGlow={borderGlow} reduceMotion={reduceMotion} />
-        <button
+        <Button
+          variant="halo"
           className={cn(
             "relative flex min-w-0 select-none items-center justify-center rounded-full cursor-pointer",
             "border border-border/80",
@@ -716,7 +687,7 @@ const HaloCardButton = forwardRef<HTMLButtonElement, HaloCardButtonProps>(functi
           {...props}
         >
           {children}
-        </button>
+        </Button>
       </div>
     </div>
   );

@@ -1,79 +1,69 @@
 "use client";
 
-import React, { useState } from "react";
-import { BarChart3, RefreshCw } from "lucide-react";
+import { useState } from "react";
+import { ArrowUpRight } from "lucide-react";
 import { TokenUsageCard, TOKEN_USAGE_PERIODS } from "@/components/token-usage-card";
+import { TokenHeatmapCard } from "@/components/token-heatmap-card";
 import { AccountStatusCard } from "@/components/account-status-card";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { AggregateQuotaCard } from "@/components/aggregate-quota-card";
+import { Reveal } from "@/components/ui/reveal";
 
 export default function DashboardPage() {
-  const [refreshKey, setRefreshKey] = useState(0);
   const [period, setPeriod] = useState("today");
-  const handleRefreshAll = () => {
-    setRefreshKey((prev) => prev + 1);
-  };
-
   return (
-    <div className="space-y-6 w-full max-w-none 4xl:max-w-[3600px] mx-auto pb-12">
-      {/* Top Header Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#23232C] pb-5">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-zinc-100 flex items-center gap-2.5">
-            <span className="flex size-9 items-center justify-center rounded-xl bg-[#FF5B22]/15 text-[#FF5B22] border border-[#FF5B22]/30 shadow-[0_0_16px_rgba(255,91,34,0.25)]">
-              <BarChart3 className="size-5" />
-            </span>
-            Dashboard
+    <div className="flex w-full min-w-0 flex-col gap-5">
+      <Reveal order={0}>
+        <header className="flex flex-wrap items-center justify-between gap-2">
+          <h1 className="max-w-6xl text-balance text-2xl font-semibold tracking-tight sm:text-3xl">
+            Usage overview
           </h1>
-          <p className="text-xs sm:text-sm text-zinc-400 mt-1">
-            Real-time daily token &amp; cost analytics, Antigravity session quotas, and autonomous
-            rotation.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2.5 flex-wrap">
+          <Button asChild variant="outline" className="min-h-11">
+            <a href="https://9router.minhmice.com/dashboard/usage">
+              9Router usage history <ArrowUpRight data-icon="inline-end" strokeWidth={1.5} />
+            </a>
+          </Button>
+        </header>
+      </Reveal>
+      <Reveal order={1}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div
             role="group"
-            aria-label="Token usage period"
-            className="flex items-center bg-[#131318] border border-[#23232C] rounded-xl p-0.5 gap-0.5"
+            aria-label="Usage period"
+            className="flex flex-wrap rounded-md border border-border bg-card p-1"
           >
             {TOKEN_USAGE_PERIODS.map((option) => (
-              <button
+              <Button
                 key={option.id}
                 type="button"
+                variant="plain"
+                size="sm"
                 aria-pressed={period === option.id}
                 onClick={() => setPeriod(option.id)}
-                className={
-                  period === option.id
-                    ? "h-8 px-2.5 text-xs font-semibold rounded-lg bg-[#FF5B22]/15 text-white"
-                    : "h-8 px-2.5 text-xs font-semibold rounded-lg text-zinc-400 hover:text-white"
-                }
+                className={cn(
+                  "min-h-11 rounded-sm px-3 text-xs font-semibold transition-[background-color,color,scale] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-safe:active:scale-[0.96] motion-reduce:transition-none",
+                  period === option.id && "bg-primary text-primary-foreground hover:bg-primary/90",
+                )}
               >
                 {option.label}
-              </button>
+              </Button>
             ))}
           </div>
-
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={handleRefreshAll}
-            className="h-9 border-[#23232C] bg-[#131318] text-zinc-100 hover:text-white hover:border-[#FF5B22]/40 gap-1.5 text-xs font-semibold rounded-xl transition-colors cursor-pointer disabled:opacity-90 disabled:text-zinc-200"
-          >
-            <RefreshCw className="size-3.5" />
-            <span>Refresh All</span>
-          </Button>
         </div>
-      </div>
-
-      {/* KHU VỰC 1: Token & Cost Telemetry Analysis */}
-      <section aria-label="Token & Cost Analytics" key={`token-${refreshKey}`}>
-        <TokenUsageCard period={period} />
-      </section>
-
-      {/* KHU VỰC 2: Antigravity Accounts & Quota Rotation */}
-      <section aria-label="Account Status" key={`status-${refreshKey}`}>
-        <AccountStatusCard />
-      </section>
+      </Reveal>
+      <TokenUsageCard
+        period={period}
+        accounts={
+          <div className="grid gap-4">
+            <AggregateQuotaCard />
+            <AccountStatusCard />
+          </div>
+        }
+      />
+      <Reveal order={2}>
+        <TokenHeatmapCard />
+      </Reveal>
     </div>
   );
 }

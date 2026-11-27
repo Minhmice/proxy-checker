@@ -144,7 +144,11 @@ function normalize(settingsValue: AppSettings): AppSettings {
     nineRouterApiKey: settingsValue.nineRouterApiKey,
     antigravityRotatorEnabled: settingsValue.antigravityRotatorEnabled !== false,
     antigravityRotateMinutes: clamp(
-      Math.round(settingsValue.antigravityRotateMinutes ?? 10),
+      Math.round(
+        Number.isFinite(settingsValue.antigravityRotateMinutes)
+          ? settingsValue.antigravityRotateMinutes
+          : 10,
+      ),
       1,
       60,
     ),

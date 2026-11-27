@@ -58,7 +58,6 @@ export default function ComponentShowcasePage() {
 
   return (
     <main className="max-w-5xl 3xl:max-w-6xl mx-auto space-y-8 p-4 sm:p-6 text-foreground">
-      {/* Header with Back button */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border pb-4">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
@@ -88,12 +87,14 @@ export default function ComponentShowcasePage() {
 
         <div className="flex items-center gap-2">
           <Button asChild variant="outline" size="sm">
+            <Link href="/help/components/loading-animation">Pixel loader demo</Link>
+          </Button>
+          <Button asChild variant="outline" size="sm">
             <Link href="/settings">System Settings</Link>
           </Button>
         </div>
       </div>
 
-      {/* Hero Showcase Card with Aceternity Spotlight + Cult UI TextAnimate */}
       <div className="relative overflow-hidden rounded-xl border border-border bg-card p-6 sm:p-8 shadow-sm">
         <Spotlight
           className="-top-40 left-0 md:left-60 md:-top-20"
@@ -122,9 +123,8 @@ export default function ComponentShowcasePage() {
         </div>
       </div>
 
-      {/* Interactive Tabs for each Library */}
       <Tabs defaultValue="magic-ui" className="space-y-6">
-        <TabsList className="grid grid-cols-2 sm:grid-cols-4 w-full h-auto p-1.5 bg-surface-raised border border-border rounded-xl gap-1 shadow-sm">
+        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-xl border border-border bg-surface-raised p-1.5 shadow-sm group-data-[orientation=horizontal]/tabs:h-auto [&>[role=tab]]:h-auto [&>[role=tab]]:min-h-11 sm:grid-cols-4">
           <TabsTrigger
             value="magic-ui"
             className="flex items-center justify-center gap-2 py-2 px-3 text-xs sm:text-sm font-semibold rounded-lg transition-all data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm"
@@ -158,10 +158,8 @@ export default function ComponentShowcasePage() {
           </TabsTrigger>
         </TabsList>
 
-        {/* 1. MAGIC UI TAB */}
         <TabsContent value="magic-ui" className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Live Interactive Card */}
             <Card className="relative overflow-hidden border-border bg-card shadow-sm flex flex-col justify-between">
               {beamActive && (
                 <BorderBeam
@@ -223,7 +221,6 @@ export default function ComponentShowcasePage() {
               </CardFooter>
             </Card>
 
-            {/* Documentation & Usage Guidance */}
             <Card className="border-border bg-card shadow-sm">
               <CardHeader>
                 <CardTitle className="text-base font-semibold flex items-center gap-2">
@@ -255,7 +252,6 @@ export default function ComponentShowcasePage() {
           </div>
         </TabsContent>
 
-        {/* 2. ACETERNITY UI TAB */}
         <TabsContent value="aceternity" className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <Card className="relative overflow-hidden border-border bg-card shadow-sm flex flex-col justify-between">
@@ -338,10 +334,8 @@ export default function ComponentShowcasePage() {
           </div>
         </TabsContent>
 
-        {/* 3. CULT UI TAB */}
         <TabsContent value="cult-ui" className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Live Interactive HaloCard Showcase */}
             <div className="md:col-span-2 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
@@ -361,22 +355,19 @@ export default function ComponentShowcasePage() {
                     frosted glass.
                   </p>
                 </div>
-                {/* Variant selector */}
                 <div className="flex items-center gap-1.5 p-1 bg-surface-raised border border-border rounded-lg text-xs self-start sm:self-auto">
                   {(["flame", "amber", "emerald", "rose"] as const).map((v) => (
-                    <button
+                    <Button
                       key={v}
                       type="button"
+                      variant={haloVariant === v ? "default" : "ghost"}
+                      size="sm"
+                      aria-pressed={haloVariant === v}
                       onClick={() => setHaloVariant(v)}
-                      className={cn(
-                        "px-2.5 py-1 rounded capitalize font-medium transition-all cursor-pointer",
-                        haloVariant === v
-                          ? "bg-primary text-white shadow-xs"
-                          : "text-muted-foreground hover:text-foreground hover:bg-white/5",
-                      )}
+                      className="capitalize"
                     >
                       {v}
-                    </button>
+                    </Button>
                   ))}
                 </div>
               </div>
@@ -390,8 +381,8 @@ export default function ComponentShowcasePage() {
                   <HaloCardHeader>
                     <HaloCardTitle>Autonomous Quota Balancer</HaloCardTitle>
                     <HaloCardDescription>
-                      Dual-core Antigravity rotation engine dynamically redistributes tokens when
-                      Gemini session quota dips below 20%.
+                      Antigravity and Codex rotate independently when an active account reaches its
+                      sampled session quota threshold.
                     </HaloCardDescription>
                     <HaloCardAction>
                       <HaloCardButton
@@ -426,7 +417,6 @@ export default function ComponentShowcasePage() {
                   </HaloCardFooter>
                 </HaloCard>
 
-                {/* Minimal Layout Variant */}
                 <HaloCard
                   variant={haloVariant}
                   aria-label="Minimal Halo Card Demo"
@@ -537,7 +527,6 @@ export default function ComponentShowcasePage() {
           </div>
         </TabsContent>
 
-        {/* 4. 21ST.DEV TAB */}
         <TabsContent value="21st-dev" className="space-y-6">
           <Card className="border-border bg-card shadow-sm">
             <CardHeader>

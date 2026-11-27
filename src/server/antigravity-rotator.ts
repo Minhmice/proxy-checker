@@ -8,6 +8,7 @@ import type {
   AntigravityRotatorSnapshot,
   AntigravityRotatorEndpointSummary,
 } from "../lib/types.js";
+import { ROTATION_POLICY, type RotationProvider } from "../lib/types.js";
 import { getSettingsSecrets } from "./app-config.js";
 import {
   listAntigravityConnections,
@@ -53,6 +54,11 @@ export interface RotationPlan {
 export interface AntigravityRotator {
   runRotation(options?: { force?: boolean }): Promise<AntigravityRotatorSnapshot>;
   getSnapshot(): AntigravityRotatorSnapshot;
+  setAccountActive(
+    accountId: string,
+    routerUrl: string | undefined,
+    isActive: boolean,
+  ): Promise<AntigravityRotatorSnapshot>;
   readonly isRunning: boolean;
 }
 
@@ -83,7 +89,9 @@ export function extractAntigravityUsage(rawUsage: Record<string, unknown>): Anti
   if (geminiSession) {
     if (
       typeof geminiSession.remainingPercentage === "number" &&
-      Number.isFinite(geminiSession.remainingPercentage)
+      Number.isFinite(geminiSession.remainingPercentage) &&
+      geminiSession.remainingPercentage >= 0 &&
+      geminiSession.remainingPercentage <= 100
     ) {
       sessionPercentage = geminiSession.remainingPercentage;
       quotaAvailable = true;
@@ -92,7 +100,8 @@ export function extractAntigravityUsage(rawUsage: Record<string, unknown>): Anti
       Number.isFinite(geminiSession.total) &&
       typeof geminiSession.used === "number" &&
       Number.isFinite(geminiSession.used) &&
-      geminiSession.total > 0
+      geminiSession.total > 0 &&
+      geminiSession.used >= 0
     ) {
       const remaining = ((geminiSession.total - geminiSession.used) / geminiSession.total) * 100;
       if (Number.isFinite(remaining)) {
@@ -139,6 +148,67 @@ export function extractAntigravityUsage(rawUsage: Record<string, unknown>): Anti
   };
 }
 
+export function extractCodexUsage(rawUsage: Record<string, unknown>): AntigravityUsage {
+  const quotas = rawUsage?.quotas as Record<string, unknown> | undefined;
+  const session = quotas?.session as Record<string, unknown> | undefined;
+  const total = session?.total;
+  const remaining = session?.remaining;
+  const used = session?.used;
+  let percentage = 0;
+  let available = false;
+  if (typeof total === "number" && Number.isFinite(total) && total > 0) {
+    if (typeof remaining === "number" && Number.isFinite(remaining)) {
+      percentage = (remaining / total) * 100;
+      available = Number.isFinite(percentage);
+    } else if (typeof used === "number" && Number.isFinite(used)) {
+      percentage = ((total - used) / total) * 100;
+      available = Number.isFinite(percentage);
+    }
+  }
+  const message =
+    typeof rawUsage?.message === "string"
+      ? rawUsage.message
+      : typeof rawUsage?.error === "string"
+        ? rawUsage.error
+        : null;
+  return {
+    sessionPercentage: available ? Math.max(0, Math.min(100, percentage)) : 0,
+    weeklyPercentage: 0,
+    resetAt: typeof session?.resetAt === "string" ? session.resetAt : null,
+    quotaAvailable: available && !message,
+    lastError:
+      message && /quota api access forbidden|chat may still work/i.test(message) ? null : message,
+  };
+}
+
+/** Claude Code reports `session (5h)` and `weekly (7d)`; the session window drives rotation like Codex. */
+export function extractClaudeUsage(rawUsage: Record<string, unknown>): AntigravityUsage {
+  const quotas = rawUsage?.quotas as Record<string, Record<string, unknown>> | undefined;
+  const weekly = quotas?.["weekly (7d)"]?.remainingPercentage;
+  return {
+    ...extractCodexUsage({ ...rawUsage, quotas: { session: quotas?.["session (5h)"] } }),
+    weeklyPercentage:
+      typeof weekly === "number" && Number.isFinite(weekly)
+        ? Math.max(0, Math.min(100, weekly))
+        : 0,
+  };
+}
+
+const USAGE_EXTRACTORS: Record<
+  RotationProvider,
+  (rawUsage: Record<string, unknown>) => AntigravityUsage
+> = {
+  antigravity: extractAntigravityUsage,
+  codex: extractCodexUsage,
+  claude: extractClaudeUsage,
+};
+
+/** A 429 on a connection whose quota still reads fine is quota exhaustion, not an account fault. */
+const USAGE_LIMIT_429: Partial<Record<RotationProvider, RegExp>> = {
+  codex: /^\[429\]: The usage limit has been reached$/i,
+  claude: /^\[429\]:.*rate_limit_error/is,
+};
+
 const quotaAvailable = (account: AntigravityAccountInput) =>
   account.quotaAvailable !== false && Number.isFinite(account.sessionPercentage);
 
@@ -150,54 +220,62 @@ const byResetThenId = (a: AntigravityAccountInput, b: AntigravityAccountInput) =
   return (aTime === bTime ? 0 : aTime - bTime) || a.id.localeCompare(b.id);
 };
 
-function retainedAccount(accounts: AntigravityAccountInput[]) {
-  const active = accounts.filter((account) => account.isActive);
-  const healthy = active.filter(
-    (account) =>
-      quotaAvailable(account) &&
-      !account.lastError &&
-      account.sessionPercentage > account.thresholdPercentage,
-  );
-  return healthy.sort(byResetThenId)[0] ?? active.sort((a, b) => a.id.localeCompare(b.id))[0];
+const needsReplacement = (account: AntigravityAccountInput) =>
+  Boolean(account.lastError) ||
+  (quotaAvailable(account) && account.sessionPercentage <= account.thresholdPercentage);
+
+function retainedAccounts(accounts: AntigravityAccountInput[]) {
+  return accounts
+    .filter((account) => account.isActive)
+    .sort(
+      (a, b) => Number(needsReplacement(a)) - Number(needsReplacement(b)) || byResetThenId(a, b),
+    )
+    .slice(0, 2);
 }
 
 export function computeRotationPlan(
   accounts: AntigravityAccountInput[],
   options: { allEndpointsReadable: boolean },
 ): RotationPlan {
+  if (!options.allEndpointsReadable) {
+    return {
+      activations: [],
+      deactivations: [],
+      activeIds: accounts.filter((account) => account.isActive).map((account) => account.id),
+      degraded: true,
+    };
+  }
+  const retained = retainedAccounts(accounts);
   const plan: RotationPlan = {
     activations: [],
-    deactivations: [],
-    activeIds: [],
-    degraded: !options.allEndpointsReadable,
+    deactivations: accounts
+      .filter((account) => account.isActive && !retained.includes(account))
+      .map((account) => account.id),
+    activeIds: retained.map((account) => account.id),
+    degraded: false,
   };
-  const retained = retainedAccount(accounts);
-  if (retained) {
-    plan.activeIds.push(retained.id);
-    plan.deactivations.push(
-      ...accounts
-        .filter((account) => account.isActive && account.id !== retained.id)
-        .map((account) => account.id),
-    );
-  }
-  const needsReplacement =
-    !retained ||
-    Boolean(retained.lastError) ||
-    (quotaAvailable(retained) && retained.sessionPercentage <= retained.thresholdPercentage);
-  if (!options.allEndpointsReadable || !needsReplacement) return plan;
-  const successor = accounts
+  const candidates = accounts
     .filter(
       (account) =>
         !account.isActive &&
         quotaAvailable(account) &&
-        account.sessionPercentage > 20 &&
+        account.sessionPercentage > ROTATION_POLICY.standbyQuotaExclusive &&
         !account.lastError,
     )
-    .sort(byResetThenId)[0];
-  if (!successor) return plan;
-  if (retained) plan.deactivations.push(retained.id);
-  plan.activations.push(successor.id);
-  plan.activeIds = [successor.id];
+    .sort((a, b) => b.sessionPercentage - a.sessionPercentage || byResetThenId(a, b));
+  for (const old of retained.filter(needsReplacement)) {
+    const successor = candidates.shift();
+    if (!successor) break;
+    plan.deactivations.push(old.id);
+    plan.activeIds = plan.activeIds.filter((id) => id !== old.id);
+    plan.activeIds.push(successor.id);
+    plan.activations.push(successor.id);
+  }
+  while (plan.activeIds.length < 2 && candidates.length) {
+    const successor = candidates.shift()!;
+    plan.activeIds.push(successor.id);
+    plan.activations.push(successor.id);
+  }
   return plan;
 }
 
@@ -211,10 +289,12 @@ export interface AntigravityRotatorDeps {
   history?: AntigravityRotationHistory;
   endpointTimeoutMs?: number;
   sampleThreshold?: () => number;
+  providers?: RotationProvider[];
 }
 
 export function createAntigravityRotator(deps?: AntigravityRotatorDeps): AntigravityRotator {
   const listConnections = deps?.listConnections ?? listAntigravityConnections;
+  const providers: RotationProvider[] = deps?.providers ?? ["antigravity", "codex", "claude"];
   const getUsage = deps?.getUsage ?? getAccountUsage;
   const updateConn = deps?.updateConnection ?? updateConnection;
   const getSettings = deps?.getSettings ?? getSettingsSecrets;
@@ -222,7 +302,9 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps): Antigra
   const dataDir = deps?.dataDir ?? path.join(root, "data");
   const snapshotFile = path.join(dataDir, "antigravity-rotator.json");
   const history = deps?.history ?? openAntigravityRotationHistory(dataDir);
-  const sampleThreshold = deps?.sampleThreshold ?? (() => randomInt(10, 21));
+  const sampleThreshold =
+    deps?.sampleThreshold ??
+    (() => randomInt(ROTATION_POLICY.thresholdMin, ROTATION_POLICY.thresholdMax + 1));
   let running = false;
   let activeRunPromise: Promise<AntigravityRotatorSnapshot> | null = null;
   let rerunQueued = false;
@@ -238,6 +320,7 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps): Antigra
         ) as AntigravityRotatorSnapshot;
         cachedSnapshot = {
           lastRunAt: saved.lastRunAt,
+          lastRotationAt: saved.lastRotationAt ?? null,
           running: false,
           totalAccounts: saved.totalAccounts,
           activeCount: saved.activeCount,
@@ -245,6 +328,7 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps): Antigra
           maxPossiblePercentage: saved.maxPossiblePercentage,
           accounts: saved.accounts.map((account) => ({
             id: account.id,
+            provider: account.provider ?? "antigravity",
             email: account.email,
             name: account.name,
             isActive: account.isActive,
@@ -259,6 +343,7 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps): Antigra
             lastActivatedAt: account.lastActivatedAt,
             routerUrl: account.routerUrl,
           })),
+          groups: saved.groups,
           endpoints: saved.endpoints,
           degraded: true,
           error: "Cached state has not been reconciled since startup",
@@ -275,6 +360,7 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps): Antigra
     }
     cachedSnapshot = {
       lastRunAt: null,
+      lastRotationAt: null,
       running: false,
       totalAccounts: 0,
       activeCount: 0,
@@ -289,6 +375,7 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps): Antigra
 
   interface AccountMeta {
     originalId: string;
+    provider: RotationProvider;
     routerUrl?: string;
     input: AntigravityAccountInput;
     state: AntigravityAccountState;
@@ -302,11 +389,11 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps): Antigra
   };
   const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
   const isValidThreshold = (value: number | null | undefined): value is number =>
-    typeof value === "number" && Number.isInteger(value) && value >= 10 && value <= 20;
+    typeof value === "number" && Number.isInteger(value) && value >= 5 && value <= 10;
 
-  async function collectEndpoint(routerUrl?: string) {
+  async function collectEndpoint(provider: RotationProvider, routerUrl?: string) {
     const overrides = overridesFor(routerUrl);
-    const connections = await listConnections(overrides);
+    const connections = await listConnections({ ...overrides, provider });
     if (connections.some((connection) => typeof connection.isActive !== "boolean")) {
       throw new Error("Endpoint returned an account without a readable active state");
     }
@@ -315,7 +402,8 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps): Antigra
         let usage: AntigravityUsage;
         let telemetryError: string | null = null;
         try {
-          usage = extractAntigravityUsage(await getUsage(connection.id, overrides));
+          const rawUsage = await getUsage(connection.id, overrides);
+          usage = USAGE_EXTRACTORS[provider](rawUsage);
         } catch (error) {
           telemetryError = message(error);
           usage = {
@@ -327,7 +415,10 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps): Antigra
         }
         const accountId = `${routerUrl ?? ""}:::${connection.id}`;
         const accountError = telemetryError ? null : usage.lastError || null;
-        const connectionError = connection.lastError || null;
+        const connectionError =
+          usage.quotaAvailable && USAGE_LIMIT_429[provider]?.test(connection.lastError ?? "")
+            ? null
+            : connection.lastError || null;
         const input: AntigravityAccountInput = {
           id: accountId,
           isActive: Boolean(connection.isActive),
@@ -340,6 +431,7 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps): Antigra
         };
         const state: AntigravityAccountState = {
           id: connection.id,
+          provider,
           email: connection.email || connection.name || connection.id,
           name: connection.name || connection.email || connection.id,
           isActive: input.isActive,
@@ -352,21 +444,35 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps): Antigra
           lastCheckedAt: Date.now(),
           routerUrl,
         };
-        return { originalId: connection.id, routerUrl, input, state } satisfies AccountMeta;
+        return {
+          originalId: connection.id,
+          provider,
+          routerUrl,
+          input,
+          state,
+        } satisfies AccountMeta;
       }),
     );
-    return { routerUrl, accounts };
+    return { provider, routerUrl, accounts };
   }
 
   async function runCycle(): Promise<AntigravityRotatorSnapshot> {
     const configured = getRouterUrls();
     const targets: Array<string | undefined> = configured.length ? configured : [undefined];
-    const results = await Promise.allSettled(targets.map((url) => collectEndpoint(url)));
-    const endpoints: AntigravityRotatorEndpointSummary[] = [];
+    const requests = providers.flatMap((provider) => targets.map((url) => ({ provider, url })));
+    const results = await Promise.allSettled(
+      requests.map(({ provider, url }) => collectEndpoint(provider, url)),
+    );
+    const endpoints: AntigravityRotatorEndpointSummary[] = targets.map((url) => ({
+      url: url ?? "",
+      ok: true,
+    }));
+    const readable = new Map(providers.map((provider) => [provider, true]));
     const allAccounts: AccountMeta[] = [];
     const errors: string[] = [];
     let degraded = false;
-    let persistenceFailed = false;
+    const persistenceFailures = new Set<RotationProvider>();
+    let lastRotationAt = loadSnapshot().lastRotationAt ?? null;
     const recordError = (reason: string) => {
       degraded = true;
       errors.push(reason);
@@ -374,17 +480,18 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps): Antigra
     };
     for (let index = 0; index < results.length; index++) {
       const result = results[index];
-      const url = targets[index] ?? "";
+      const { provider, url } = requests[index];
+      const endpoint = endpoints[index % targets.length];
       if (result.status === "rejected") {
         const reason = message(result.reason);
-        endpoints.push({ url, ok: false, error: reason });
-        recordError(`Endpoint ${url || "default"} unavailable: ${reason}`);
+        readable.set(provider, false);
+        endpoint.ok = false;
+        endpoint.error = [endpoint.error, `${provider}: ${reason}`].filter(Boolean).join("; ");
+        recordError(`Endpoint ${url || "default"} ${provider} unavailable: ${reason}`);
       } else {
         allAccounts.push(...result.value.accounts);
-        endpoints.push({ url, ok: true });
       }
     }
-    const allEndpointsReadable = results.every((result) => result.status === "fulfilled");
     const byId = new Map(allAccounts.map((meta) => [meta.input.id, meta]));
     for (const meta of allAccounts) {
       try {
@@ -404,7 +511,7 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps): Antigra
         meta.state.turnCount = turn?.turnCount ?? 0;
         meta.state.lastActivatedAt = turn?.lastActivatedAt ?? null;
       } catch (error) {
-        persistenceFailed = true;
+        persistenceFailures.add(meta.provider);
         recordError(`History failed for ${meta.input.id}: ${message(error)}`);
       }
       if (!meta.state.quotaAvailable && !meta.input.lastError) {
@@ -413,7 +520,10 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps): Antigra
     }
 
     async function confirmState(meta: AccountMeta, expected: boolean) {
-      const connections = await listConnections(overridesFor(meta.routerUrl));
+      const connections = await listConnections({
+        ...overridesFor(meta.routerUrl),
+        provider: meta.provider,
+      });
       const connection = connections.find((item) => item.id === meta.originalId);
       if (
         !connection ||
@@ -443,76 +553,94 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps): Antigra
       }
     }
 
-    let canActivate = !persistenceFailed;
-    const inputs = allAccounts.map((meta) => meta.input);
-    const retained = retainedAccount(inputs);
-    const extras = inputs.filter((account) => account.isActive && account.id !== retained?.id);
-    if (retained && extras.length && !persistenceFailed) {
-      try {
-        await confirmState(byId.get(retained.id)!, true);
-        for (const extra of extras) {
-          if (!(await deactivate(byId.get(extra.id)!))) canActivate = false;
+    for (const provider of providers) {
+      const allEndpointsReadable = readable.get(provider) === true;
+      let canActivate = !persistenceFailures.has(provider);
+      const inputs = allAccounts
+        .filter((meta) => meta.provider === provider)
+        .map((meta) => meta.input);
+      const retained = retainedAccounts(inputs);
+      const extras = inputs.filter((account) => account.isActive && !retained.includes(account));
+      if (extras.length && canActivate && allEndpointsReadable) {
+        try {
+          for (const account of retained) await confirmState(byId.get(account.id)!, true);
+          for (const extra of extras) {
+            if (!(await deactivate(byId.get(extra.id)!))) canActivate = false;
+          }
+        } catch (error) {
+          canActivate = false;
+          recordError(`Failed to confirm retained ${provider} accounts: ${message(error)}`);
         }
-      } catch (error) {
-        canActivate = false;
-        recordError(`Failed to confirm retained account ${retained.id}: ${message(error)}`);
       }
-    }
 
-    const plan = computeRotationPlan(inputs, { allEndpointsReadable });
-    const successor = plan.activations[0] && byId.get(plan.activations[0]);
-    if (successor && canActivate) {
-      try {
-        const previous = history.get(successor.input.id);
-        const threshold =
-          previous?.tenureState !== "inactive" && isValidThreshold(previous?.thresholdPercentage)
-            ? previous.thresholdPercentage
-            : sampleThreshold();
-        const pending = history.prepareActivation(successor.input.id, threshold);
-        successor.state.thresholdPercentage = pending.thresholdPercentage;
-        await updateConn(
-          successor.originalId,
-          { isActive: true },
-          overridesFor(successor.routerUrl),
-        );
-        await confirmState(successor, true);
-        successor.input.isActive = true;
-        successor.state.isActive = true;
-        const turn = history.confirmActivation(successor.input.id, Date.now());
-        successor.state.turnCount = turn.turnCount;
-        successor.state.lastActivatedAt = turn.lastActivatedAt;
-        logScoped("Antigravity", "rotate", "info", `Activated ${successor.input.id}`, {
-          thresholdPercentage: turn.thresholdPercentage,
-          turnCount: turn.turnCount,
-        });
-        for (const id of plan.deactivations) {
-          const old = byId.get(id);
-          if (old?.input.isActive && !(await deactivate(old))) break;
+      const plan = computeRotationPlan(inputs, { allEndpointsReadable });
+      const replacements = plan.deactivations.filter((id) => byId.get(id)?.input.isActive);
+      for (const successorId of plan.activations) {
+        if (!canActivate) break;
+        const successor = byId.get(successorId)!;
+        try {
+          const previous = history.get(successor.input.id);
+          const threshold =
+            previous?.tenureState !== "inactive" && isValidThreshold(previous?.thresholdPercentage)
+              ? previous.thresholdPercentage
+              : sampleThreshold();
+          const pending = history.prepareActivation(successor.input.id, threshold);
+          successor.state.thresholdPercentage = pending.thresholdPercentage;
+          await updateConn(
+            successor.originalId,
+            { isActive: true },
+            overridesFor(successor.routerUrl),
+          );
+          await confirmState(successor, true);
+          successor.input.isActive = true;
+          successor.state.isActive = true;
+          const turn = history.confirmActivation(successor.input.id, Date.now());
+          successor.state.turnCount = turn.turnCount;
+          successor.state.lastActivatedAt = turn.lastActivatedAt;
+          logScoped("Antigravity", "rotate", "info", `Activated ${successor.input.id}`, {
+            thresholdPercentage: turn.thresholdPercentage,
+            turnCount: turn.turnCount,
+          });
+          const oldId = replacements.shift();
+          if (oldId) {
+            if (!(await deactivate(byId.get(oldId)!))) break;
+            lastRotationAt = Math.max(Date.now(), (lastRotationAt ?? 0) + 1);
+          }
+        } catch (error) {
+          recordError(`Failed to activate ${successor.input.id}: ${message(error)}`);
+          break;
         }
-      } catch (error) {
-        recordError(`Failed to activate ${successor.input.id}: ${message(error)}`);
       }
-    } else if (
-      !successor &&
-      allEndpointsReadable &&
-      (!retained ||
-        retained.lastError ||
-        (quotaAvailable(retained) && retained.sessionPercentage <= retained.thresholdPercentage))
-    ) {
-      recordError("No eligible account available");
+      if (
+        allEndpointsReadable &&
+        (inputs.filter((account) => account.isActive).length < 2 ||
+          inputs.some((account) => account.isActive && needsReplacement(account)))
+      ) {
+        recordError(`No eligible account available for all active slots (${provider})`);
+      }
+      if (inputs.filter((account) => account.isActive).length > 2) {
+        recordError(`More than two active ${provider} accounts remain`);
+      }
     }
 
     const accounts = allAccounts.map((meta) => meta.state);
     for (const endpoint of endpoints) {
-      if (!endpoint.ok) continue;
       const states = allAccounts.filter((meta) => (meta.routerUrl ?? "") === endpoint.url);
       endpoint.totalAccounts = states.length;
       endpoint.activeCount = states.filter((meta) => meta.state.isActive).length;
     }
     const activeCount = accounts.filter((account) => account.isActive).length;
-    if (activeCount > 1) recordError("Multiple active accounts remain");
+    const groups = providers.map((provider) => {
+      const states = accounts.filter((account) => account.provider === provider);
+      return {
+        provider,
+        totalAccounts: states.length,
+        activeCount: states.filter((account) => account.isActive).length,
+      };
+    });
     const snapshot: AntigravityRotatorSnapshot = {
       lastRunAt: Date.now(),
+      lastRotationAt,
       running: false,
       totalAccounts: accounts.length,
       activeCount,
@@ -521,6 +649,7 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps): Antigra
       ),
       maxPossiblePercentage: accounts.length * 100,
       accounts,
+      groups,
       endpoints,
       degraded,
       error: errors.length ? errors.join("; ") : null,
@@ -539,7 +668,79 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps): Antigra
     return snapshot;
   }
 
+  let manualWrite: Promise<AntigravityRotatorSnapshot> | null = null;
+
+  async function setAccountActive(
+    accountId: string,
+    routerUrl: string | undefined,
+    isActive: boolean,
+  ) {
+    if (activeRunPromise || manualWrite)
+      throw new Error("Account maintenance is in progress. Try again shortly.");
+    const current = loadSnapshot();
+    const account = current.accounts.find(
+      (item) => item.id === accountId && item.routerUrl === routerUrl,
+    );
+    const urls = getRouterUrls();
+    if (!account || (routerUrl === undefined ? urls.length > 0 : !urls.includes(routerUrl))) {
+      throw new Error("Account is no longer available on this router. Refresh quota first.");
+    }
+    const provider = account.provider ?? "antigravity";
+    const overrides = overridesFor(account.routerUrl);
+    manualWrite = (async () => {
+      await updateConn(accountId, { isActive }, overrides);
+      const confirmed = await listConnections({ ...overrides, provider });
+      if (confirmed.find((item) => item.id === accountId)?.isActive !== isActive) {
+        throw new Error("Router did not confirm the account state. Refresh quota before retrying.");
+      }
+      const key = `${routerUrl ?? ""}:::${accountId}`;
+      if (!isActive) history.confirmDeactivation(key);
+      const turn = isActive
+        ? history.adoptActive(key, account.thresholdPercentage ?? sampleThreshold())
+        : history.get(key);
+      const accounts = current.accounts.map((item) =>
+        item === account
+          ? {
+              ...item,
+              isActive,
+              thresholdPercentage: isActive ? (turn?.thresholdPercentage ?? null) : null,
+              turnCount: turn?.turnCount,
+              lastActivatedAt: turn?.lastActivatedAt,
+            }
+          : item,
+      );
+      const active = accounts.filter((item) => item.isActive);
+      const snapshot = {
+        ...current,
+        accounts,
+        activeCount: active.length,
+        groups: current.groups?.map((group) => ({
+          ...group,
+          activeCount: active.filter((item) => (item.provider ?? "antigravity") === group.provider)
+            .length,
+        })),
+        endpoints: current.endpoints?.map((endpoint) => ({
+          ...endpoint,
+          activeCount: active.filter((item) => (item.routerUrl ?? "") === endpoint.url).length,
+        })),
+      };
+      cachedSnapshot = snapshot;
+      writeJsonAtomicSync(snapshotFile, snapshot);
+      return snapshot;
+    })();
+    try {
+      return await manualWrite;
+    } finally {
+      manualWrite = null;
+    }
+  }
+
   function runRotation(options: { force?: boolean } = {}): Promise<AntigravityRotatorSnapshot> {
+    if (manualWrite)
+      return manualWrite.then(
+        () => runRotation(options),
+        () => runRotation(options),
+      );
     if (options.force) queuedForce = true;
     if (activeRunPromise) {
       rerunQueued = true;
@@ -569,6 +770,7 @@ export function createAntigravityRotator(deps?: AntigravityRotatorDeps): Antigra
 
   return {
     runRotation,
+    setAccountActive,
     getSnapshot: () => ({ ...loadSnapshot(), running }),
     get isRunning() {
       return running;

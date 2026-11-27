@@ -5,7 +5,6 @@ import { getBackupSyncStatus, triggerFullBackupAndSync } from "../../backup/git-
 export function createBackupRoutes(_deps: ApiDependencies): Hono<ApiEnv> {
   const router = new Hono<ApiEnv>();
 
-  // GET /api/backup/status
   router.get("/status", async (c) => {
     try {
       const status = await getBackupSyncStatus();
@@ -18,7 +17,6 @@ export function createBackupRoutes(_deps: ApiDependencies): Hono<ApiEnv> {
     }
   });
 
-  // POST /api/backup/sync
   router.post("/sync", async (c) => {
     try {
       let body: { push?: boolean } = {};
@@ -40,7 +38,6 @@ export function createBackupRoutes(_deps: ApiDependencies): Hono<ApiEnv> {
     }
   });
 
-  // POST /api/backup/restore
   router.post("/restore", (c) =>
     c.json(
       {

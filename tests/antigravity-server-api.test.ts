@@ -6,6 +6,7 @@ import type { AntigravityRotatorSnapshot } from "../src/lib/types.js";
 test("antigravity rotator snapshot returns correct structure and values", () => {
   const mockRotator = createAntigravityRotator({
     dataDir: "data",
+    providers: ["antigravity"],
     listConnections: async () => [],
     getUsage: async () => ({}),
   });

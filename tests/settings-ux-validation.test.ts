@@ -5,7 +5,6 @@ import fs from "node:fs";
 test("Settings Page: UX Copy, Labels and Buttons Clarified", () => {
   const content = fs.readFileSync("src/app/(dashboard)/settings/page.tsx", "utf8");
 
-  // Specific Action Buttons
   assert.ok(content.includes("Save 9Router Connection"), "Must use 'Save 9Router Connection'");
   assert.ok(content.includes("Test 9Router Connection"), "Must use 'Test 9Router Connection'");
   assert.ok(content.includes("Save Rotator Settings"), "Must use 'Save Rotator Settings'");
@@ -20,14 +19,12 @@ test("Settings Page: UX Copy, Labels and Buttons Clarified", () => {
     "Must use 'Create Git Backup Snapshot'",
   );
 
-  // Removed Proxy Export Controls
   assert.ok(!content.includes("Export Verified Proxies"), "Must not contain proxy export controls");
 });
 
 test("Settings Page: Data-Loss Guards & Dirty State Tracking", () => {
   const content = fs.readFileSync("src/app/(dashboard)/settings/page.tsx", "utf8");
 
-  // Dirty State Tracking & beforeunload
   assert.ok(content.includes("isSectionDirty"), "Must implement isSectionDirty helper");
   assert.ok(content.includes("isAnyDirty"), "Must track isAnyDirty");
   assert.ok(
@@ -36,23 +33,16 @@ test("Settings Page: Data-Loss Guards & Dirty State Tracking", () => {
   );
   assert.ok(content.includes("baselineForm"), "Must retain baselineForm to check dirty inputs");
 
-  // Surgical Section State Merge (prevents wiping dirty inputs in other tabs)
-  assert.ok(
-    content.includes("Surgical section merge"),
-    "Must document surgical section merge in state update",
-  );
   assert.ok(
     content.includes("next.nineRouterUrl = data.settings.nineRouterUrl"),
     "Must isolate ninerouter section updates without wiping other tabs",
   );
 
-  // Client Validation Guards
   assert.ok(
     content.includes("Rotation interval must be an integer between 1 and 60 minutes"),
     "Must validate antigravityRotateMinutes bounds",
   );
 
-  // Removed Proxy Settings
   assert.ok(!content.includes("activePoolLimit"), "Must not contain activePoolLimit");
   assert.ok(!content.includes("checkConcurrency"), "Must not contain checkConcurrency");
 });
@@ -60,13 +50,11 @@ test("Settings Page: Data-Loss Guards & Dirty State Tracking", () => {
 test("Settings Page: Password Session Synchronization & Pending Concurrency", () => {
   const content = fs.readFileSync("src/app/(dashboard)/settings/page.tsx", "utf8");
 
-  // Password Session Sync
   assert.ok(
     content.includes("setPassword(payload.controlPassword)"),
     "Must synchronize client session password immediately on update to prevent 401 loop",
   );
 
-  // isActionPending locking
   assert.ok(
     content.includes("if ((!password && !authenticated) || isActionPending) return;"),
     "Must guard backup and restore with isActionPending",

@@ -8,7 +8,6 @@ export async function startBrowserMocks(): Promise<void> {
   if (typeof window === "undefined") {
     return;
   }
-  // Dynamic import required: prevents bundling MSW browser mocks into client production bundles
   const { worker } = await import("./browser");
   await worker.start({
     onUnhandledFrame: "bypass",

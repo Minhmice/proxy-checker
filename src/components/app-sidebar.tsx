@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { Settings, LogOut, BarChart3, Flame } from "lucide-react";
 import { useAuth } from "./auth-provider";
-import { AntigravityQuotaWidget } from "./antigravity-quota-widget";
+import { AntigravityQuotaWidget, useAccountQuota } from "./antigravity-quota-widget";
 import { cn } from "@/lib/utils";
 import {
   Sidebar,
@@ -14,13 +14,12 @@ import {
   SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
-  SidebarSeparator,
+  useSidebar,
 } from "@/components/ui/sidebar";
 
 const NAV_ITEMS = [
@@ -38,6 +37,7 @@ function NavMenuItem({
   icon: React.ComponentType<{ className?: string }>;
   isActive: boolean;
 }) {
+  const { isMobile, setOpenMobile } = useSidebar();
   const [isIgnited, setIsIgnited] = React.useState(false);
   const timerRef = React.useRef<number | undefined>(undefined);
 
@@ -77,14 +77,20 @@ function NavMenuItem({
         className={cn(
           "relative transition-all font-medium h-9 text-xs rounded-lg overflow-hidden group border-0",
           isActive
-            ? "flame-gradient-active text-white font-semibold shadow-[0_0_18px_-3px_rgba(255,91,34,0.35)]"
-            : "text-sidebar-foreground/80 hover:bg-white/[0.04] hover:text-sidebar-foreground",
+            ? "flame-gradient-active text-white font-semibold"
+            : "text-sidebar-foreground/80 dither-hover hover:text-sidebar-foreground",
           "focus-visible:ring-1 focus-visible:ring-[#FF5B22] focus-visible:ring-offset-1 focus-visible:ring-offset-sidebar",
         )}
       >
         <Link
           href={href}
           onClick={handleClick}
+          onNavigate={() => {
+            if (isMobile) {
+              setOpenMobile(false);
+              window.setTimeout(() => document.getElementById("main-content")?.focus(), 350);
+            }
+          }}
           aria-current={isActive ? "page" : undefined}
           className="flex items-center gap-2.5 w-full group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0"
         >
@@ -95,7 +101,7 @@ function NavMenuItem({
             className={cn(
               "size-4 shrink-0 transition-transform duration-200 group-hover:scale-110",
               isActive
-                ? "text-[#FFAA00] drop-shadow-[0_0_8px_rgba(255,91,34,0.8)]"
+                ? "text-[#FFAA00]"
                 : "text-muted-foreground group-hover:text-sidebar-foreground",
             )}
           />
@@ -116,7 +122,7 @@ function NavMenuItem({
                 transition={{ duration: 0.28, ease: "easeOut" }}
                 className="shrink-0 flex items-center group-data-[collapsible=icon]:hidden pointer-events-none"
               >
-                <Flame className="size-3.5 text-[#FFAA00] flame-flicker-active drop-shadow-[0_0_8px_rgba(255,170,0,0.85)]" />
+                <Flame className="size-3.5 text-[#FFAA00] flame-flicker-active" />
               </motion.span>
             )}
           </AnimatePresence>
@@ -129,6 +135,8 @@ function NavMenuItem({
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname();
   const { clearPassword } = useAuth();
+  const { isMobile, setOpenMobile } = useSidebar();
+  const quota = useAccountQuota();
 
   return (
     <Sidebar collapsible="icon" className="border-r border-[#23232C] bg-[#09090C]" {...props}>
@@ -142,17 +150,23 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
             >
               <Link
                 href="/"
+                onNavigate={() => {
+                  if (isMobile) {
+                    setOpenMobile(false);
+                    window.setTimeout(() => document.getElementById("main-content")?.focus(), 350);
+                  }
+                }}
                 className="flex items-center gap-3 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0"
               >
-                <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#FF5B22] via-[#FF3D00] to-[#FFAA00] text-white font-black text-sm flame-logo-core shadow-[0_0_20px_rgba(255,91,34,0.45)] ring-1 ring-white/20">
-                  mP
+                <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground font-black text-sm flame-logo-core ring-1 ring-white/15">
+                  <span className="relative z-10">mP</span>
                 </div>
                 <div className="grid flex-1 text-left text-sm leading-tight min-w-0 group-data-[collapsible=icon]:hidden">
                   <span className="truncate font-bold text-white tracking-tight text-[13px]">
                     minhmiceProxy
                   </span>
                   <span className="truncate text-[10px] text-muted-foreground/80 flex items-center gap-1 mt-0.5 font-medium">
-                    <Flame className="size-3 text-[#FFAA00] animate-pulse shrink-0" />
+                    <Flame className="size-3 text-[#FFAA00] shrink-0" />
                     Quota &amp; Token Control
                   </span>
                 </div>
@@ -184,7 +198,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter className="border-t border-[#23232C] p-2 space-y-1.5 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:items-center">
-        <AntigravityQuotaWidget />
+        <AntigravityQuotaWidget {...quota} />
         <SidebarMenu>
           <SidebarMenuItem className="group-data-[collapsible=icon]:flex group-data-[collapsible=icon]:justify-center">
             <SidebarMenuButton
@@ -203,5 +217,4 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
   );
 }
 
-// Backward-compatibility export
 export { AppSidebar as Sidebar };

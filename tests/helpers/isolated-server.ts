@@ -46,7 +46,6 @@ export async function startIsolatedServer(
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "proxy-isolated-srv-"));
   const configPath = path.join(tmpDir, "settings.json");
 
-  // Create isolated settings without live credentials
   fs.writeFileSync(
     configPath,
     JSON.stringify({
@@ -85,7 +84,6 @@ export async function startIsolatedServer(
 
   const baseUrl = `http://127.0.0.1:${port}`;
 
-  // Poll /api/health until ready or timeout
   const deadline = Date.now() + 25_000;
   let ready = false;
   while (Date.now() < deadline) {
@@ -95,9 +93,7 @@ export async function startIsolatedServer(
         ready = true;
         break;
       }
-    } catch {
-      // Server not ready yet
-    }
+    } catch {}
     await delay(250);
   }
 

@@ -43,7 +43,6 @@ test("lease left by crashed owner is reclaimed even if PID now belongs to a live
   try {
     const owner = path.join(dir, ".proxy-checker.lease", "owner");
     fs.mkdirSync(path.dirname(owner));
-    // Current PID is a live node process: simulates OS reusing the dead owner's PID.
     fs.writeFileSync(owner, `application\n${process.ppid}\n`);
     const old = new Date(Date.now() - LEASE_STALE_MS - 1000);
     fs.utimesSync(owner, old, old);

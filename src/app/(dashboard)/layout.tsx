@@ -1,22 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { AuthProvider, useAuth } from "@/components/auth-provider";
-import { CommandPalette, useCommandPalette } from "@/components/command-palette";
-import { AppSidebar } from "@/components/app-sidebar";
+import { AccountQuotaProvider } from "@/components/antigravity-quota-widget";
 import { TopBar } from "@/components/topbar";
-import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
-import KineticGrid from "@/components/ui/kinetic-grid";
+import { SidebarProvider } from "@/components/ui/sidebar";
+import DitherFrame from "@/components/ui/dither-frame";
+import { LoadingAnimation } from "@/components/ui/loading-animation";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const { open, setOpen, close } = useCommandPalette();
-
   return (
     <AuthProvider>
-      <DashboardFrame open={open} setOpen={setOpen} close={close}>
-        {children}
-      </DashboardFrame>
+      <DashboardRedirectBoundary>
+        <AccountQuotaProvider>
+          <DashboardFrame>{children}</DashboardFrame>
+        </AccountQuotaProvider>
+      </DashboardRedirectBoundary>
     </AuthProvider>
   );
 }
@@ -26,7 +26,7 @@ function DashboardRedirect() {
   useEffect(() => {
     router.replace("/auth");
   }, [router]);
-  return <div className="auth-loading" aria-busy="true" />;
+  return <LoadingAnimation session loadingLabel="Redirecting to sign in" />;
 }
 
 function DashboardRedirectBoundary({ children }: { children: React.ReactNode }) {
@@ -34,17 +34,7 @@ function DashboardRedirectBoundary({ children }: { children: React.ReactNode }) 
   return authenticated || Boolean(password) ? children : <DashboardRedirect />;
 }
 
-function DashboardFrame({
-  children,
-  open,
-  setOpen,
-  close,
-}: {
-  children: React.ReactNode;
-  open: boolean;
-  setOpen: (value: boolean) => void;
-  close: () => void;
-}) {
+function DashboardFrame({ children }: { children: React.ReactNode }) {
   return (
     <>
       <a
@@ -53,23 +43,20 @@ function DashboardFrame({
       >
         Skip to main content
       </a>
-      <KineticGrid className="dashboard-background" globalColor="default">
+      <DitherFrame className="dashboard-background dashboard-session-enter">
         <SidebarProvider defaultOpen={true}>
-          <AppSidebar />
-          <SidebarInset className="flex flex-col min-w-0 bg-background">
-            <TopBar onSearchClick={() => setOpen(true)} />
-            <div className="flex flex-1 min-h-0 overflow-hidden">
-              <main
-                id="main-content"
-                className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 3xl:p-10 5xl:p-12 min-w-0 cyber-grid-bg"
-              >
-                <DashboardRedirectBoundary>{children}</DashboardRedirectBoundary>
-              </main>
-            </div>
-          </SidebarInset>
+          <div className="flex min-h-dvh w-full min-w-0 flex-col bg-transparent">
+            <TopBar />
+            <main
+              id="main-content"
+              tabIndex={-1}
+              className="min-w-0 flex-1 p-4 md:p-6 lg:pb-3 cyber-grid-bg"
+            >
+              {children}
+            </main>
+          </div>
         </SidebarProvider>
-      </KineticGrid>
-      <CommandPalette open={open} onClose={close} />
+      </DitherFrame>
     </>
   );
 }

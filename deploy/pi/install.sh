@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# Proxy Checker Pi Bootstrap / Installation Script
-# Idempotent: safe to run multiple times.
-# ==============================================================================
 
 set -euo pipefail
 
@@ -19,7 +15,6 @@ echo "=========================================================="
 echo " Proxy Checker Pi Deployment Setup: $DEPLOY_DIR"
 echo "=========================================================="
 
-# 1. Prerequisite checks
 echo "[install] Checking prerequisites..."
 for cmd in node npm git curl systemctl; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -40,12 +35,10 @@ if [[ "$ARCH" != "aarch64" && "$ARCH" != "x86_64" ]]; then
   echo "[install] Warning: Architecture $ARCH is not 64-bit. better-sqlite3 v13 prebuilts require linux-arm64 or linux-x64."
 fi
 
-# 2. Setup persistent data directories
 echo "[install] Setting up data directories..."
 mkdir -p "$DATA_DIR" "$BACKUP_DIR"
 chmod 750 "$DATA_DIR"
 
-# 3. Environment configuration
 cd "$DEPLOY_DIR"
 if [[ ! -f "$DEPLOY_DIR/.env" ]]; then
   echo "[install] Creating initial .env from .env.example..."
@@ -57,16 +50,13 @@ else
   echo "[install] Existing .env file found; preserving secrets."
 fi
 
-# Install build dependencies and compile before starting services.
 echo "[install] Installing dependencies..."
 npm ci --include=dev --prefer-offline --no-audit --no-fund
 echo "[install] Building Next.js production bundle..."
 NODE_OPTIONS="--max-old-space-size=${NODE_BUILD_MAX_OLD_SPACE_SIZE:-1024}" npm run build
 
-# 4. Make scripts executable
 chmod +x "$DEPLOY_DIR/deploy/pi/deploy.sh"
 
-# 5. Install systemd service & timer units
 echo "[install] Installing systemd units..."
 cp "$DEPLOY_DIR/deploy/systemd/proxy-control-dashboard.service" /etc/systemd/system/
 cp "$DEPLOY_DIR/deploy/systemd/proxy-checker-deploy.service" /etc/systemd/system/
@@ -74,7 +64,6 @@ cp "$DEPLOY_DIR/deploy/systemd/proxy-checker-deploy.timer" /etc/systemd/system/
 
 systemctl daemon-reload
 
-# 6. Enable and start services
 echo "[install] Enabling and starting services..."
 systemctl enable proxy-control-dashboard.service
 systemctl enable proxy-checker-deploy.timer
