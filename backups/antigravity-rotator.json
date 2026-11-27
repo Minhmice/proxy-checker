@@ -1,5 +1,5 @@
 {
-  "lastRunAt": 1795778195976,
+  "lastRunAt": 1795780003682,
   "lastRotationAt": 1795645413695,
   "running": false,
   "totalAccounts": 10,
@@ -15,11 +15,11 @@
       "isActive": false,
       "sessionPercentage": 100,
       "weeklyPercentage": 100,
-      "resetAt": "2026-11-27T16:16:35.000Z",
+      "resetAt": "2026-11-27T16:46:35.000Z",
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795778195974,
+      "lastCheckedAt": 1795779995733,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -36,7 +36,7 @@
       "thresholdPercentage": 9,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795778195862,
+      "lastCheckedAt": 1795779995845,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -53,7 +53,7 @@
       "thresholdPercentage": 8,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795778195575,
+      "lastCheckedAt": 1795779995632,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -70,7 +70,7 @@
       "thresholdPercentage": 6,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795778193809,
+      "lastCheckedAt": 1795779993921,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -83,11 +83,11 @@
       "isActive": false,
       "sessionPercentage": 100,
       "weeklyPercentage": 0,
-      "resetAt": "2026-11-27T16:16:34.000Z",
+      "resetAt": "2026-11-27T16:46:34.000Z",
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795778194825,
+      "lastCheckedAt": 1795779994992,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -100,11 +100,11 @@
       "isActive": false,
       "sessionPercentage": 100,
       "weeklyPercentage": 0,
-      "resetAt": "2026-11-27T16:16:34.000Z",
+      "resetAt": "2026-11-27T16:46:34.000Z",
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795778194130,
+      "lastCheckedAt": 1795779994779,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -121,7 +121,7 @@
       "thresholdPercentage": 5,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795778194079,
+      "lastCheckedAt": 1795779994017,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 0,
       "lastActivatedAt": null
@@ -134,11 +134,11 @@
       "isActive": false,
       "sessionPercentage": 100,
       "weeklyPercentage": 0,
-      "resetAt": "2026-11-27T16:16:34.000Z",
+      "resetAt": "2026-11-27T16:46:34.000Z",
       "thresholdPercentage": null,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795778194604,
+      "lastCheckedAt": 1795779994995,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 2,
       "lastActivatedAt": 1795645413447
@@ -151,11 +151,11 @@
       "isActive": true,
       "sessionPercentage": 49,
       "weeklyPercentage": 52,
-      "resetAt": "2026-11-27T13:39:59.672Z",
+      "resetAt": "2026-11-27T13:40:00.286Z",
       "thresholdPercentage": 9,
       "quotaAvailable": true,
       "lastError": null,
-      "lastCheckedAt": 1795778193779,
+      "lastCheckedAt": 1795779994366,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 1,
       "lastActivatedAt": 1795686546033
@@ -171,8 +171,8 @@
       "resetAt": null,
       "thresholdPercentage": 8,
       "quotaAvailable": false,
-      "lastError": "Claude connected. Usage API requires admin permissions.",
-      "lastCheckedAt": 1795778193818,
+      "lastError": "The operation was aborted due to timeout",
+      "lastCheckedAt": 1795780003675,
       "routerUrl": "https://9router.minhmice.com",
       "turnCount": 1,
       "lastActivatedAt": 1795657002757
@@ -204,5 +204,5 @@
     }
   ],
   "degraded": true,
-  "error": "No eligible account available for all active slots (claude)"
+  "error": "Quota unavailable for https://9router.minhmice.com:::96926811-71fc-44ad-9fab-64a9196b073d"
 }
