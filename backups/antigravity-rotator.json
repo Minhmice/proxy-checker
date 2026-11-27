@@ -1,5 +1,5 @@
 {
-  "lastRunAt": 1795768160394,
+  "lastRunAt": 1795769964802,
   "lastRotationAt": 1795645413695,
   "running": false,
   "totalAccounts": 0,
@@ -28,11 +28,11 @@
     {
       "url": "https://9router.minhmice.com",
       "ok": false,
-      "error": "antigravity: 9Router login failed (530); codex: 9Router login failed (530); claude: 9Router login failed (530)",
+      "error": "antigravity: 9Router API 502; codex: 9Router API 502; claude: 9Router API 502",
       "totalAccounts": 0,
       "activeCount": 0
     }
   ],
   "degraded": true,
-  "error": "Endpoint https://9router.minhmice.com antigravity unavailable: 9Router login failed (530); Endpoint https://9router.minhmice.com codex unavailable: 9Router login failed (530); Endpoint https://9router.minhmice.com claude unavailable: 9Router login failed (530)"
+  "error": "Endpoint https://9router.minhmice.com antigravity unavailable: 9Router API 502; Endpoint https://9router.minhmice.com codex unavailable: 9Router API 502; Endpoint https://9router.minhmice.com claude unavailable: 9Router API 502"
 }
